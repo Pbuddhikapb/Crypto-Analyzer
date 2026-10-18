@@ -1,0 +1,98 @@
+# Backtest Validator Agent – Configuration
+# ==========================================
+
+# Schedule: when to run the validator automatically
+schedule:
+  # Recurring interval in hours
+  interval_hours: 4
+  # Cron expression (every 4 hours)
+  cron: "0 */4 * * *"
+  # Set to true to enable scheduled runs
+  enabled: true
+  # Run mode on schedule: 'portfolio' or 'single'
+  mode: "portfolio"
+
+# Backtest execution settings
+backtest:
+  # Path to backtest.py
+  script: "e:\\Crypto Analyzer\\backtest.py"
+  # Default CLI arguments for single-asset mode
+  single_defaults:
+    symbol: "XRPUSDT"
+    timeframe: "15m"
+    candles: 2500
+    hifi: true
+    htf_filter: true
+    tf1h_filter: true
+    adaptive_sl: true
+  # Default CLI arguments for portfolio mode
+  portfolio_defaults:
+    timeframe: "15m"
+    candles: 2500
+    hifi: true
+    htf_filter: true
+    tf1h_filter: true
+    adaptive_sl: true
+    tier1_only: false
+  # Timeout in seconds for each backtest run
+  timeout: 3600
+
+# Engine files to monitor for configuration drift
+monitored_files:
+  - "e:\\Crypto Analyzer\\indicators.py"
+  - "e:\\Crypto Analyzer\\trader.py"
+  - "e:\\Crypto Analyzer\\risk.py"
+  - "e:\\Crypto Analyzer\\microstructure.py"
+  - "e:\\Crypto Analyzer\\backtest.py"
+
+# Validation thresholds (overrides for validation.py defaults)
+validation:
+  # Win rate regression: alert if current drops >X% below historical median
+  win_rate_warning_drop_pct: 10
+  win_rate_critical_drop_pct: 20
+  # Profit factor regression threshold
+  profit_factor_critical_drop_pct: 30
+  # Max drawdown ceiling (above which WARNING is raised)
+  max_drawdown_warning_pct: 30
+  # Minimum evaluated bars for a valid run
+  min_evaluated_bars: 100
+  # Excessive return threshold (suspicious if above this on <500 trades)
+  suspicious_return_pct: 200
+  suspicious_return_max_trades: 500
+
+# Notification settings
+notification:
+  # Options: "file", "email", "slack"
+  method: "email"
+  # Output directory for markdown reports
+  report_dir: "e:\\Crypto Analyzer\\reports"
+  # Email settings (used when method is "email")
+  email:
+    smtp_server: "smtp.gmail.com"
+    smtp_port: 587
+    from_address: "pbuddhika.pb@gmail.com"
+    to_address: "pbuddhika.pb@gmail.com"
+    username: "pbuddhika.pb@gmail.com"
+    password: "subhrhnagyvgarjn"
+    use_tls: true
+  # Slack webhook URL (used when method is "slack")
+  slack_webhook_url: ""
+
+# Research sub-agent settings
+research:
+  # Enable web research on anomalies
+  enabled: true
+  # Topics to search when alerts are triggered
+  default_topics:
+    - "crypto backtesting common pitfalls"
+    - "backtesting look-ahead bias detection"
+    - "crypto trading strategy overfitting prevention"
+    - "Binance API rate limits best practices"
+  # Max articles to summarize per alert
+  max_articles_per_alert: 3
+
+# Database
+database:
+  path: "e:\\Crypto Analyzer\\data\\backtest_runs.db"
+  # Number of historical runs to keep for trend analysis
+  history_window: 30

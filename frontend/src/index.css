@@ -1,0 +1,59 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    background-color: #080b11;
+    color: #e2e8f0;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+  }
+}
+
+/* Custom terminal scrollbars */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+::-webkit-scrollbar-track {
+  background: #080b11;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #1e293b;
+  border-radius: 2px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #334155;
+}
+
+/* Price flash animations */
+@keyframes flash-green {
+  0% { background-color: rgba(0, 230, 118, 0.35); }
+  100% { background-color: transparent; }
+}
+
+@keyframes flash-red {
+  0% { background-color: rgba(255, 23, 68, 0.35); }
+  100% { background-color: transparent; }
+}
+
+.flash-up {
+  animation: flash-green 0.7s ease-out;
+}
+
+.flash-down {
+  animation: flash-red 0.7s ease-out;
+}
+
+/* Pulsating alert border */
+@keyframes border-pulse {
+  0%, 100% { border-color: rgba(255, 23, 68, 0.8); box-shadow: 0 0 15px rgba(255, 23, 68, 0.5); }
+  50% { border-color: rgba(255, 23, 68, 0.2); box-shadow: 0 0 5px rgba(255, 23, 68, 0.1); }
+}
+
+.cascade-pulse {
+  animation: border-pulse 1.2s infinite;
+}
