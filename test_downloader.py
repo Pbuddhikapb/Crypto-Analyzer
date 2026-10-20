@@ -1,12 +1,13 @@
 """
-Unit tests for historical candle downloader, integrity verifier, and Parquet loader.
+Unit tests for historical Binance USD-M Futures candle downloader, integrity verifier, and Parquet loader.
 """
 
-import json
+import io
 import os
 import shutil
 import tempfile
 import urllib.error
+import zipfile
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -14,9 +15,11 @@ import pandas as pd
 import pytest
 
 from data.downloader import (
-    fetch_klines_batch,
     timeframe_to_ms,
+    parse_kline_csv,
+    fetch_vision_zip,
     verify_candle_integrity,
+    STANDARD_COLUMNS,
 )
 from data.loader import clear_cache, load_candles
 
@@ -45,6 +48,9 @@ def test_verify_candle_integrity_valid():
                 "low": 95.0 + i,
                 "close": 102.0 + i,
                 "volume": 500.0,
+                "quote_volume": 50000.0,
+                "trades": 100,
+                "source": "binance_futures_um",
             }
         )
     df = pd.DataFrame(rows)
@@ -62,7 +68,6 @@ def test_verify_candle_integrity_empty():
 
 def test_verify_candle_integrity_high_low_violation():
     base_ts = 1700000000000
-    # High is lower than close!
     df = pd.DataFrame(
         [
             {
@@ -73,6 +78,8 @@ def test_verify_candle_integrity_high_low_violation():
                 "low": 90.0,
                 "close": 95.0,
                 "volume": 10.0,
+                "quote_volume": 5000.0,
+                "source": "binance_futures_um",
             }
         ]
     )
@@ -84,7 +91,6 @@ def test_verify_candle_integrity_high_low_violation():
 def test_verify_candle_integrity_continuity_gap():
     base_ts = 1700000000000
     interval_ms = 3600 * 1000
-    # Skip index 2 to create a gap
     rows = [
         {
             "open_time": base_ts,
@@ -94,6 +100,8 @@ def test_verify_candle_integrity_continuity_gap():
             "low": 95.0,
             "close": 102.0,
             "volume": 50.0,
+            "quote_volume": 5000.0,
+            "source": "binance_futures_um",
         },
         {
             "open_time": base_ts + interval_ms,
@@ -103,6 +111,8 @@ def test_verify_candle_integrity_continuity_gap():
             "low": 96.0,
             "close": 104.0,
             "volume": 50.0,
+            "quote_volume": 5000.0,
+            "source": "binance_futures_um",
         },
         {
             "open_time": base_ts + (3 * interval_ms),  # skipped 1 hour!
@@ -112,6 +122,8 @@ def test_verify_candle_integrity_continuity_gap():
             "low": 98.0,
             "close": 105.0,
             "volume": 50.0,
+            "quote_volume": 5000.0,
+            "source": "binance_futures_um",
         },
     ]
     df = pd.DataFrame(rows)
@@ -132,12 +144,80 @@ def test_verify_candle_integrity_negative_volume():
                 "low": 95.0,
                 "close": 102.0,
                 "volume": -10.0,  # negative volume
+                "quote_volume": 5000.0,
+                "source": "binance_futures_um",
             }
         ]
     )
     is_valid, issues = verify_candle_integrity(df, "1h")
     assert is_valid is False
     assert any("negative volume" in s for s in issues)
+
+
+def test_verify_candle_integrity_liquidity_fail():
+    base_ts = 1700000000000
+    df = pd.DataFrame(
+        [
+            {
+                "open_time": base_ts,
+                "datetime": pd.to_datetime(base_ts, unit="ms", utc=True),
+                "open": 100.0,
+                "high": 105.0,
+                "low": 95.0,
+                "close": 102.0,
+                "volume": 0.001,
+                "quote_volume": 50.0,  # abnormally low quote volume (<1000)
+                "trades": 0,
+                "source": "binance_futures_um",
+            }
+        ]
+    )
+    is_valid, issues = verify_candle_integrity(df, "1h")
+    assert is_valid is False
+    assert any("abnormally low" in s.lower() for s in issues)
+
+
+def test_parse_kline_csv_headered():
+    raw_csv = (
+        b"open_time,open,high,low,close,volume,close_time,quote_volume,count,taker_buy_volume,taker_buy_quote_volume,ignore\n"
+        b"1704067200000,42000.0,42500.0,41900.0,42400.0,100.5,1704070799999,4261200.0,1500,60.2,2552480.0,0\n"
+    )
+    df = parse_kline_csv(raw_csv)
+    assert len(df) == 1
+    assert df["open_time"].iloc[0] == 1704067200000
+    assert df["open"].iloc[0] == 42000.0
+    assert df["trades"].iloc[0] == 1500
+    assert df["source"].iloc[0] == "binance_futures_um"
+    assert list(df.columns) == STANDARD_COLUMNS
+
+
+def test_parse_kline_csv_unheadered():
+    raw_csv = b"1704067200000,42000.0,42500.0,41900.0,42400.0,100.5,1704070799999,4261200.0,1500,60.2,2552480.0,0\n"
+    df = parse_kline_csv(raw_csv)
+    assert len(df) == 1
+    assert df["open_time"].iloc[0] == 1704067200000
+    assert df["close"].iloc[0] == 42400.0
+    assert df["trades"].iloc[0] == 1500
+    assert df["source"].iloc[0] == "binance_futures_um"
+
+
+def test_fetch_vision_zip_mock():
+    # Build a real in-memory zip file containing a CSV
+    csv_bytes = b"open_time,open,high,low,close,volume,close_time,quote_volume,count,taker_buy_volume,taker_buy_quote_volume,ignore\n1704067200000,42000.0,42500.0,41900.0,42400.0,100.5,1704070799999,4261200.0,1500,60.2,2552480.0,0\n"
+    zip_buf = io.BytesIO()
+    with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("BTCUSDT-1h-2024-01.csv", csv_bytes)
+    zip_data = zip_buf.getvalue()
+
+    mock_resp = MagicMock()
+    mock_resp.status = 200
+    mock_resp.read.return_value = zip_data
+    mock_resp.__enter__.return_value = mock_resp
+
+    with patch("urllib.request.urlopen", return_value=mock_resp):
+        res_bytes = fetch_vision_zip("https://fake.url/test.zip")
+        assert res_bytes is not None
+        assert b"42000.0" in res_bytes
 
 
 def test_parquet_save_and_load_roundtrip():
@@ -157,6 +237,9 @@ def test_parquet_save_and_load_roundtrip():
                     "low": 95.0 + i,
                     "close": 102.0 + i,
                     "volume": 500.0,
+                    "quote_volume": 50000.0,
+                    "trades": 50,
+                    "source": "binance_futures_um",
                 }
             )
         df_orig = pd.DataFrame(rows)
@@ -177,34 +260,3 @@ def test_parquet_save_and_load_roundtrip():
         assert len(df_filtered) == 30
     finally:
         shutil.rmtree(temp_dir)
-
-
-def test_fetch_klines_dual_endpoint_failover():
-    # Mocking first endpoint returning 451, second returning valid kline data
-    dummy_kline = [
-        [1700000000000, "100.0", "105.0", "95.0", "102.0", "50.0", 1700003599999, "5000.0", 100]
-    ]
-
-    def mock_urlopen(req, timeout=12):
-        if "binance.us" in req.full_url:
-            # First endpoint throws 451
-            fp = MagicMock()
-            raise urllib.error.HTTPError(req.full_url, 451, "Unavailable", {}, fp)
-        elif "binance.com" in req.full_url:
-            # Second endpoint succeeds
-            resp = MagicMock()
-            resp.__enter__.return_value = resp
-            resp.status = 200
-            resp.read.return_value = json.dumps(dummy_kline).encode("utf-8")
-            return resp
-        raise ValueError("Unexpected URL")
-
-    with patch("urllib.request.urlopen", side_effect=mock_urlopen):
-        result = fetch_klines_batch(
-            symbol="BTCUSDT",
-            interval="1h",
-            start_time=1700000000000,
-            endpoints=["https://api.binance.us/api/v3/klines", "https://api.binance.com/api/v3/klines"],
-        )
-        assert len(result) == 1
-        assert result[0][0] == 1700000000000

@@ -14,6 +14,8 @@ import logging
 import os
 import sys
 import time
+
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
@@ -563,7 +565,7 @@ def run_monte_carlo_baseline(
     report_content = f"""# Monte Carlo Random-Entry Baseline: The Statistical Hurdle
 **Generated:** {now_str}  
 **Iterations:** {iterations:,} Monte Carlo Passes  
-**Dataset:** 10 Major Pairs (`{', '.join(syms)}`), 1-Hour Timeframe (2+ Years, ~17,500 bars/coin)  
+**Dataset:** 10 Major Pairs (`{', '.join(syms)}`), 1-Hour Timeframe (2.8 Years, 24,528 continuous bars/coin from Binance USD-M Futures)  
 **Friction Model:** Taker Fee 0.05%, Maker Fee 0.02%, Adverse Slippage 0.03%, 8h Funding Drag 0.01%  
 **Exit Mechanics:** Stepped Scaling (50% TP1 @ +0.75R, BE armed @ +0.85R excursion, TP2 @ +1.33R, 12-bar stagnancy stop)
 

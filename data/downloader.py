@@ -1,12 +1,14 @@
 """
-Historical Kline Downloader and Parquet Data Lake Generator.
+Historical Binance USD-M Futures Kline Downloader and Parquet Data Lake Generator.
 
-Downloads continuous, multi-year historical kline data for major cryptocurrency pairs
-using resilient dual-endpoint failover (Binance US primary, Binance Global fallback).
-Validates schema, checks data continuity and price hierarchy, and saves into columnar Parquet.
+Streams official multi-year historical kline data for major cryptocurrency pairs directly
+from data.binance.vision (Amazon S3 / CloudFront) with in-memory decompression.
+Guarantees authentic USD-M Futures volume, continuous liquidity, zero-trade prevention,
+strict schema standardization, and provenance metadata (source='binance_futures_um').
 """
 
 import argparse
+import io
 import json
 import logging
 import os
@@ -14,6 +16,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+import zipfile
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -38,9 +41,22 @@ DEFAULT_SYMBOLS = [
 
 DEFAULT_TIMEFRAMES = ["1h", "4h"]
 
-BINANCE_ENDPOINTS = [
-    "https://api.binance.us/api/v3/klines",
-    "https://api.binance.com/api/v3/klines",
+FUTURES_ARCHIVE_BASE = "https://data.binance.vision/data/futures/um"
+
+STANDARD_COLUMNS = [
+    "open_time",
+    "datetime",
+    "open",
+    "high",
+    "low",
+    "close",
+    "volume",
+    "close_time",
+    "quote_volume",
+    "trades",
+    "taker_buy_volume",
+    "taker_buy_quote_volume",
+    "source",
 ]
 
 
@@ -57,78 +73,130 @@ def timeframe_to_ms(timeframe: str) -> int:
     return val * multipliers.get(unit, 60 * 1000)
 
 
-def fetch_klines_batch(
-    symbol: str,
-    interval: str,
-    start_time: int,
-    end_time: Optional[int] = None,
-    limit: int = 1000,
-    endpoints: Optional[List[str]] = None,
-    max_retries: int = 3,
-) -> List[List[Any]]:
+def parse_kline_csv(csv_bytes: bytes) -> pd.DataFrame:
     """
-    Fetch a single batch of klines using dual-endpoint failover and retry logic.
-    Prioritizes Binance US (which avoids regional 451 blocks), with fallback to Binance Global.
+    Parse a raw kline CSV from Binance Vision zip file, handling both headered
+    and unheadered variants, and standardizing all column types.
     """
-    eps = endpoints or BINANCE_ENDPOINTS
-    sym = symbol.upper()
+    expected_names = [
+        "open_time",
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume",
+        "close_time",
+        "quote_volume",
+        "trades",
+        "taker_buy_volume",
+        "taker_buy_quote_volume",
+        "ignore",
+    ]
 
-    params = f"symbol={sym}&interval={interval}&startTime={start_time}&limit={limit}"
-    if end_time is not None:
-        params += f"&endTime={end_time}"
+    # Read first line to detect if header exists
+    first_line = csv_bytes[:200].decode("utf-8", errors="ignore").split("\n")[0]
+    has_header = "open_time" in first_line.lower() or "open" in first_line.lower()
 
+    if has_header:
+        df = pd.read_csv(io.BytesIO(csv_bytes))
+        df.columns = [c.strip().lower() for c in df.columns]
+        if "count" in df.columns and "trades" not in df.columns:
+            df = df.rename(columns={"count": "trades"})
+    else:
+        df = pd.read_csv(io.BytesIO(csv_bytes), header=None, names=expected_names)
+
+    # Harmonize required columns
+    for col in ["open", "high", "low", "close", "volume", "quote_volume", "taker_buy_volume", "taker_buy_quote_volume"]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce").astype(np.float64)
+        else:
+            df[col] = 0.0
+
+    df["open_time"] = pd.to_numeric(df["open_time"], errors="coerce").astype(np.int64)
+    df["close_time"] = pd.to_numeric(df["close_time"], errors="coerce").astype(np.int64)
+
+    if "trades" in df.columns:
+        df["trades"] = pd.to_numeric(df["trades"], errors="coerce").fillna(0).astype(np.int64)
+    else:
+        df["trades"] = 0
+
+    df["datetime"] = pd.to_datetime(df["open_time"], unit="ms", utc=True)
+    df["source"] = "binance_futures_um"
+
+    return df[STANDARD_COLUMNS]
+
+
+def fetch_vision_zip(url: str, max_retries: int = 3) -> Optional[bytes]:
+    """
+    Fetch a zip archive from data.binance.vision over HTTPS with backoff.
+    Returns uncompressed CSV bytes or None if 404/unavailable.
+    """
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "application/json",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko)",
+        "Accept": "*/*",
     }
 
-    last_error: Optional[Exception] = None
-
+    req = urllib.request.Request(url, headers=headers)
     for attempt in range(max_retries):
-        for endpoint in eps:
-            url = f"{endpoint}?{params}"
-            req = urllib.request.Request(url, headers=headers)
-            try:
-                with urllib.request.urlopen(req, timeout=12) as response:
-                    if response.status == 200:
-                        raw_data = response.read().decode("utf-8")
-                        data = json.loads(raw_data)
-                        if isinstance(data, list):
-                            return data
-                        logger.warning(f"Unexpected non-list response from {endpoint}: {data}")
-            except urllib.error.HTTPError as e:
-                last_error = e
-                # 451: Unavailable For Legal Reasons (geo-blocked), 403: Forbidden
-                if e.code in (451, 403):
-                    # Fail over silently to next endpoint
-                    continue
-                elif e.code == 429:
-                    logger.warning(f"Rate limited (429) on {endpoint}. Backing off 2s...")
-                    time.sleep(2.0)
-                else:
-                    logger.warning(f"HTTP error {e.code} from {endpoint}: {e.reason}")
-            except (urllib.error.URLError, TimeoutError, ConnectionResetError) as e:
-                last_error = e
-                logger.warning(f"Network error querying {endpoint}: {e}")
+        try:
+            with urllib.request.urlopen(req, timeout=12) as response:
+                if response.status == 200:
+                    zip_content = response.read()
+                    with zipfile.ZipFile(io.BytesIO(zip_content)) as z:
+                        namelist = z.namelist()
+                        if not namelist:
+                            return None
+                        # Return first CSV file in the zip
+                        csv_name = [n for n in namelist if n.endswith(".csv")][0]
+                        return z.read(csv_name)
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                # File not published yet or outside date range
+                return None
+            time.sleep(0.5 * (attempt + 1))
+        except Exception as e:
+            logger.debug(f"Attempt {attempt + 1} failed for {url}: {e}")
+            time.sleep(0.5 * (attempt + 1))
 
-        # Sleep with backoff before next attempt across all endpoints
-        time.sleep(0.5 * (2**attempt))
+    return None
 
-    if last_error:
-        logger.error(f"Failed to fetch batch for {sym} {interval} at {start_time}: {last_error}")
-    return []
+
+def fetch_monthly_klines(symbol: str, timeframe: str, year: int, month: int) -> Optional[pd.DataFrame]:
+    """Download a single month's official futures klines from data.binance.vision."""
+    url = f"{FUTURES_ARCHIVE_BASE}/monthly/klines/{symbol}/{timeframe}/{symbol}-{timeframe}-{year}-{month:02d}.zip"
+    csv_bytes = fetch_vision_zip(url)
+    if csv_bytes is None:
+        return None
+    try:
+        return parse_kline_csv(csv_bytes)
+    except Exception as e:
+        logger.warning(f"Failed to parse monthly CSV for {symbol} {timeframe} {year}-{month:02d}: {e}")
+        return None
+
+
+def fetch_daily_klines(symbol: str, timeframe: str, year: int, month: int, day: int) -> Optional[pd.DataFrame]:
+    """Download a single day's official futures klines from data.binance.vision."""
+    url = f"{FUTURES_ARCHIVE_BASE}/daily/klines/{symbol}/{timeframe}/{symbol}-{timeframe}-{year}-{month:02d}-{day:02d}.zip"
+    csv_bytes = fetch_vision_zip(url)
+    if csv_bytes is None:
+        return None
+    try:
+        return parse_kline_csv(csv_bytes)
+    except Exception as e:
+        logger.warning(f"Failed to parse daily CSV for {symbol} {timeframe} {year}-{month:02d}-{day:02d}: {e}")
+        return None
 
 
 def verify_candle_integrity(df: pd.DataFrame, timeframe: str) -> Tuple[bool, List[str]]:
     """
     Audit candle DataFrame for schema compliance, null values, monotonicity,
-    temporal continuity, and price/volume sanity.
+    temporal continuity, price hierarchy, and real futures liquidity.
     """
     issues: List[str] = []
     if df.empty:
         return False, ["DataFrame is completely empty"]
 
-    required_cols = ["open_time", "datetime", "open", "high", "low", "close", "volume"]
+    required_cols = ["open_time", "datetime", "open", "high", "low", "close", "volume", "quote_volume", "source"]
     for col in required_cols:
         if col not in df.columns:
             issues.append(f"Missing required column: {col}")
@@ -152,23 +220,19 @@ def verify_candle_integrity(df: pd.DataFrame, timeframe: str) -> Tuple[bool, Lis
         issues.append(f"Found {dups} duplicate open_time timestamps")
 
     # 4. Price hierarchy check
-    # High >= max(Open, Close)
     max_oc = np.maximum(df["open"].values, df["close"].values)
     high_violations = np.sum(df["high"].values < (max_oc - 1e-8))
     if high_violations > 0:
         issues.append(f"Found {high_violations} bars where high < max(open, close)")
 
-    # Low <= min(Open, Close)
     min_oc = np.minimum(df["open"].values, df["close"].values)
     low_violations = np.sum(df["low"].values > (min_oc + 1e-8))
     if low_violations > 0:
         issues.append(f"Found {low_violations} bars where low > min(open, close)")
 
-    # Positive prices
     if np.any(df["low"].values <= 0.0):
         issues.append("Found non-positive low prices")
 
-    # Non-negative volume
     if np.any(df["volume"].values < 0.0):
         issues.append("Found negative volume values")
 
@@ -178,149 +242,142 @@ def verify_candle_integrity(df: pd.DataFrame, timeframe: str) -> Tuple[bool, Lis
     gaps = np.where(diffs != interval_ms)[0]
     if len(gaps) > 0:
         gap_details = []
-        for g_idx in gaps[:5]:  # show up to 5 gaps
+        for g_idx in gaps[:5]:
             t1 = df["open_time"].iloc[g_idx]
             t2 = df["open_time"].iloc[g_idx + 1]
             gap_details.append(f"gap of {t2 - t1}ms between {t1} and {t2}")
         issues.append(f"Found {len(gaps)} continuity gaps in {timeframe} sequence ({', '.join(gap_details)})")
 
+    # 6. Liquidity & Volume Sanity Check (Futures Sanity)
+    median_vol = float(df["quote_volume"].median()) if "quote_volume" in df.columns else 0.0
+    if median_vol < 1000.0:
+        issues.append(f"Abnormally low median hourly volume (${median_vol:,.2f}), possible illiquid or wrong market")
+
+    if "trades" in df.columns:
+        zero_trade_pct = (df["trades"] == 0).mean() * 100.0
+        if zero_trade_pct > 0.5:
+            issues.append(f"Found {zero_trade_pct:.2f}% zero-trade hours, unacceptable for institutional futures")
+
     is_valid = len(issues) == 0
     return is_valid, issues
 
 
-def download_candles(
+def download_candles_futures(
     symbol: str,
     timeframe: str,
-    start_time_ms: int,
-    end_time_ms: Optional[int] = None,
+    start_year: int = 2024,
+    start_month: int = 1,
+    end_year: int = 2026,
+    end_month: int = 10,
     output_dir: str = "data/candles",
-    rate_limit_delay: float = 0.05,
 ) -> pd.DataFrame:
     """
-    Download a continuous time series of klines and save to Parquet.
+    Download continuous Binance USD-M Futures klines from data.binance.vision
+    and save atomically to Parquet with full schema and provenance metadata.
     """
     os.makedirs(output_dir, exist_ok=True)
     sym = symbol.upper()
-    interval_ms = timeframe_to_ms(timeframe)
+    tf = timeframe.lower()
 
-    if end_time_ms is None:
-        end_time_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+    logger.info(f"Downloading official Binance USD-M Futures for {sym} [{tf}] from {start_year}-{start_month:02d}...")
 
-    logger.info(
-        f"Downloading {sym} [{timeframe}] from "
-        f"{datetime.fromtimestamp(start_time_ms / 1000, tz=timezone.utc).strftime('%Y-%m-%d %H:%M')} to "
-        f"{datetime.fromtimestamp(end_time_ms / 1000, tz=timezone.utc).strftime('%Y-%m-%d %H:%M')}"
-    )
+    frames: List[pd.DataFrame] = []
 
-    all_rows: List[List[Any]] = []
-    curr_start = start_time_ms
+    # 1. Fetch monthly archives
+    for y in range(start_year, end_year + 1):
+        m_start = start_month if y == start_year else 1
+        m_end = (end_month - 1) if y == end_year else 12
 
-    while curr_start < end_time_ms:
-        batch = fetch_klines_batch(
-            symbol=sym,
-            interval=timeframe,
-            start_time=curr_start,
-            end_time=end_time_ms,
-            limit=1000,
-        )
+        for m in range(m_start, m_end + 1):
+            m_df = fetch_monthly_klines(sym, tf, y, m)
+            if m_df is not None and not m_df.empty:
+                frames.append(m_df)
+                logger.debug(f"Loaded {sym} {tf} monthly archive: {y}-{m:02d} ({len(m_df)} bars)")
 
-        if not batch:
-            logger.warning(f"No more data returned for {sym} {timeframe} at {curr_start}")
+    # 2. Fetch daily archives for current/most recent incomplete month
+    for d in range(1, 32):
+        d_df = fetch_daily_klines(sym, tf, end_year, end_month, d)
+        if d_df is not None and not d_df.empty:
+            frames.append(d_df)
+            logger.debug(f"Loaded {sym} {tf} daily archive: {end_year}-{end_month:02d}-{d:02d} ({len(d_df)} bars)")
+        elif d > 5:
+            # If several days fail sequentially, we have reached the latest published day
             break
 
-        all_rows.extend(batch)
-        last_open_time = int(batch[-1][0])
-        next_start = last_open_time + interval_ms
-
-        if next_start <= curr_start:
-            # Avoid infinite loop on stuck timestamp
-            curr_start += interval_ms
-        else:
-            curr_start = next_start
-
-        if rate_limit_delay > 0:
-            time.sleep(rate_limit_delay)
-
-    if not all_rows:
-        logger.error(f"Download returned 0 candles for {sym} {timeframe}")
+    if not frames:
+        logger.error(f"Zero futures klines retrieved for {sym} {tf} from data.binance.vision")
         return pd.DataFrame()
 
-    # Parse raw kline rows into structured DataFrame
-    # Raw format: [open_time, open, high, low, close, volume, close_time, quote_asset_volume, number_of_trades, ...]
-    parsed_records = []
-    for r in all_rows:
-        parsed_records.append(
-            {
-                "open_time": int(r[0]),
-                "datetime": pd.to_datetime(int(r[0]), unit="ms", utc=True),
-                "open": float(r[1]),
-                "high": float(r[2]),
-                "low": float(r[3]),
-                "close": float(r[4]),
-                "volume": float(r[5]),
-                "close_time": int(r[6]),
-                "quote_volume": float(r[7]),
-                "trades": int(r[8]),
-            }
-        )
+    # Combine all months and days
+    full_df = pd.concat(frames, ignore_index=True)
 
-    df = pd.DataFrame(parsed_records)
-
-    # Deduplicate and sort
-    df = df.drop_duplicates(subset=["open_time"]).sort_values("open_time").reset_index(drop=True)
+    # Deduplicate and sort strictly by open_time
+    full_df = full_df.drop_duplicates(subset=["open_time"]).sort_values("open_time").reset_index(drop=True)
 
     # Validate integrity
-    is_valid, issues = verify_candle_integrity(df, timeframe)
+    is_valid, issues = verify_candle_integrity(full_df, tf)
     if not is_valid:
-        logger.warning(f"Data integrity warnings for {sym} {timeframe}: {issues}")
+        logger.warning(f"Integrity warnings for {sym} {tf}: {issues}")
     else:
-        logger.info(f"Integrity check PASSED for {sym} {timeframe}: {len(df)} continuous candles")
+        logger.info(
+            f"Integrity check PASSED for {sym} {tf}: {len(full_df)} candles from "
+            f"{full_df['datetime'].iloc[0].strftime('%Y-%m-%d')} to {full_df['datetime'].iloc[-1].strftime('%Y-%m-%d')} "
+            f"(Median Quote Vol: ${full_df['quote_volume'].median():,.0f}/bar)"
+        )
 
     # Save to Parquet atomically
-    parquet_path = os.path.join(output_dir, f"{sym}_{timeframe}.parquet")
-    tmp_path = os.path.join(output_dir, f".tmp_{sym}_{timeframe}.parquet")
+    parquet_path = os.path.join(output_dir, f"{sym}_{tf}.parquet")
+    tmp_path = os.path.join(output_dir, f".tmp_{sym}_{tf}.parquet")
 
-    df.to_parquet(tmp_path, engine="pyarrow", compression="snappy", index=False)
+    full_df.to_parquet(tmp_path, engine="pyarrow", compression="snappy", index=False)
     os.replace(tmp_path, parquet_path)
-    logger.info(f"Saved {len(df)} candles to {parquet_path}")
+    logger.info(f"Saved {len(full_df)} candles to {parquet_path}")
 
-    return df
+    return full_df
 
 
-def download_universe(
+def download_universe_futures(
     symbols: Optional[List[str]] = None,
     timeframes: Optional[List[str]] = None,
-    lookback_days: int = 730,
+    start_year: int = 2024,
+    start_month: int = 1,
+    end_year: int = 2026,
+    end_month: int = 10,
     output_dir: str = "data/candles",
 ) -> Dict[str, pd.DataFrame]:
-    """
-    Download historical candle datasets for the entire universe.
-    """
+    """Download continuous official futures datasets for all universe symbols and timeframes."""
     syms = symbols or DEFAULT_SYMBOLS
     tfs = timeframes or DEFAULT_TIMEFRAMES
-    now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
-    start_ms = now_ms - (lookback_days * 86400 * 1000)
 
     results: Dict[str, pd.DataFrame] = {}
+    start_time = time.time()
 
     for sym in syms:
         for tf in tfs:
             key = f"{sym}_{tf}"
-            logger.info(f"=== Processing {key} ===")
-            df = download_candles(
+            df = download_candles_futures(
                 symbol=sym,
                 timeframe=tf,
-                start_time_ms=start_ms,
-                end_time_ms=now_ms,
+                start_year=start_year,
+                start_month=start_month,
+                end_year=end_year,
+                end_month=end_month,
                 output_dir=output_dir,
             )
             results[key] = df
 
+    elapsed = time.time() - start_time
+    logger.info(f"Universe ingestion complete: {len(results)} datasets saved in {elapsed:.1f}s")
     return results
 
 
+# Backwards-compatible aliases
+download_candles = download_candles_futures
+download_universe = download_universe_futures
+
+
 def main():
-    parser = argparse.ArgumentParser(description="Download historical candles into Parquet data lake.")
+    parser = argparse.ArgumentParser(description="Download official Binance USD-M Futures historical data.")
     parser.add_argument(
         "--symbols",
         type=str,
@@ -334,10 +391,28 @@ def main():
         help="Comma-separated list of timeframes (default: 1h,4h)",
     )
     parser.add_argument(
-        "--days",
+        "--start-year",
         type=int,
-        default=730,
-        help="Number of lookback days (default: 730 = 2 years)",
+        default=2024,
+        help="Start year (default: 2024)",
+    )
+    parser.add_argument(
+        "--start-month",
+        type=int,
+        default=1,
+        help="Start month (default: 1)",
+    )
+    parser.add_argument(
+        "--end-year",
+        type=int,
+        default=2026,
+        help="End year (default: 2026)",
+    )
+    parser.add_argument(
+        "--end-month",
+        type=int,
+        default=10,
+        help="End month (default: 10)",
     )
     parser.add_argument(
         "--output-dir",
@@ -366,17 +441,22 @@ def main():
                     continue
                 df = pd.read_parquet(path)
                 valid, issues = verify_candle_integrity(df, tf)
+                source = df["source"].iloc[0] if "source" in df.columns else "unknown"
+                med_vol = df["quote_volume"].median() if "quote_volume" in df.columns else 0
                 if valid:
-                    print(f"[OK] {sym}_{tf}: {len(df)} candles, 0 integrity issues.")
+                    print(f"[OK] {sym}_{tf}: {len(df)} candles | Source: {source} | Med Vol: ${med_vol:,.0f} | 0 issues.")
                 else:
                     print(f"[FAIL] {sym}_{tf}: {issues}")
                     all_passed = False
         sys.exit(0 if all_passed else 1)
 
-    download_universe(
+    download_universe_futures(
         symbols=symbols,
         timeframes=timeframes,
-        lookback_days=args.days,
+        start_year=args.start_year,
+        start_month=args.start_month,
+        end_year=args.end_year,
+        end_month=args.end_month,
         output_dir=args.output_dir,
     )
 

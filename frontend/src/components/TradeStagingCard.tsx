@@ -157,9 +157,9 @@ export const TradeStagingCard: React.FC<TradeStagingCardProps> = ({
   // Baseline Reality context from Phase 3 empirical findings
   const baselineInfo = opportunity?.historical_baseline || setup.historical_baseline || {
     pattern: 'SMC FVG Retest',
-    win_rate: 46.0,
-    profit_factor: 0.92,
-    sample_trades: 2946,
+    win_rate: 45.9,
+    profit_factor: 0.93,
+    sample_trades: 3805,
     status: 'NEUTRAL BASELINE (Order flow confirmation required)',
   };
 

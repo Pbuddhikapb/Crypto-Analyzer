@@ -1065,18 +1065,18 @@ def create_app(
                 inflection_pattern = "SMC Bullish FVG Retest"
                 baseline_info = {
                     "pattern": "FVG Retest",
-                    "win_rate": 46.0,
-                    "profit_factor": 0.92,
-                    "sample_trades": 2946,
+                    "win_rate": 45.9,
+                    "profit_factor": 0.93,
+                    "sample_trades": 3805,
                     "status": "NEUTRAL BASELINE (Order flow confirmation required)",
                 }
             elif trend == "BEARISH" and indicators.get("has_bearish_fvg"):
                 inflection_pattern = "SMC Bearish FVG Retest"
                 baseline_info = {
                     "pattern": "FVG Retest",
-                    "win_rate": 46.0,
-                    "profit_factor": 0.92,
-                    "sample_trades": 2946,
+                    "win_rate": 45.9,
+                    "profit_factor": 0.93,
+                    "sample_trades": 3805,
                     "status": "NEUTRAL BASELINE (Order flow confirmation required)",
                 }
             elif indicators.get("has_bullish_divergence") or indicators.get("has_bearish_divergence"):
@@ -1092,9 +1092,9 @@ def create_app(
                 inflection_pattern = f"Macro {trend.title()} Pullback"
                 baseline_info = {
                     "pattern": "Trend Pullback",
-                    "win_rate": 49.4,
-                    "profit_factor": 0.88,
-                    "sample_trades": 2522,
+                    "win_rate": 48.7,
+                    "profit_factor": 0.85,
+                    "sample_trades": 3544,
                     "status": "NEUTRAL BASELINE (Wait for confirmed bounce)",
                 }
 

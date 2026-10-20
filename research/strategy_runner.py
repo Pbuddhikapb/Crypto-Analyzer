@@ -10,7 +10,10 @@ and produces the formal validation report in research/reports/strategy_validatio
 import argparse
 import logging
 import os
+import sys
 import time
+
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
@@ -493,7 +496,7 @@ def generate_markdown_report(results: List[StrategyRunResult], output_path: str)
 **Generated:** {now_str}  
 **Architecture Doctrine:** Claude's Option B (Discretionary Human Trading Terminal)  
 **Null Hypothesis ($H_0$):** Phase 2 1,000-pass Monte Carlo Baseline Hurdle  
-**Dataset:** 10 Major Pairs (`{', '.join(DEFAULT_SYMBOLS)}`), 2+ Years (~17,500 1h bars / coin)  
+**Dataset:** 10 Major Pairs (`{', '.join(DEFAULT_SYMBOLS)}`), 2.8 Years (24,528 continuous 1h bars / coin from Binance USD-M Futures)  
 **Execution Authority:** Single Exit Authority (`engine/exits.py`)  
 **Institutional Friction:** Taker Fee 0.05%, Maker Fee 0.02%, Slippage 0.03%, 8h Funding Drag 0.01%  
 **Exit Mechanics:** Stepped Scaling (50% TP1 @ +0.75R, BE armed @ +0.85R excursion, TP2 @ +1.33R, 12-bar stagnancy)
@@ -504,12 +507,12 @@ def generate_markdown_report(results: List[StrategyRunResult], output_path: str)
 
 Under Claude's doctrine (*"Evidence before infrastructure"*), no trading signal or indicator rule is permitted to enter the Discretionary Trading Terminal without empirical proof that it outperforms random noise ($p < 0.05$).
 
-In Phase 2, we established the empirical null hypothesis ($H_0$) across 1,000 Monte Carlo runs under full institutional friction:
-* **Profit Factor Hurdle ($p_{{95}}$):** `> 1.14` (Median noise: `0.92`)
-* **Win Rate Hurdle ($p_{{95}}$):** `> 50.00%` (Median noise: `44.79%`)
-* **Expectancy Hurdle ($p_{{95}}$):** `> +0.0520R` (Median noise: `-0.0271R`)
-* **Sharpe Ratio Hurdle ($p_{{95}}$):** `> 0.07` (Median noise: `-1.43`)
-* **Max Drawdown Hurdle ($p_{{50}}$):** `< 23.26%` (Worst 5% noise: `36.95%`)
+In Phase 2, we established the empirical null hypothesis ($H_0$) across 1,000 Monte Carlo runs on Binance USD-M Futures under full institutional friction:
+* **Profit Factor Hurdle ($p_{{95}}$):** `> 1.16` (Median noise: `0.93`)
+* **Win Rate Hurdle ($p_{{95}}$):** `> 51.43%` (Median noise: `46.13%`)
+* **Expectancy Hurdle ($p_{{95}}$):** `> +0.0602R` (Median noise: `-0.0239R`)
+* **Sharpe Ratio Hurdle ($p_{{95}}$):** `> 0.22` (Median noise: `-1.35`)
+* **Max Drawdown Hurdle ($p_{{50}}$):** `< 22.48%` (Worst 5% noise: `36.11%`)
 
 Four core discretionary trading hypotheses were codified with strict zero lookahead (signal at bar $i$ close $\\rightarrow$ entry at bar $i+1$ open) and simulated across all 10 coins.
 

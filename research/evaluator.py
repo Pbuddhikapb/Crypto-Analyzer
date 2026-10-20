@@ -19,40 +19,40 @@ class BaselineHurdles:
     """Empirical 1,000-pass Monte Carlo baseline distributions and hurdles."""
 
     # Profit Factor
-    pf_hurdle_p95: float = 1.14
-    pf_null_mean: float = 0.93
+    pf_hurdle_p95: float = 1.16
+    pf_null_mean: float = 0.94
     pf_null_std: float = 0.13
 
     # Win Rate (%)
-    wr_hurdle_p95: float = 50.00
-    wr_null_mean: float = 44.82
-    wr_null_std: float = 3.07
+    wr_hurdle_p95: float = 51.43
+    wr_null_mean: float = 46.22
+    wr_null_std: float = 3.09
 
     # Expectancy (R)
-    ev_r_hurdle_p95: float = 0.0520
-    ev_r_null_mean: float = -0.0282
-    ev_r_null_std: float = 0.0520
+    ev_r_hurdle_p95: float = 0.0602
+    ev_r_null_mean: float = -0.0242
+    ev_r_null_std: float = 0.0516
 
     # Sharpe Ratio
-    sharpe_hurdle_p95: float = 0.07
-    sharpe_null_mean: float = -1.46
-    sharpe_null_std: float = 1.00
+    sharpe_hurdle_p95: float = 0.22
+    sharpe_null_mean: float = -1.37
+    sharpe_null_std: float = 0.99
 
     # Sortino Ratio
-    sortino_hurdle_p95: float = 0.10
-    sortino_null_mean: float = -1.90
+    sortino_hurdle_p95: float = 0.32
+    sortino_null_mean: float = -1.78
     sortino_null_std: float = 1.25
 
     # Max Drawdown (%)
-    dd_hurdle_p50: float = 23.26
-    dd_hurdle_p95: float = 36.95
-    dd_null_mean: float = 23.49
-    dd_null_std: float = 7.78
+    dd_hurdle_p50: float = 22.48
+    dd_hurdle_p95: float = 36.11
+    dd_null_mean: float = 22.99
+    dd_null_std: float = 7.58
 
     # Net Return (%)
-    ret_hurdle_p95: float = 0.07
-    ret_null_mean: float = -17.47
-    ret_null_std: float = 10.68
+    ret_hurdle_p95: float = 2.06
+    ret_null_mean: float = -16.66
+    ret_null_std: float = 10.93
 
 
 def compute_p_value(observed: float, null_mean: float, null_std: float, higher_is_better: bool = True) -> float:
