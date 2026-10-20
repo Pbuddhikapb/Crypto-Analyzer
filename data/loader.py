@@ -10,6 +10,8 @@ from typing import Dict, Optional, Tuple
 
 import pandas as pd
 
+DEVELOPMENT_END = "2026-04-18"
+
 _CANDLE_CACHE: Dict[Tuple[str, str], pd.DataFrame] = {}
 
 
@@ -20,6 +22,7 @@ def load_candles(
     end_date: Optional[str] = None,
     data_dir: str = "data/candles",
     use_cache: bool = True,
+    allow_holdout: bool = False,
 ) -> pd.DataFrame:
     """
     Load historical candles from Parquet data lake into a clean DataFrame.
@@ -31,6 +34,7 @@ def load_candles(
         end_date: optional ISO date string, e.g. '2026-10-01'
         data_dir: path to candle lake
         use_cache: whether to store and retrieve from in-memory cache
+        allow_holdout: whether to allow candles past DEVELOPMENT_END (default: False)
 
     Returns:
         DataFrame sorted by open_time with datetime as index or column.
@@ -61,7 +65,16 @@ def load_candles(
         start_dt = pd.to_datetime(start_date, utc=True)
         df = df[df["datetime"] >= start_dt]
 
-    if end_date is not None:
+    # Holdout protection: default returns only data up to DEVELOPMENT_END
+    if not allow_holdout:
+        dev_end_dt = pd.to_datetime(DEVELOPMENT_END, utc=True)
+        if end_date is not None:
+            user_end_dt = pd.to_datetime(end_date, utc=True)
+            effective_end_dt = min(user_end_dt, dev_end_dt)
+        else:
+            effective_end_dt = dev_end_dt
+        df = df[df["datetime"] <= effective_end_dt]
+    elif end_date is not None:
         end_dt = pd.to_datetime(end_date, utc=True)
         df = df[df["datetime"] <= end_dt]
 
