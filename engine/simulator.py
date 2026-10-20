@@ -10,6 +10,7 @@ Simulates trading execution with realistic market frictions:
 - Full performance reporting (WR, PF, EV, MaxDD, Sharpe, Sortino).
 """
 
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
@@ -26,6 +27,8 @@ from engine.exits import (
     create_trade_state,
     evaluate_trade_exit,
 )
+
+logger = logging.getLogger("simulator")
 
 
 @dataclass(frozen=True)
@@ -49,6 +52,7 @@ class CandidateSignal:
     timestamp_ms: int
     score: float = 100.0
     metadata: Dict[str, Any] = field(default_factory=dict)
+    volume: Optional[float] = None
 
 
 @dataclass
@@ -136,6 +140,7 @@ class SimulationEngine:
         exit_config: Optional[ExitConfig] = None,
         ruin_threshold_usd: Optional[float] = None,
         sizing_mode: str = "fixed_risk",
+        bar_interval_ms: Optional[int] = None,
     ):
         self.initial_equity_usd = float(initial_equity_usd)
         self.equity_usd = float(initial_equity_usd)
@@ -152,6 +157,7 @@ class SimulationEngine:
             else (0.05 * self.initial_equity_usd)
         )
         self.sizing_mode = sizing_mode
+        self.bar_interval_ms = bar_interval_ms
         self.ruined = False
         self.ruin_time_ms: Optional[int] = None
 
@@ -160,13 +166,27 @@ class SimulationEngine:
         self.active_positions: Dict[str, Dict[str, Any]] = {}
         # symbol -> bar_index when last closed
         self.cooldown_tracker: Dict[str, int] = {}
+        # symbol -> last observed bar timestamp in ms
+        self.last_bar_timestamp_ms: Dict[str, int] = {}
+        # symbol -> buffer dict (for indicator tracking)
+        self.indicator_buffers: Dict[str, Any] = {}
         # Completed trades
         self.completed_trades: List[ExecutedTrade] = []
         # Equity curve: (timestamp_ms, equity)
         self.equity_curve: List[Tuple[int, float]] = []
 
-    def can_open_position(self, symbol: str, side: str, current_bar_idx: int) -> Tuple[bool, str]:
+    def can_open_position(
+        self,
+        symbol: str,
+        side: str,
+        current_bar_idx: int,
+        entry_volume: Optional[float] = None,
+    ) -> Tuple[bool, str]:
         """Verify whether portfolio constraints allow opening a new position."""
+        # Check volume on entry bar: volume == 0 must be skipped
+        if entry_volume is not None and entry_volume == 0.0:
+            return False, f"Entry bar volume is zero for {symbol}"
+
         # 0. Ruin guard check: reject new positions only in compounding mode
         if self.sizing_mode == "compounding":
             if self.ruined or self.equity_usd <= self.ruin_threshold_usd:
@@ -202,19 +222,40 @@ class SimulationEngine:
 
         return True, "OK"
 
-    def open_position(self, signal: CandidateSignal, current_bar_idx: int) -> Optional[str]:
+    def open_position(
+        self,
+        signal: CandidateSignal,
+        current_bar_idx: int,
+        entry_volume: Optional[float] = None,
+    ) -> Optional[str]:
         """
         Execute market entry with slippage and fee accounting.
         Returns trade_id if filled, None if rejected.
         """
+        vol = entry_volume
+        if vol is None:
+            vol = getattr(signal, "volume", None)
+        if vol is None and hasattr(signal, "metadata") and isinstance(signal.metadata, dict):
+            vol = signal.metadata.get("volume")
+
+        if vol is not None and vol == 0.0:
+            logger.warning(
+                f"Skipping signal for {signal.symbol} at {signal.timestamp_ms}: entry bar has volume == 0"
+            )
+            return None
+
         if self.sizing_mode != "compounding" and self.equity_usd <= self.ruin_threshold_usd:
             if not self.ruined:
                 self.ruined = True
             if self.ruin_time_ms is None:
                 self.ruin_time_ms = signal.timestamp_ms
 
-        can_open, reason = self.can_open_position(signal.symbol, signal.side, current_bar_idx)
+        can_open, reason = self.can_open_position(signal.symbol, signal.side, current_bar_idx, entry_volume=vol)
         if not can_open:
+            if "volume is zero" in reason.lower():
+                logger.warning(
+                    f"Skipping signal for {signal.symbol} at {signal.timestamp_ms}: {reason}"
+                )
             if self.ruined and self.ruin_time_ms is None:
                 self.ruin_time_ms = signal.timestamp_ms
             return None
@@ -281,16 +322,117 @@ class SimulationEngine:
     def process_bar(
         self,
         symbol: str,
-        candle: Tuple[float, float, float, float],  # (open, high, low, close)
+        candle: Tuple[float, ...],  # (open, high, low, close) or (open, high, low, close, volume)
         timestamp_ms: int,
         current_bar_idx: int,
+        bar_interval_ms: Optional[int] = None,
     ) -> List[ExecutedTrade]:
         """
         Process a candle update for a specific symbol across open positions.
         Evaluates exits, funding rate accrual, and returns any closed trades.
+        Treats gaps larger than the bar interval as a session break (does not
+        carry indicators or open trades across it silently; logs a warning).
         """
+        sym = symbol.upper()
+        eff_interval = bar_interval_ms or self.bar_interval_ms
+        prev_ts = self.last_bar_timestamp_ms.get(sym)
+        self.last_bar_timestamp_ms[sym] = timestamp_ms
+
         closed_trades: List[ExecutedTrade] = []
         trades_to_remove: List[str] = []
+
+        # Session Break Check: if gap exceeds bar interval, do not carry indicators or open trades silently
+        if prev_ts is not None and eff_interval is not None:
+            gap = timestamp_ms - prev_ts
+            if gap > eff_interval:
+                logger.warning(
+                    f"Session break detected for {sym}: gap of {gap}ms exceeds bar interval "
+                    f"{eff_interval}ms between {prev_ts} and {timestamp_ms}. Terminating open trades."
+                )
+                if sym in self.indicator_buffers:
+                    self.indicator_buffers[sym].clear()
+
+                for trade_id, pos in list(self.active_positions.items()):
+                    state = pos["state"]
+                    if state.symbol == sym:
+                        exit_price = candle[0]  # Terminate at gap bar open
+                        remaining_notional = pos["notional_usd"] * state.size_remaining_pct
+                        slip_rate = self.friction.slippage_pct / 100.0
+                        exit_fill = (
+                            exit_price * (1.0 - slip_rate)
+                            if state.side == "LONG"
+                            else exit_price * (1.0 + slip_rate)
+                        )
+                        exit_fee = remaining_notional * (self.friction.taker_fee_pct / 100.0)
+                        slip_cost = remaining_notional * slip_rate
+                        pos["slippage_usd"] += slip_cost
+
+                        exit_gross_return_pct = calculate_gross_return_pct(
+                            state.side, pos["entry_fill_price"], exit_fill
+                        )
+                        remaining_gross_pnl = remaining_notional * (exit_gross_return_pct / 100.0)
+                        total_gross_pnl = pos["tp1_realized_usd"] + remaining_gross_pnl
+                        total_fees = pos["entry_fee_usd"] + pos["tp1_fees_usd"] + exit_fee
+                        total_slippage = pos["slippage_usd"]
+                        total_funding = pos["funding_cost_usd"]
+
+                        net_pnl = total_gross_pnl - total_fees - total_funding
+                        net_return_pct = (net_pnl / pos["notional_usd"]) * 100.0
+
+                        if pos["tp1_realized_usd"] != 0.0:
+                            exit_r = calculate_r_multiple(
+                                state.side, pos["entry_fill_price"], exit_fill, state.risk_dist
+                            )
+                            combined_r = (0.5 * pos["tp1_r"]) + (0.5 * exit_r)
+                        else:
+                            combined_r = calculate_r_multiple(
+                                state.side, pos["entry_fill_price"], exit_fill, state.risk_dist
+                            )
+
+                        self.equity_usd += remaining_gross_pnl - exit_fee
+                        init_risk = pos.get("risk_usd", pos["notional_usd"] * 0.01)
+                        net_r = (net_pnl / init_risk) if init_risk > 0 else 0.0
+
+                        executed = ExecutedTrade(
+                            trade_id=trade_id,
+                            symbol=state.symbol,
+                            side=state.side,
+                            entry_time_ms=pos["entry_time_ms"],
+                            exit_time_ms=timestamp_ms,
+                            entry_price=pos["nominal_entry_price"],
+                            entry_fill_price=pos["entry_fill_price"],
+                            exit_price=exit_price,
+                            exit_fill_price=exit_fill,
+                            exit_reason="SESSION_BREAK",
+                            position_size_usd=pos["notional_usd"],
+                            gross_pnl_usd=round(total_gross_pnl, 2),
+                            fees_usd=round(total_fees, 2),
+                            slippage_usd=round(total_slippage, 2),
+                            funding_cost_usd=round(total_funding, 2),
+                            net_pnl_usd=round(net_pnl, 2),
+                            net_return_pct=round(net_return_pct, 4),
+                            realized_r=round(combined_r, 4),
+                            bars_held=state.bars_held,
+                            mfe_r=round(state.highest_r, 4),
+                            mae_r=round(state.lowest_r, 4),
+                            initial_risk_usd=round(init_risk, 2),
+                            net_r=round(net_r, 4),
+                        )
+                        closed_trades.append(executed)
+                        self.completed_trades.append(executed)
+                        trades_to_remove.append(trade_id)
+                        self.cooldown_tracker[sym] = current_bar_idx
+
+                for tid in trades_to_remove:
+                    if tid in self.active_positions:
+                        del self.active_positions[tid]
+
+                if closed_trades:
+                    if self.equity_curve and self.equity_curve[-1][0] == timestamp_ms:
+                        self.equity_curve[-1] = (timestamp_ms, round(self.equity_usd, 2))
+                    else:
+                        self.equity_curve.append((timestamp_ms, round(self.equity_usd, 2)))
+                    return closed_trades
 
         for trade_id, pos in self.active_positions.items():
             state = pos["state"]
@@ -307,7 +449,8 @@ class SimulationEngine:
                 pos["last_funding_period"] = current_funding_period
 
             # 2. Evaluate exit authority pure logic
-            decision = evaluate_trade_exit(state, candle, self.exit_config)
+            candle_4 = (candle[0], candle[1], candle[2], candle[3])
+            decision = evaluate_trade_exit(state, candle_4, self.exit_config)
 
             if decision.action == "PARTIAL_TP1":
                 # 50% scale-out at TP1

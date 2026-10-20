@@ -570,3 +570,107 @@ def test_net_profit_factor_and_net_r_with_fee_flipped_winner():
     assert closed[0].net_r < -0.95
 
 
+def test_skip_signals_with_zero_volume(caplog):
+    """Verify signals whose entry bar has volume == 0 are skipped and logged."""
+    import logging
+
+    sim = SimulationEngine(initial_equity_usd=10000.0)
+
+    # 1. CandidateSignal with explicit volume=0.0
+    sig_zero_vol = CandidateSignal(
+        symbol="BTCUSDT",
+        side="LONG",
+        entry_price=50000.0,
+        stop_loss=49000.0,
+        timestamp_ms=1000,
+        volume=0.0,
+    )
+    with caplog.at_level(logging.WARNING):
+        t_id1 = sim.open_position(sig_zero_vol, current_bar_idx=0)
+        assert t_id1 is None
+        assert "volume == 0" in caplog.text or "volume is zero" in caplog.text
+
+    # 2. CandidateSignal with metadata volume == 0.0
+    caplog.clear()
+    sig_meta_zero = CandidateSignal(
+        symbol="BTCUSDT",
+        side="LONG",
+        entry_price=50000.0,
+        stop_loss=49000.0,
+        timestamp_ms=2000,
+        metadata={"volume": 0.0},
+    )
+    with caplog.at_level(logging.WARNING):
+        t_id2 = sim.open_position(sig_meta_zero, current_bar_idx=1)
+        assert t_id2 is None
+        assert "volume == 0" in caplog.text or "volume is zero" in caplog.text
+
+    # 3. Explicit entry_volume=0.0 passed to open_position
+    sig_normal = CandidateSignal(
+        symbol="BTCUSDT",
+        side="LONG",
+        entry_price=50000.0,
+        stop_loss=49000.0,
+        timestamp_ms=3000,
+    )
+    t_id3 = sim.open_position(sig_normal, current_bar_idx=2, entry_volume=0.0)
+    assert t_id3 is None
+
+    # 4. Signal with normal positive volume enters successfully
+    t_id_valid = sim.open_position(sig_normal, current_bar_idx=3, entry_volume=125.0)
+    assert t_id_valid is not None
+    assert len(sim.active_positions) == 1
+
+
+def test_session_break_on_large_gap_terminates_open_trades_and_logs(caplog):
+    """Verify gaps larger than bar interval trigger a session break and liquidate open trades."""
+    import logging
+
+    interval_ms = 3600 * 1000  # 1 hour
+    sim = SimulationEngine(initial_equity_usd=10000.0, bar_interval_ms=interval_ms)
+    sim.indicator_buffers["BTCUSDT"] = {"rolling_mean": 50000.0}
+
+    # Open a trade at bar 0
+    t0 = 1700000000000
+    sig = CandidateSignal(
+        symbol="BTCUSDT",
+        side="LONG",
+        entry_price=50000.0,
+        stop_loss=48000.0,
+        timestamp_ms=t0,
+        volume=50.0,
+    )
+    t_id = sim.open_position(sig, current_bar_idx=0)
+    assert t_id is not None
+    assert len(sim.active_positions) == 1
+
+    # First normal bar at t0 + 1h (gap == interval_ms)
+    t1 = t0 + interval_ms
+    c1 = (50100.0, 50200.0, 50000.0, 50150.0)
+    closed = sim.process_bar("BTCUSDT", c1, timestamp_ms=t1, current_bar_idx=1)
+    assert len(closed) == 0
+    assert len(sim.active_positions) == 1
+    assert "rolling_mean" in sim.indicator_buffers["BTCUSDT"]
+
+    # Session break: jump 5 hours forward (t1 + 5h, gap = 5h > 1h)
+    t2 = t1 + (5 * interval_ms)
+    c2 = (49500.0, 49800.0, 49200.0, 49600.0)
+    with caplog.at_level(logging.WARNING):
+        closed_break = sim.process_bar("BTCUSDT", c2, timestamp_ms=t2, current_bar_idx=2)
+
+    # Must log session break warning
+    assert "Session break detected for BTCUSDT" in caplog.text
+
+    # Must clear indicator buffers
+    assert len(sim.indicator_buffers["BTCUSDT"]) == 0
+
+    # Must terminate open trade at bar open (49500.0) with SESSION_BREAK exit reason
+    assert len(closed_break) == 1
+    trade = closed_break[0]
+    assert trade.exit_reason == "SESSION_BREAK"
+    assert trade.exit_price == 49500.0
+    assert len(sim.active_positions) == 0
+    assert len(sim.completed_trades) == 1
+
+
+
