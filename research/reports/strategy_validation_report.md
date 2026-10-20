@@ -1,5 +1,5 @@
 # Strategy Validation Dossier: Evidence Before Infrastructure
-**Generated:** 2026-10-20 10:21 UTC  
+**Generated:** 2026-10-20 12:06 UTC  
 **Architecture Doctrine:** Claude's Option B (Discretionary Human Trading Terminal)  
 **Null Hypothesis ($H_0$):** Phase 2 1,000-pass Monte Carlo Baseline Hurdle  
 **Dataset:** 10 Major Pairs (`BTCUSDT, ETHUSDT, SOLUSDT, BNBUSDT, XRPUSDT, DOGEUSDT, ADAUSDT, AVAXUSDT, LINKUSDT, SUIUSDT`), 2.8 Years (24,528 continuous 1h bars / coin from Binance USD-M Futures)  
@@ -26,12 +26,12 @@ Four core discretionary trading hypotheses were codified with strict zero lookah
 
 ## 2. Master Strategy Scorecard
 
-| Strategy | Trades | Win Rate | Net PF (Gross) | Net EV (Gross EV) | Sharpe | Sortino | Max DD | Net Return | Sizing | Ruined? | Empirical $p$-value | Alpha Verdict |
-| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| **TrendPullback** | 718 | 48.2% | **0.73** (0.84) | **-0.1351R** (-0.0724R) | -2.17 | -2.77 | 97.2% | -97.0% | `fixed_risk` | ⚠️ Ruined (2024-08-04) | `p = 0.9842` | 🔴 **REJECTED** |
-| **FVGRetest** | 1386 | 46.5% | **0.84** (0.94) | **-0.0689R** (-0.0249R) | -1.20 | -1.60 | 95.7% | -95.5% | `fixed_risk` | ⚠️ Ruined (2024-12-22) | `p = 0.8068` | 🔴 **REJECTED** |
-| **ConfluenceThreshold** | 861 | 48.9% | **0.77** (0.87) | **-0.1110R** (-0.0569R) | -1.82 | -2.35 | 95.5% | -95.5% | `fixed_risk` | ⚠️ Ruined (2024-05-09) | `p = 0.9537` | 🔴 **REJECTED** |
-| **LiquiditySweep** | 424 | 46.2% | **0.62** (0.74) | **-0.2277R** (-0.1329R) | -1.80 | -2.49 | 96.6% | -96.6% | `fixed_risk` | ⚠️ Ruined (2024-02-01) | `p = 0.9999` | 🔴 **REJECTED** |
+| Strategy | Trades | Win Rate | Net PF (Gross) | Net EV (Gross EV) | Bootstrap 95% CI | Matched Median EV | Matched Rank $p$-value | Sharpe | Max DD | Net Return | Sizing | Ruined? | Alpha Verdict |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **TrendPullback** | 718 | 48.2% | **0.73** (0.84) | **-0.1351R** (-0.0724R) | [-0.2016, -0.0670]R | -0.1003R | `p = 0.8531` | -2.17 | 97.2% | -97.0% | `fixed_risk` | ⚠️ Ruined (2024-08-04) | 🔴 **REJECTED** |
+| **FVGRetest** | 1386 | 46.5% | **0.84** (0.94) | **-0.0689R** (-0.0249R) | [-0.1144, -0.0226]R | -0.0667R | `p = 0.5345` | -1.20 | 95.7% | -95.5% | `fixed_risk` | ⚠️ Ruined (2024-12-22) | 🔴 **REJECTED** |
+| **ConfluenceThreshold** | 861 | 48.9% | **0.77** (0.87) | **-0.1110R** (-0.0569R) | [-0.1721, -0.0498]R | -0.0877R | `p = 0.7892` | -1.82 | 95.5% | -95.5% | `fixed_risk` | ⚠️ Ruined (2024-05-09) | 🔴 **REJECTED** |
+| **LiquiditySweep** | 424 | 46.2% | **0.62** (0.74) | **-0.2277R** (-0.1329R) | [-0.3200, -0.1374]R | -0.1571R | `p = 0.9421` | -1.80 | 96.6% | -96.6% | `fixed_risk` | ⚠️ Ruined (2024-02-01) | 🔴 **REJECTED** |
 
 ---
 
@@ -41,10 +41,12 @@ Four core discretionary trading hypotheses were codified with strict zero lookah
 **Concept:** 4h Macro Trend + 1h EMA 50 Pullback + RSI Momentum Recovery
 
 > **Statistical Verdict**: **`REJECTED (p >= 0.05)`**  
-> Composite $p$-value against Phase 2 Monte Carlo Hurdle: **`p = 0.9842`**  
+> Matched Rank $p$-value: **`p = 0.8531`** (Empirical rank within 1,000 matched null passes)  
 > Total Candidate Signals: `18385` | Executed Trades: `718`  
 > Net Profit Factor: **`0.73`** (Gross: `0.84`)  
 > Net Expectancy: **`-0.1351R`** (Gross: `-0.0724R`)  
+> Bootstrap 95% CI (Mean Net R): **`[-0.2016R, -0.0670R]`** (10,000 resamples)  
+> Matched Baseline Median Net EV: **`-0.1003R`** (Matched 95th Pct Hurdle: `-0.0493R`)  
 > Sizing Mode: `fixed_risk` | Account Ruined: `YES (at 2024-08-04 19:00 UTC)`
 
 #### Hurdle Checklist:
@@ -52,11 +54,12 @@ Four core discretionary trading hypotheses were codified with strict zero lookah
 - None
 
 #### Failed / Unmet:
-- ❌ Profit Factor 0.73 <= 1.16 (p=0.9469)
-- ❌ Win Rate 48.19% <= 51.43% (p=0.2619)
-- ❌ Expectancy -0.1351R <= +0.0602R (p=0.9842)
-- ❌ Sharpe -2.17 <= 0.22 (p=0.7905)
-- ❌ Max DD 97.23% >= 22.48%
+- ❌ Matched Rank p-value 0.8531 >= 0.05
+- ❌ Profit Factor 0.73 <= 1.03 (p=0.8244)
+- ❌ Win Rate 48.19% <= 51.43% (p=0.2618)
+- ❌ Expectancy -0.1351R <= -0.0493R (p=0.8780)
+- ❌ Sharpe -2.17 <= 0.22 (p=0.7903)
+- ❌ Max DD 97.23% >= 24.08%
 
 #### Per-Symbol Performance:
 | Symbol | Trades | Win Rate | Net PF (Gross) | Net PnL (USD) | Net R (Gross R) |
@@ -78,10 +81,12 @@ Four core discretionary trading hypotheses were codified with strict zero lookah
 **Concept:** HTF Trend + SMC Fair Value Gap Retest & Mitigation Rejection
 
 > **Statistical Verdict**: **`REJECTED (p >= 0.05)`**  
-> Composite $p$-value against Phase 2 Monte Carlo Hurdle: **`p = 0.8068`**  
+> Matched Rank $p$-value: **`p = 0.5345`** (Empirical rank within 1,000 matched null passes)  
 > Total Candidate Signals: `15776` | Executed Trades: `1386`  
 > Net Profit Factor: **`0.84`** (Gross: `0.94`)  
 > Net Expectancy: **`-0.0689R`** (Gross: `-0.0249R`)  
+> Bootstrap 95% CI (Mean Net R): **`[-0.1144R, -0.0226R]`** (10,000 resamples)  
+> Matched Baseline Median Net EV: **`-0.0667R`** (Matched 95th Pct Hurdle: `-0.0324R`)  
 > Sizing Mode: `fixed_risk` | Account Ruined: `YES (at 2024-12-22 18:00 UTC)`
 
 #### Hurdle Checklist:
@@ -89,11 +94,12 @@ Four core discretionary trading hypotheses were codified with strict zero lookah
 - None
 
 #### Failed / Unmet:
-- ❌ Profit Factor 0.84 <= 1.16 (p=0.7791)
-- ❌ Win Rate 46.54% <= 51.43% (p=0.4588)
-- ❌ Expectancy -0.0689R <= +0.0602R (p=0.8068)
-- ❌ Sharpe -1.20 <= 0.22 (p=0.4318)
-- ❌ Max DD 95.70% >= 22.48%
+- ❌ Matched Rank p-value 0.5345 >= 0.05
+- ❌ Profit Factor 0.84 <= 1.03 (p=0.4863)
+- ❌ Win Rate 46.54% <= 51.43% (p=0.4584)
+- ❌ Expectancy -0.0689R <= -0.0324R (p=0.4637)
+- ❌ Sharpe -1.20 <= 0.22 (p=0.4307)
+- ❌ Max DD 95.70% >= 24.08%
 
 #### Per-Symbol Performance:
 | Symbol | Trades | Win Rate | Net PF (Gross) | Net PnL (USD) | Net R (Gross R) |
@@ -115,10 +121,12 @@ Four core discretionary trading hypotheses were codified with strict zero lookah
 **Concept:** Multi-Timeframe 0-100 Confluence Model Triggered at High Conviction (>= 75)
 
 > **Statistical Verdict**: **`REJECTED (p >= 0.05)`**  
-> Composite $p$-value against Phase 2 Monte Carlo Hurdle: **`p = 0.9537`**  
+> Matched Rank $p$-value: **`p = 0.7892`** (Empirical rank within 1,000 matched null passes)  
 > Total Candidate Signals: `98088` | Executed Trades: `861`  
 > Net Profit Factor: **`0.77`** (Gross: `0.87`)  
 > Net Expectancy: **`-0.1110R`** (Gross: `-0.0569R`)  
+> Bootstrap 95% CI (Mean Net R): **`[-0.1721R, -0.0498R]`** (10,000 resamples)  
+> Matched Baseline Median Net EV: **`-0.0877R`** (Matched 95th Pct Hurdle: `-0.0400R`)  
 > Sizing Mode: `fixed_risk` | Account Ruined: `YES (at 2024-05-09 22:00 UTC)`
 
 #### Hurdle Checklist:
@@ -126,11 +134,12 @@ Four core discretionary trading hypotheses were codified with strict zero lookah
 - None
 
 #### Failed / Unmet:
-- ❌ Profit Factor 0.77 <= 1.16 (p=0.9045)
+- ❌ Matched Rank p-value 0.7892 >= 0.05
+- ❌ Profit Factor 0.77 <= 1.03 (p=0.7193)
 - ❌ Win Rate 48.90% <= 51.43% (p=0.1929)
-- ❌ Expectancy -0.1110R <= +0.0602R (p=0.9537)
-- ❌ Sharpe -1.82 <= 0.22 (p=0.6753)
-- ❌ Max DD 95.55% >= 22.48%
+- ❌ Expectancy -0.1110R <= -0.0400R (p=0.7605)
+- ❌ Sharpe -1.82 <= 0.22 (p=0.6748)
+- ❌ Max DD 95.55% >= 24.08%
 
 #### Per-Symbol Performance:
 | Symbol | Trades | Win Rate | Net PF (Gross) | Net PnL (USD) | Net R (Gross R) |
@@ -152,10 +161,12 @@ Four core discretionary trading hypotheses were codified with strict zero lookah
 **Concept:** Swing Failure Pattern (SFP) sweeping key liquidity with rejection
 
 > **Statistical Verdict**: **`REJECTED (p >= 0.05)`**  
-> Composite $p$-value against Phase 2 Monte Carlo Hurdle: **`p = 0.9999`**  
+> Matched Rank $p$-value: **`p = 0.9421`** (Empirical rank within 1,000 matched null passes)  
 > Total Candidate Signals: `40216` | Executed Trades: `424`  
 > Net Profit Factor: **`0.62`** (Gross: `0.74`)  
 > Net Expectancy: **`-0.2277R`** (Gross: `-0.1329R`)  
+> Bootstrap 95% CI (Mean Net R): **`[-0.3200R, -0.1374R]`** (10,000 resamples)  
+> Matched Baseline Median Net EV: **`-0.1571R`** (Matched 95th Pct Hurdle: `-0.0812R`)  
 > Sizing Mode: `fixed_risk` | Account Ruined: `YES (at 2024-02-01 01:00 UTC)`
 
 #### Hurdle Checklist:
@@ -163,11 +174,12 @@ Four core discretionary trading hypotheses were codified with strict zero lookah
 - None
 
 #### Failed / Unmet:
-- ❌ Profit Factor 0.62 <= 1.16 (p=0.9931)
-- ❌ Win Rate 46.23% <= 51.43% (p=0.4987)
-- ❌ Expectancy -0.2277R <= +0.0602R (p=0.9999)
-- ❌ Sharpe -1.80 <= 0.22 (p=0.6680)
-- ❌ Max DD 96.62% >= 22.48%
+- ❌ Matched Rank p-value 0.9421 >= 0.05
+- ❌ Profit Factor 0.62 <= 1.03 (p=0.9712)
+- ❌ Win Rate 46.23% <= 51.43% (p=0.4983)
+- ❌ Expectancy -0.2277R <= -0.0812R (p=0.9983)
+- ❌ Sharpe -1.80 <= 0.22 (p=0.6674)
+- ❌ Max DD 96.62% >= 24.08%
 
 #### Per-Symbol Performance:
 | Symbol | Trades | Win Rate | Net PF (Gross) | Net PnL (USD) | Net R (Gross R) |

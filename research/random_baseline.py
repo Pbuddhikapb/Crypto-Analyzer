@@ -10,13 +10,15 @@ metrics beat the 95th percentile (p < 0.05) of this random entry baseline.
 """
 
 import argparse
+import hashlib
+import json
 import logging
 import os
 import sys
 import time
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -116,6 +118,239 @@ def compute_metric_distribution(name: str, values: List[float]) -> MetricDistrib
         std=round(float(np.std(clean_arr)), 4),
         min_val=round(float(np.min(clean_arr)), 4),
         max_val=round(float(np.max(clean_arr)), 4),
+    )
+
+
+@dataclass
+class MatchedBaselineResult:
+    """Statistical outcome of running matched random-entry null distribution against a strategy."""
+
+    iterations: int
+    strategy_trade_count: int
+    strategy_net_ev_r: float
+    null_expectancy_r_distribution: List[float]
+    median_expectancy_r: float
+    mean_expectancy_r: float
+    std_expectancy_r: float
+    p5_expectancy_r: float
+    p95_expectancy_r: float
+    empirical_p_value: float
+    bootstrap_ci: Tuple[float, float]
+
+
+def compute_dataset_hash(candles_dict: Dict[str, np.ndarray]) -> str:
+    """Deterministic hash of dataset symbols, lengths, and boundary timestamps."""
+    tokens = []
+    for s in sorted(candles_dict.keys()):
+        arr = candles_dict[s]
+        n = len(arr)
+        t_first = int(arr[0, 4]) if n > 0 else 0
+        t_last = int(arr[-1, 4]) if n > 0 else 0
+        tokens.append(f"{s}:{n}:{t_first}:{t_last}")
+    raw = "|".join(tokens)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+
+
+def compute_bootstrap_ci(
+    net_r_values: List[float],
+    n_resamples: int = 10000,
+    seed: int = 42,
+    ci_level: float = 0.95,
+) -> Tuple[float, float]:
+    """
+    Compute empirical bootstrap confidence interval for mean net_r.
+    Resamples trade-level net_r values with replacement n_resamples times.
+    """
+    clean_vals = [float(v) for v in net_r_values if np.isfinite(v)]
+    if len(clean_vals) == 0:
+        return (0.0, 0.0)
+
+    arr = np.array(clean_vals, dtype=np.float64)
+    rng = np.random.default_rng(seed)
+    indices = rng.integers(0, len(arr), size=(n_resamples, len(arr)))
+    boot_means = np.mean(arr[indices], axis=1)
+
+    alpha = (1.0 - ci_level) / 2.0
+    lower_pct = alpha * 100.0
+    upper_pct = (1.0 - alpha) * 100.0
+
+    ci_lower = round(float(np.percentile(boot_means, lower_pct)), 4)
+    ci_upper = round(float(np.percentile(boot_means, upper_pct)), 4)
+    return (ci_lower, ci_upper)
+
+
+def save_baseline_distribution_json(
+    output_json_path: str,
+    distributions: Dict[str, MetricDistribution],
+    metadata: Dict[str, Any],
+) -> None:
+    """Save full Monte Carlo distributions and metadata to JSON."""
+    os.makedirs(os.path.dirname(output_json_path), exist_ok=True)
+    out = {
+        "metadata": metadata,
+        "distributions": {
+            name: {
+                "name": dist.name,
+                "p5": dist.p5,
+                "p25": dist.p25,
+                "p50": dist.p50,
+                "p75": dist.p75,
+                "p95": dist.p95,
+                "mean": dist.mean,
+                "std": dist.std,
+                "min_val": dist.min_val,
+                "max_val": dist.max_val,
+            }
+            for name, dist in distributions.items()
+        },
+    }
+    with open(output_json_path, "w", encoding="utf-8") as f:
+        json.dump(out, f, indent=2)
+    logger.info(f"Saved baseline distributions JSON to {output_json_path}")
+
+
+def _simulate_single_matched_pass(
+    trade_profiles: List[Tuple[str, float]],
+    candles_dict: Dict[str, np.ndarray],
+    rng: np.random.Generator,
+    friction: SimulationFriction,
+    exit_config: ExitConfig,
+    initial_equity_usd: float = 10000.0,
+    risk_per_trade_pct: float = 1.0,
+    max_leverage: float = 3.0,
+) -> Tuple[float, int]:
+    """Simulate one matched random pass and return (mean_net_r, trades_simulated_count)."""
+    pass_net_r: List[float] = []
+    for sym, dist_pct in trade_profiles:
+        sym_candles = candles_dict.get(sym)
+        if sym_candles is None or len(sym_candles) <= 100:
+            continue
+        max_idx = len(sym_candles) - 100
+        b_idx = int(rng.integers(0, max_idx))
+        side = "LONG" if rng.random() > 0.5 else "SHORT"
+        entry_p = float(sym_candles[b_idx, 0])
+        sl_p = entry_p * (1.0 - dist_pct) if side == "LONG" else entry_p * (1.0 + dist_pct)
+        c_ts = int(sym_candles[b_idx, 4])
+        forward_slice = sym_candles[b_idx : b_idx + 100]
+
+        trade = simulate_single_trade_lifecycle(
+            symbol=sym,
+            side=side,
+            nominal_entry=entry_p,
+            stop_loss=sl_p,
+            entry_ts_ms=c_ts,
+            candles_forward=forward_slice,
+            equity_at_entry=initial_equity_usd,
+            risk_per_trade_pct=risk_per_trade_pct,
+            max_leverage=max_leverage,
+            friction=friction,
+            exit_config=exit_config,
+        )
+        if trade is not None:
+            pass_net_r.append(trade.net_r)
+
+    pass_ev = float(np.mean(pass_net_r)) if pass_net_r else 0.0
+    return pass_ev, len(pass_net_r)
+
+
+def run_matched_baseline(
+    strategy_trades: List[ExecutedTrade],
+    candles_dict: Dict[str, np.ndarray],
+    iterations: int = 1000,
+    seed: int = 42,
+    friction: Optional[SimulationFriction] = None,
+    exit_config: Optional[ExitConfig] = None,
+    initial_equity_usd: float = 10000.0,
+    risk_per_trade_pct: float = 1.0,
+    max_leverage: float = 3.0,
+) -> MatchedBaselineResult:
+    """
+    Execute N matched random-entry passes against a strategy result.
+    Each pass has:
+    1. The EXACT SAME number of trades as the strategy.
+    2. The EXACT SAME symbol mix as the strategy.
+    3. The EXACT SAME per-trade stop distance (in percent) distribution.
+    4. Evaluated through Single Exit Authority with identical exit rules and friction.
+
+    Computes empirical rank-based p-value:
+    p = (count(null_ev >= strategy_ev) + 1) / (N + 1)
+    """
+    fric = friction or SimulationFriction()
+    cfg = exit_config or ExitConfig()
+
+    n_trades = len(strategy_trades)
+    strategy_net_r = [t.net_r for t in strategy_trades]
+    strategy_ev_r = float(np.mean(strategy_net_r)) if strategy_net_r else 0.0
+    boot_ci = compute_bootstrap_ci(strategy_net_r, n_resamples=10000, seed=seed)
+
+    if n_trades == 0:
+        return MatchedBaselineResult(
+            iterations=iterations,
+            strategy_trade_count=0,
+            strategy_net_ev_r=0.0,
+            null_expectancy_r_distribution=[0.0] * iterations,
+            median_expectancy_r=0.0,
+            mean_expectancy_r=0.0,
+            std_expectancy_r=0.0,
+            p5_expectancy_r=0.0,
+            p95_expectancy_r=0.0,
+            empirical_p_value=1.0,
+            bootstrap_ci=(0.0, 0.0),
+        )
+
+    # Per-trade profile: (symbol, stop_dist_pct)
+    trade_profiles: List[Tuple[str, float]] = []
+    for t in strategy_trades:
+        sym = t.symbol
+        if t.position_size_usd > 0 and t.initial_risk_usd > 0:
+            dist_pct = t.initial_risk_usd / t.position_size_usd
+        else:
+            dist_pct = 0.02
+        dist_pct = max(0.001, min(dist_pct, 0.20))
+        trade_profiles.append((sym, dist_pct))
+
+    master_rng = np.random.default_rng(seed)
+    null_ev_dist: List[float] = []
+
+    for _ in range(iterations):
+        iter_seed = int(master_rng.integers(0, 100000000))
+        iter_rng = np.random.default_rng(iter_seed)
+        pass_ev, _ = _simulate_single_matched_pass(
+            trade_profiles=trade_profiles,
+            candles_dict=candles_dict,
+            rng=iter_rng,
+            friction=fric,
+            exit_config=cfg,
+            initial_equity_usd=initial_equity_usd,
+            risk_per_trade_pct=risk_per_trade_pct,
+            max_leverage=max_leverage,
+        )
+        null_ev_dist.append(round(pass_ev, 4))
+
+    # Rank-based empirical p-value (exact rank within matched distribution)
+    # Fraction of null passes whose net EV >= strategy net EV
+    greater_equal_count = sum(1 for null_ev in null_ev_dist if null_ev >= strategy_ev_r)
+    empirical_p = (greater_equal_count + 1.0) / (iterations + 1.0)
+    empirical_p = min(max(empirical_p, 1.0 / (iterations + 1.0)), 1.0)
+
+    median_ev = round(float(np.median(null_ev_dist)), 4)
+    mean_ev = round(float(np.mean(null_ev_dist)), 4)
+    std_ev = round(float(np.std(null_ev_dist)), 4)
+    p5_ev = round(float(np.percentile(null_ev_dist, 5)), 4)
+    p95_ev = round(float(np.percentile(null_ev_dist, 95)), 4)
+
+    return MatchedBaselineResult(
+        iterations=iterations,
+        strategy_trade_count=n_trades,
+        strategy_net_ev_r=round(strategy_ev_r, 4),
+        null_expectancy_r_distribution=null_ev_dist,
+        median_expectancy_r=median_ev,
+        mean_expectancy_r=mean_ev,
+        std_expectancy_r=std_ev,
+        p5_expectancy_r=p5_ev,
+        p95_expectancy_r=p95_ev,
+        empirical_p_value=round(empirical_p, 4),
+        bootstrap_ci=boot_ci,
     )
 
 
@@ -504,6 +739,7 @@ def run_monte_carlo_baseline(
     timeframe: str = "1h",
     data_dir: str = "data/candles",
     output_report_path: str = "research/reports/random_baseline_hurdle.md",
+    output_json_path: Optional[str] = None,
     seed: int = 42,
     trades_per_symbol: int = 25,
     sizing_mode: str = "fixed_risk",
@@ -652,6 +888,56 @@ def run_monte_carlo_baseline(
 
     logger.info(f"Saved Monte Carlo Baseline Hurdle report to {output_report_path}")
 
+    # Compile and save JSON distributions with full metadata
+    dists_dict = {
+        "win_rate": dist_wr,
+        "profit_factor": dist_pf,
+        "gross_profit_factor": compute_metric_distribution("Gross Profit Factor", metrics_log["gross_profit_factor"]),
+        "expectancy_usd": dist_ev_usd,
+        "expectancy_r": dist_ev_r,
+        "gross_expectancy_r": compute_metric_distribution("Gross Expectancy (R)", metrics_log["gross_expectancy_r"]),
+        "avg_r": dist_avg_r,
+        "max_drawdown_pct": dist_dd,
+        "sharpe_ratio": dist_sharpe,
+        "sortino_ratio": dist_sortino,
+        "net_profit_pct": dist_ret,
+        "total_trades": compute_metric_distribution("Total Trades", metrics_log["total_trades"]),
+    }
+
+    dataset_hash = compute_dataset_hash(candles_dict)
+    min_ts = min(int(arr[0, 4]) for arr in candles_dict.values()) if candles_dict else 0
+    max_ts = max(int(arr[-1, 4]) for arr in candles_dict.values()) if candles_dict else 0
+    start_date = datetime.fromtimestamp(min_ts / 1000.0, tz=timezone.utc).isoformat() if min_ts > 0 else ""
+    end_date = datetime.fromtimestamp(max_ts / 1000.0, tz=timezone.utc).isoformat() if max_ts > 0 else ""
+
+    metadata = {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "iterations": iterations,
+        "dataset_hash": dataset_hash,
+        "timeframe": timeframe,
+        "symbols": list(candles_dict.keys()),
+        "start_time_ms": min_ts,
+        "end_time_ms": max_ts,
+        "start_date": start_date,
+        "end_date": end_date,
+        "sizing_mode": sizing_mode,
+        "friction": {
+            "taker_fee_pct": friction.taker_fee_pct,
+            "maker_fee_pct": friction.maker_fee_pct,
+            "slippage_pct": friction.slippage_pct,
+            "funding_rate_8h_pct": friction.funding_rate_8h_pct,
+        },
+        "exit_config": {
+            "tp1_r": exit_config.tp1_r,
+            "tp2_r": exit_config.tp2_r,
+            "be_arm_r": exit_config.be_arm_r,
+            "underwater_bars_limit": exit_config.underwater_bars_limit,
+        },
+    }
+
+    actual_json_path = output_json_path or os.path.join(os.path.dirname(output_report_path), "baseline_distribution.json")
+    save_baseline_distribution_json(actual_json_path, dists_dict, metadata)
+
     return BaselineReport(
         timestamp=now_str,
         distributions=distributions,
@@ -666,9 +952,10 @@ def main():
     parser.add_argument("--timeframe", type=str, default="1h", help="Timeframe (default: 1h)")
     parser.add_argument("--data-dir", type=str, default="data/candles", help="Parquet data directory")
     parser.add_argument("--output", type=str, default="research/reports/random_baseline_hurdle.md", help="Output report path")
+    parser.add_argument("--output-json", type=str, default=None, help="Output JSON path (default: baseline_distribution.json)")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility")
     parser.add_argument("--sizing-mode", type=str, choices=["fixed_risk", "compounding"], default="fixed_risk", help="Sizing mode (default: fixed_risk)")
-    parser.add_argument("--ruin-threshold", type=float, default=None, help="Ruin threshold in USD (default: 5% of initial equity)")
+    parser.add_argument("--ruin-threshold", type=float, default=None, help="Ruin threshold in USD (default: 5%% of initial equity)")
 
     args = parser.parse_args()
     report = run_monte_carlo_baseline(
@@ -676,6 +963,7 @@ def main():
         timeframe=args.timeframe,
         data_dir=args.data_dir,
         output_report_path=args.output,
+        output_json_path=args.output_json,
         seed=args.seed,
         sizing_mode=args.sizing_mode,
         ruin_threshold_usd=args.ruin_threshold,

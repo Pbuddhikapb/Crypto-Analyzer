@@ -1,0 +1,183 @@
+{
+  "metadata": {
+    "generated_at": "2026-10-20T10:37:15.718791+00:00",
+    "iterations": 1000,
+    "dataset_hash": "e94efd0a2864f513",
+    "timeframe": "1h",
+    "symbols": [
+      "BTCUSDT",
+      "ETHUSDT",
+      "SOLUSDT",
+      "BNBUSDT",
+      "XRPUSDT",
+      "DOGEUSDT",
+      "ADAUSDT",
+      "AVAXUSDT",
+      "LINKUSDT",
+      "SUIUSDT"
+    ],
+    "start_time_ms": 1704067200000,
+    "end_time_ms": 1792364400000,
+    "start_date": "2024-01-01T00:00:00+00:00",
+    "end_date": "2026-10-18T23:00:00+00:00",
+    "sizing_mode": "fixed_risk",
+    "friction": {
+      "taker_fee_pct": 0.05,
+      "maker_fee_pct": 0.02,
+      "slippage_pct": 0.03,
+      "funding_rate_8h_pct": 0.01
+    },
+    "exit_config": {
+      "tp1_r": 0.75,
+      "tp2_r": 1.33,
+      "be_arm_r": 0.85,
+      "underwater_bars_limit": 12
+    }
+  },
+  "distributions": {
+    "win_rate": {
+      "name": "Win Rate (%)",
+      "p5": 41.06,
+      "p25": 44.2025,
+      "p50": 46.135,
+      "p75": 48.16,
+      "p95": 51.43,
+      "mean": 46.2171,
+      "std": 3.0935,
+      "min_val": 36.69,
+      "max_val": 55.47
+    },
+    "profit_factor": {
+      "name": "Profit Factor",
+      "p5": 0.66,
+      "p25": 0.76,
+      "p50": 0.83,
+      "p75": 0.9,
+      "p95": 1.03,
+      "mean": 0.8361,
+      "std": 0.1138,
+      "min_val": 0.55,
+      "max_val": 1.29
+    },
+    "gross_profit_factor": {
+      "name": "Gross Profit Factor",
+      "p5": 0.75,
+      "p25": 0.86,
+      "p50": 0.94,
+      "p75": 1.02,
+      "p95": 1.17,
+      "mean": 0.9473,
+      "std": 0.1293,
+      "min_val": 0.62,
+      "max_val": 1.47
+    },
+    "expectancy_usd": {
+      "name": "Expectancy ($)",
+      "p5": -16.04,
+      "p25": -10.7125,
+      "p50": -7.345,
+      "p75": -4.0675,
+      "p95": 1.187,
+      "mean": -7.3707,
+      "std": 5.274,
+      "min_val": -22.66,
+      "max_val": 9.78
+    },
+    "expectancy_r": {
+      "name": "Expectancy (R)",
+      "p5": -0.1604,
+      "p25": -0.1071,
+      "p50": -0.0735,
+      "p75": -0.0407,
+      "p95": 0.0119,
+      "mean": -0.0737,
+      "std": 0.0527,
+      "min_val": -0.2266,
+      "max_val": 0.0978
+    },
+    "gross_expectancy_r": {
+      "name": "Gross Expectancy (R)",
+      "p5": -0.1087,
+      "p25": -0.057,
+      "p50": -0.0239,
+      "p75": 0.0082,
+      "p95": 0.0602,
+      "mean": -0.0242,
+      "std": 0.0516,
+      "min_val": -0.1736,
+      "max_val": 0.1439
+    },
+    "avg_r": {
+      "name": "Average Realized R",
+      "p5": -0.1604,
+      "p25": -0.1071,
+      "p50": -0.0735,
+      "p75": -0.0407,
+      "p95": 0.0119,
+      "mean": -0.0737,
+      "std": 0.0527,
+      "min_val": -0.2266,
+      "max_val": 0.0978
+    },
+    "max_drawdown_pct": {
+      "name": "Max Drawdown (%)",
+      "p5": 10.829,
+      "p25": 17.7575,
+      "p50": 24.08,
+      "p75": 31.6375,
+      "p95": 43.1715,
+      "mean": 25.1054,
+      "std": 9.7794,
+      "min_val": 6.69,
+      "max_val": 56.5
+    },
+    "sharpe_ratio": {
+      "name": "Sharpe Ratio",
+      "p5": -2.9905,
+      "p25": -1.9825,
+      "p50": -1.35,
+      "p75": -0.765,
+      "p95": 0.221,
+      "mean": -1.3725,
+      "std": 0.9877,
+      "min_val": -4.36,
+      "max_val": 1.86
+    },
+    "sortino_ratio": {
+      "name": "Sortino Ratio",
+      "p5": -3.741,
+      "p25": -2.5825,
+      "p50": -1.8,
+      "p75": -1.035,
+      "p95": 0.321,
+      "mean": -1.7796,
+      "std": 1.2509,
+      "min_val": -5.18,
+      "max_val": 2.79
+    },
+    "net_profit_pct": {
+      "name": "Net Profit (%)",
+      "p5": -39.404,
+      "p25": -26.4575,
+      "p50": -18.165,
+      "p75": -10.0075,
+      "p95": 2.9375,
+      "mean": -18.1628,
+      "std": 12.9986,
+      "min_val": -55.52,
+      "max_val": 24.06
+    },
+    "total_trades": {
+      "name": "Total Trades",
+      "p5": 243.0,
+      "p25": 245.0,
+      "p50": 247.0,
+      "p75": 248.0,
+      "p95": 249.0,
+      "mean": 246.379,
+      "std": 1.8808,
+      "min_val": 240.0,
+      "max_val": 250.0
+    }
+  }
+}

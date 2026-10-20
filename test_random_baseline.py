@@ -4,14 +4,19 @@ Tests distribution percentile calculation, single-trade simulation fidelity,
 seed reproducibility, and report generation.
 """
 
+import os
 import tempfile
 import numpy as np
 import pytest
 
 from engine.exits import ExitConfig
-from engine.simulator import SimulationFriction
+from engine.simulator import ExecutedTrade, SimulationFriction
+from research.evaluator import BaselineHurdles
 from research.random_baseline import (
+    compute_bootstrap_ci,
+    compute_dataset_hash,
     compute_metric_distribution,
+    run_matched_baseline,
     run_monte_carlo_baseline,
     run_random_baseline_iteration,
     simulate_single_trade_lifecycle,
@@ -151,3 +156,132 @@ def test_small_monte_carlo_run():
         assert report.distributions.iterations == 5
         assert report.distributions.win_rate.p5 <= report.distributions.win_rate.p95
         assert "Alpha Hurdle" in report.markdown_table
+
+
+def _make_dummy_candles(n: int = 200, base: float = 100.0) -> np.ndarray:
+    bars = []
+    for i in range(n):
+        o = base + np.sin(i * 0.1) * 5.0
+        h = o + 2.0
+        l = o - 2.0
+        c = o + 0.5
+        ts = 1700000000000 + i * 3600000
+        bars.append([o, h, l, c, ts])
+    return np.array(bars, dtype=np.float64)
+
+
+def _make_mock_trade(symbol: str, net_r: float, risk_usd: float = 100.0, notional: float = 5000.0) -> ExecutedTrade:
+    return ExecutedTrade(
+        trade_id=f"{symbol}_mock",
+        symbol=symbol,
+        side="LONG",
+        entry_time_ms=1700000000000,
+        exit_time_ms=1700000000000 + 3600000,
+        entry_price=100.0,
+        entry_fill_price=100.03,
+        exit_price=102.0,
+        exit_fill_price=101.97,
+        exit_reason="TAKE_PROFIT_1",
+        position_size_usd=notional,
+        gross_pnl_usd=100.0,
+        fees_usd=4.0,
+        slippage_usd=3.0,
+        funding_cost_usd=0.0,
+        net_pnl_usd=93.0,
+        net_return_pct=1.86,
+        realized_r=1.0,
+        bars_held=5,
+        mfe_r=1.0,
+        mae_r=0.0,
+        initial_risk_usd=risk_usd,
+        net_r=net_r,
+    )
+
+
+def test_matched_baseline_seeded_determinism():
+    """Assert running matched baseline twice with same seed produces identical distributions."""
+    candles = {
+        "BTCUSDT": _make_dummy_candles(200, 100.0),
+        "ETHUSDT": _make_dummy_candles(200, 50.0),
+    }
+    trades = [
+        _make_mock_trade("BTCUSDT", net_r=-0.5, risk_usd=100.0, notional=5000.0),
+        _make_mock_trade("BTCUSDT", net_r=1.2, risk_usd=100.0, notional=4000.0),
+        _make_mock_trade("ETHUSDT", net_r=-1.1, risk_usd=100.0, notional=5000.0),
+        _make_mock_trade("ETHUSDT", net_r=0.8, risk_usd=100.0, notional=2500.0),
+    ]
+
+    res1 = run_matched_baseline(trades, candles, iterations=15, seed=123)
+    res2 = run_matched_baseline(trades, candles, iterations=15, seed=123)
+
+    assert res1.null_expectancy_r_distribution == res2.null_expectancy_r_distribution
+    assert res1.empirical_p_value == res2.empirical_p_value
+    assert res1.bootstrap_ci == res2.bootstrap_ci
+    assert res1.median_expectancy_r == res2.median_expectancy_r
+    assert res1.mean_expectancy_r == res2.mean_expectancy_r
+    assert res1.strategy_trade_count == len(trades)
+
+
+def test_matched_baseline_trade_count():
+    """Assert matched baseline preserves exact trade count and symbol mix of the strategy."""
+    candles = {
+        "BTCUSDT": _make_dummy_candles(200, 100.0),
+        "ETHUSDT": _make_dummy_candles(200, 50.0),
+    }
+    # 7 BTC trades and 3 ETH trades = 10 total
+    trades = [
+        _make_mock_trade("BTCUSDT", net_r=0.1 * i, risk_usd=100.0, notional=5000.0)
+        for i in range(7)
+    ] + [
+        _make_mock_trade("ETHUSDT", net_r=-0.1 * i, risk_usd=100.0, notional=3000.0)
+        for i in range(3)
+    ]
+
+    res = run_matched_baseline(trades, candles, iterations=5, seed=777)
+    assert res.strategy_trade_count == 10
+    assert len(res.null_expectancy_r_distribution) == 5
+    for val in res.null_expectancy_r_distribution:
+        assert isinstance(val, float)
+        assert np.isfinite(val)
+
+
+def test_hurdle_loader_fails_loudly_on_mismatched_config():
+    """Assert BaselineHurdles.load fails loudly on missing file or config mismatch."""
+    # 1. Missing file -> FileNotFoundError
+    with pytest.raises(FileNotFoundError, match="Baseline distribution file missing"):
+        BaselineHurdles.load("nonexistent_distribution_path_9999.json")
+
+    # 2. Existing file -> verify valid load first
+    json_path = "research/reports/baseline_distribution.json"
+    if os.path.exists(json_path):
+        hurdles = BaselineHurdles.load(json_path)
+        assert hurdles.pf_hurdle_p95 > 0.0
+        assert hurdles.wr_hurdle_p95 > 0.0
+
+        # Sizing mode mismatch -> ValueError
+        with pytest.raises(ValueError, match="sizing_mode mismatch"):
+            BaselineHurdles.load(json_path, expected_sizing_mode="compounding_unknown_mode")
+
+        # Dataset hash mismatch -> ValueError
+        with pytest.raises(ValueError, match="dataset mismatch"):
+            BaselineHurdles.load(json_path, expected_dataset_hash="invalid_deadbeef_hash")
+
+        # Friction mismatch -> ValueError
+        with pytest.raises(ValueError, match="friction mismatch"):
+            BaselineHurdles.load(json_path, expected_friction={"taker_fee_pct": 0.9999})
+
+
+def test_bootstrap_ci_coverage():
+    """Assert compute_bootstrap_ci behavior and seed determinism."""
+    vals = [0.1, 0.2, 0.15, 0.3, 0.25, 0.18, 0.22]
+    ci1 = compute_bootstrap_ci(vals, n_resamples=500, seed=42)
+    ci2 = compute_bootstrap_ci(vals, n_resamples=500, seed=42)
+
+    assert ci1 == ci2
+    # All values positive -> 95% CI should be strictly positive
+    assert ci1[0] > 0.0
+    assert ci1[1] > ci1[0]
+
+    # Empty values -> (0.0, 0.0)
+    assert compute_bootstrap_ci([]) == (0.0, 0.0)
+

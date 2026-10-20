@@ -30,7 +30,13 @@ from engine.simulator import (
     SimulationResult,
 )
 from research.evaluator import BaselineHurdles, StrategyEvaluation, StrategyEvaluator
-from research.random_baseline import simulate_single_trade_lifecycle
+from research.random_baseline import (
+    MatchedBaselineResult,
+    compute_bootstrap_ci,
+    compute_dataset_hash,
+    run_matched_baseline,
+    simulate_single_trade_lifecycle,
+)
 from research.strategies import (
     BaseStrategy,
     ConfluenceThresholdStrategy,
@@ -67,6 +73,8 @@ class StrategyRunResult:
     per_symbol_metrics: Dict[str, Dict[str, Any]]
     total_signals_generated: int
     signals_executed: int
+    matched_baseline: Optional[MatchedBaselineResult] = None
+    bootstrap_ci: Optional[Tuple[float, float]] = None
 
 
 def simulate_portfolio_signals(
@@ -388,6 +396,7 @@ def run_strategy_evidence_validation(
     output_report_path: str = "research/reports/strategy_validation_report.md",
     sizing_mode: str = "fixed_risk",
     ruin_threshold_usd: Optional[float] = None,
+    matched_passes: int = 1000,
 ) -> List[StrategyRunResult]:
     """
     Main orchestration routine running all 4 hypotheses against the Phase 2 Monte Carlo hurdle.
@@ -421,7 +430,20 @@ def run_strategy_evidence_validation(
         LiquiditySweepStrategy(),
     ]
 
-    evaluator = StrategyEvaluator()
+    dataset_hash = compute_dataset_hash(candles_dict)
+    fric = SimulationFriction()
+    cfg = ExitConfig()
+    fric_dict = {
+        "taker_fee_pct": fric.taker_fee_pct,
+        "maker_fee_pct": fric.maker_fee_pct,
+        "slippage_pct": fric.slippage_pct,
+        "funding_rate_8h_pct": fric.funding_rate_8h_pct,
+    }
+    evaluator = StrategyEvaluator(
+        expected_dataset_hash=dataset_hash,
+        expected_sizing_mode=sizing_mode,
+        expected_friction=fric_dict,
+    )
     run_results: List[StrategyRunResult] = []
 
     for strat in strategies:
@@ -450,14 +472,38 @@ def run_strategy_evidence_validation(
             ruin_threshold_usd=ruin_threshold_usd,
         )
 
-        evaluation = evaluator.evaluate(s_name, s_desc, sim_res)
+        # Compute bootstrap 95% CI on mean net R (10,000 resamples, seeded)
+        trade_net_r = [t.net_r for t in sim_res.trades]
+        boot_ci = compute_bootstrap_ci(trade_net_r, n_resamples=10000, seed=42)
+
+        # Run matched random baseline (same trade count, same symbol mix, same stop dist % distribution)
+        logger.info(f"  Running matched random-entry baseline for {s_name} (N={matched_passes} passes)...")
+        matched_res = run_matched_baseline(
+            strategy_trades=sim_res.trades,
+            candles_dict=candles_dict,
+            iterations=matched_passes,
+            seed=42,
+            friction=fric,
+            exit_config=cfg,
+        )
+
+        evaluation = evaluator.evaluate(
+            s_name,
+            s_desc,
+            sim_res,
+            matched_baseline=matched_res,
+            bootstrap_ci=boot_ci,
+        )
         per_sym = compute_per_symbol_breakdown(sim_res.trades)
 
+        matched_p_val = evaluation.matched_p_value if evaluation.matched_p_value is not None else evaluation.p_composite
         logger.info(
             f"  Result for {s_name}: Trades={sim_res.total_trades}, "
             f"WR={sim_res.win_rate_pct:.1f}%, PF={sim_res.profit_factor:.2f}, "
             f"EV={sim_res.expectancy_r:+.4f}R, Sharpe={sim_res.sharpe_ratio:.2f}, "
             f"MaxDD={sim_res.max_drawdown_pct:.1f}%, Return={sim_res.net_profit_pct:+.1f}% | "
+            f"Matched Rank p-val: {matched_p_val:.4f} | "
+            f"Bootstrap 95% CI: [{boot_ci[0]:+.4f}, {boot_ci[1]:+.4f}]R | "
             f"Verdict: {evaluation.verdict}"
         )
 
@@ -470,6 +516,8 @@ def run_strategy_evidence_validation(
                 per_symbol_metrics=per_sym,
                 total_signals_generated=len(all_candidates),
                 signals_executed=sim_res.total_trades,
+                matched_baseline=matched_res,
+                bootstrap_ci=boot_ci,
             )
         )
 
@@ -492,13 +540,17 @@ def generate_markdown_report(results: List[StrategyRunResult], output_path: str)
             if r.sim_result.ruined and r.sim_result.ruin_time_ms
             else ("Ruined" if r.sim_result.ruined else "No")
         )
+        ci_str = f"[{r.bootstrap_ci[0]:+.4f}, {r.bootstrap_ci[1]:+.4f}]R" if r.bootstrap_ci else "N/A"
+        matched_med_str = f"{r.matched_baseline.median_expectancy_r:+.4f}R" if r.matched_baseline else "N/A"
+        matched_p_str = f"`p = {ev.matched_p_value:.4f}`" if ev.matched_p_value is not None else f"`p = {ev.p_composite:.4f}`"
+
         row = (
             f"| **{ev.strategy_name}** | {ev.total_trades} | {ev.win_rate:.1f}% | "
             f"**{r.sim_result.profit_factor:.2f}** ({r.sim_result.gross_profit_factor:.2f}) | "
             f"**{r.sim_result.expectancy_r:+.4f}R** ({r.sim_result.gross_expectancy_r:+.4f}R) | "
-            f"{ev.sharpe_ratio:.2f} | {ev.sortino_ratio:.2f} | {ev.max_drawdown_pct:.1f}% | {ev.net_profit_pct:+.1f}% | "
-            f"`{r.sim_result.sizing_mode}` | {ruin_str} | "
-            f"`p = {ev.p_composite:.4f}` | {badge} |"
+            f"{ci_str} | {matched_med_str} | {matched_p_str} | "
+            f"{ev.sharpe_ratio:.2f} | {ev.max_drawdown_pct:.1f}% | {ev.net_profit_pct:+.1f}% | "
+            f"`{r.sim_result.sizing_mode}` | {ruin_str} | {badge} |"
         )
         scorecard_rows.append(row)
 
@@ -526,12 +578,19 @@ def generate_markdown_report(results: List[StrategyRunResult], output_path: str)
             if r.sim_result.ruined and r.sim_result.ruin_time_ms
             else ("YES" if r.sim_result.ruined else "NO")
         )
+        ci_str = f"[{r.bootstrap_ci[0]:+.4f}R, {r.bootstrap_ci[1]:+.4f}R]" if r.bootstrap_ci else "N/A"
+        matched_med_str = f"{r.matched_baseline.median_expectancy_r:+.4f}R" if r.matched_baseline else "N/A"
+        matched_p95_str = f"{r.matched_baseline.p95_expectancy_r:+.4f}R" if r.matched_baseline else "N/A"
+        matched_p_display = f"p = {ev.matched_p_value:.4f}" if ev.matched_p_value is not None else f"p = {ev.p_composite:.4f}"
+
         verdict_banner = (
             f"> **Statistical Verdict**: **`{ev.verdict}`**  \n"
-            f"> Composite $p$-value against Phase 2 Monte Carlo Hurdle: **`p = {ev.p_composite:.4f}`**  \n"
+            f"> Matched Rank $p$-value: **`{matched_p_display}`** (Empirical rank within 1,000 matched null passes)  \n"
             f"> Total Candidate Signals: `{r.total_signals_generated}` | Executed Trades: `{r.signals_executed}`  \n"
             f"> Net Profit Factor: **`{r.sim_result.profit_factor:.2f}`** (Gross: `{r.sim_result.gross_profit_factor:.2f}`)  \n"
             f"> Net Expectancy: **`{r.sim_result.expectancy_r:+.4f}R`** (Gross: `{r.sim_result.gross_expectancy_r:+.4f}R`)  \n"
+            f"> Bootstrap 95% CI (Mean Net R): **`{ci_str}`** (10,000 resamples)  \n"
+            f"> Matched Baseline Median Net EV: **`{matched_med_str}`** (Matched 95th Pct Hurdle: `{matched_p95_str}`)  \n"
             f"> Sizing Mode: `{r.sim_result.sizing_mode}` | Account Ruined: `{ruin_info}`"
         )
 
@@ -585,8 +644,8 @@ Four core discretionary trading hypotheses were codified with strict zero lookah
 
 ## 2. Master Strategy Scorecard
 
-| Strategy | Trades | Win Rate | Net PF (Gross) | Net EV (Gross EV) | Sharpe | Sortino | Max DD | Net Return | Sizing | Ruined? | Empirical $p$-value | Alpha Verdict |
-| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| Strategy | Trades | Win Rate | Net PF (Gross) | Net EV (Gross EV) | Bootstrap 95% CI | Matched Median EV | Matched Rank $p$-value | Sharpe | Max DD | Net Return | Sizing | Ruined? | Alpha Verdict |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
 {scorecard_table}
 
 ---
@@ -632,7 +691,13 @@ def main():
         "--ruin-threshold",
         type=float,
         default=None,
-        help="Ruin threshold in USD (default: 5% of initial equity)",
+        help="Ruin threshold in USD (default: 5%% of initial equity)",
+    )
+    parser.add_argument(
+        "--matched-passes",
+        type=int,
+        default=1000,
+        help="Number of matched baseline passes (default: 1000)",
     )
     args = parser.parse_args()
 
@@ -641,6 +706,7 @@ def main():
         output_report_path=args.output,
         sizing_mode=args.sizing_mode,
         ruin_threshold_usd=args.ruin_threshold,
+        matched_passes=args.matched_passes,
     )
 
     print("\n" + "=" * 80)
@@ -648,11 +714,14 @@ def main():
     print("=" * 80)
     for r in results:
         ev = r.evaluation
+        ci_str = f"[{r.bootstrap_ci[0]:+.4f}, {r.bootstrap_ci[1]:+.4f}]R" if r.bootstrap_ci else "N/A"
+        matched_med = f"{r.matched_baseline.median_expectancy_r:+.4f}R" if r.matched_baseline else "N/A"
+        matched_p_val = ev.matched_p_value if ev.matched_p_value is not None else ev.p_composite
         print(
             f"[{ev.verdict}] {ev.strategy_name:<22} | Trades: {ev.total_trades:>4} | "
             f"WR: {ev.win_rate:>5.1f}% | PF: {ev.profit_factor:>4.2f} | "
-            f"EV: {ev.expectancy_r:>+7.4f}R | Sharpe: {ev.sharpe_ratio:>5.2f} | "
-            f"MaxDD: {ev.max_drawdown_pct:>5.1f}% | p-val: {ev.p_composite:.4f}"
+            f"EV: {ev.expectancy_r:>+7.4f}R | 95% CI: {ci_str} | Matched Med: {matched_med} | "
+            f"Matched p-val: {matched_p_val:.4f}"
         )
     print("=" * 80)
     print(f"Validation dossier saved to: {args.output}\n")
