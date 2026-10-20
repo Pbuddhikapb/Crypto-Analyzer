@@ -421,6 +421,141 @@ def download_universe_futures(
     return results
 
 
+def parse_funding_rate_csv(csv_bytes: bytes, symbol: str = "BTCUSDT") -> pd.DataFrame:
+    """
+    Parse a raw funding rate CSV from Binance Vision zip file and standardize types.
+    Columns: calc_time, datetime, funding_interval_hours, last_funding_rate, symbol.
+    """
+    first_line = csv_bytes[:200].decode("utf-8", errors="ignore").split("\n")[0]
+    has_header = "calc_time" in first_line.lower() or "funding" in first_line.lower()
+
+    if has_header:
+        df = pd.read_csv(io.BytesIO(csv_bytes))
+        df.columns = [c.strip().lower() for c in df.columns]
+    else:
+        df = pd.read_csv(
+            io.BytesIO(csv_bytes),
+            header=None,
+            names=["calc_time", "funding_interval_hours", "last_funding_rate"],
+        )
+
+    df["calc_time"] = pd.to_numeric(df["calc_time"], errors="coerce").astype(np.int64)
+    df["funding_interval_hours"] = (
+        pd.to_numeric(df["funding_interval_hours"], errors="coerce").fillna(8).astype(np.int64)
+    )
+    df["last_funding_rate"] = pd.to_numeric(df["last_funding_rate"], errors="coerce").astype(np.float64)
+    df["datetime"] = pd.to_datetime(df["calc_time"], unit="ms", utc=True)
+    df["symbol"] = symbol.upper()
+    return df[["calc_time", "datetime", "funding_interval_hours", "last_funding_rate", "symbol"]]
+
+
+def validate_funding_rates(df: pd.DataFrame) -> Tuple[bool, List[str]]:
+    """
+    Validate funding rate DataFrame:
+    1. Not empty
+    2. Monotonically increasing calc_time (sorted)
+    3. No duplicate timestamps
+    4. 8-hour cadence (28,800,000 ms between consecutive funding intervals)
+    """
+    issues: List[str] = []
+    if df.empty:
+        return False, ["Funding rate DataFrame is completely empty"]
+
+    required_cols = ["calc_time", "datetime", "funding_interval_hours", "last_funding_rate"]
+    for col in required_cols:
+        if col not in df.columns:
+            issues.append(f"Missing required column: {col}")
+
+    if issues:
+        return False, issues
+
+    null_counts = df[required_cols].isnull().sum()
+    for col, count in null_counts.items():
+        if count > 0:
+            issues.append(f"Column {col} has {count} null values")
+
+    # 1. Monotonicity (sorted)
+    if not df["calc_time"].is_monotonic_increasing:
+        issues.append("calc_time is not strictly monotonic increasing (not sorted)")
+
+    # 2. Duplicate check
+    dups = int(df["calc_time"].duplicated().sum())
+    if dups > 0:
+        issues.append(f"Found {dups} duplicate calc_time timestamps")
+
+    # 3. 8-hour cadence check (28,800,000 ms)
+    diffs = np.diff(df["calc_time"].values)
+    expected_cadence_ms = 8 * 3600 * 1000  # 28,800,000 ms
+    cadence_violations = np.where(diffs != expected_cadence_ms)[0]
+    if len(cadence_violations) > 0:
+        issues.append(
+            f"Found {len(cadence_violations)} cadence deviations from 8h ({expected_cadence_ms}ms)"
+        )
+
+    return len(issues) == 0, issues
+
+
+def download_funding_rates(
+    symbol: str,
+    start_year: int = 2024,
+    start_month: int = 1,
+    end_year: int = 2026,
+    end_month: int = 10,
+    output_dir: str = "data/funding",
+) -> pd.DataFrame:
+    """
+    Download official Binance USD-M Futures funding rate history from monthly archives on
+    data.binance.vision into data/funding/<SYMBOL>.parquet.
+    Validates sorting, zero duplicates, and 8-hour cadence.
+    """
+    os.makedirs(output_dir, exist_ok=True)
+    sym = symbol.upper()
+    logger.info(f"Downloading USD-M Futures funding rate history for {sym} from {start_year}-{start_month:02d}...")
+
+    frames: List[pd.DataFrame] = []
+
+    for y in range(start_year, end_year + 1):
+        m_start = start_month if y == start_year else 1
+        m_end = end_month if y == end_year else 12
+
+        for m in range(m_start, m_end + 1):
+            url = f"{FUTURES_ARCHIVE_BASE}/monthly/fundingRate/{sym}/{sym}-fundingRate-{y}-{m:02d}.zip"
+            csv_bytes = fetch_vision_zip(url)
+            if csv_bytes is not None:
+                try:
+                    m_df = parse_funding_rate_csv(csv_bytes, sym)
+                    if not m_df.empty:
+                        frames.append(m_df)
+                        logger.debug(f"Loaded {sym} funding rate archive: {y}-{m:02d} ({len(m_df)} records)")
+                except Exception as e:
+                    logger.warning(f"Failed to parse funding rate CSV for {sym} {y}-{m:02d}: {e}")
+
+    if not frames:
+        logger.error(f"Zero funding rate records retrieved for {sym} from data.binance.vision")
+        return pd.DataFrame()
+
+    full_df = pd.concat(frames, ignore_index=True)
+    full_df = full_df.drop_duplicates(subset=["calc_time"]).sort_values("calc_time").reset_index(drop=True)
+
+    is_valid, issues = validate_funding_rates(full_df)
+    if not is_valid:
+        logger.warning(f"Funding rate validation warnings for {sym}: {issues}")
+    else:
+        logger.info(
+            f"Funding rate validation PASSED for {sym}: {len(full_df)} intervals from "
+            f"{full_df['datetime'].iloc[0].strftime('%Y-%m-%d %H:%M')} to "
+            f"{full_df['datetime'].iloc[-1].strftime('%Y-%m-%d %H:%M')}"
+        )
+
+    parquet_path = os.path.join(output_dir, f"{sym}.parquet")
+    tmp_path = os.path.join(output_dir, f".tmp_{sym}.parquet")
+    full_df.to_parquet(tmp_path, engine="pyarrow", compression="snappy", index=False)
+    os.replace(tmp_path, parquet_path)
+    logger.info(f"Saved {len(full_df)} funding rate records to {parquet_path}")
+
+    return full_df
+
+
 # Backwards-compatible aliases
 download_candles = download_candles_futures
 download_universe = download_universe_futures

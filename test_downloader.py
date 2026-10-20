@@ -20,6 +20,9 @@ from data.downloader import (
     fetch_vision_zip,
     verify_candle_integrity,
     STANDARD_COLUMNS,
+    parse_funding_rate_csv,
+    validate_funding_rates,
+    download_funding_rates,
 )
 from data.loader import clear_cache, load_candles
 
@@ -324,4 +327,73 @@ def test_checksum_valid_verification():
         extracted = fetch_vision_zip("https://fake.url/test.zip")
         assert extracted is not None
         assert b"0.00037" in extracted
+
+
+def test_parse_and_validate_funding_rates():
+    """Verify funding rate parsing, monotonicity, duplicate detection, and 8h cadence validation."""
+    raw_csv = (
+        b"calc_time,funding_interval_hours,last_funding_rate\n"
+        b"1704067200000,8,0.00037409\n"
+        b"1704096000000,8,0.00027213\n"
+        b"1704124800000,8,0.00033601\n"
+    )
+    df = parse_funding_rate_csv(raw_csv, "BTCUSDT")
+    assert len(df) == 3
+    assert df["calc_time"].iloc[0] == 1704067200000
+    assert df["funding_interval_hours"].iloc[0] == 8
+    assert abs(df["last_funding_rate"].iloc[0] - 0.00037409) < 1e-8
+    assert df["symbol"].iloc[0] == "BTCUSDT"
+
+    # Validate passes
+    valid, issues = validate_funding_rates(df)
+    assert valid is True
+    assert len(issues) == 0
+
+    # Unsorted check fails
+    df_unsorted = df.iloc[::-1].copy()
+    valid, issues = validate_funding_rates(df_unsorted)
+    assert valid is False
+    assert any("monotonic" in s for s in issues)
+
+    # Duplicate check fails
+    df_dup = pd.concat([df, df.iloc[:1]], ignore_index=True).sort_values("calc_time")
+    valid, issues = validate_funding_rates(df_dup)
+    assert valid is False
+    assert any("duplicate" in s for s in issues)
+
+    # Cadence violation fails (gap is 4h instead of 8h)
+    df_broken_cadence = df.copy()
+    df_broken_cadence.loc[1, "calc_time"] = 1704067200000 + (4 * 3600 * 1000)
+    valid, issues = validate_funding_rates(df_broken_cadence)
+    assert valid is False
+    assert any("cadence deviations" in s for s in issues)
+
+
+def test_download_funding_rates_roundtrip():
+    """Verify downloading monthly funding rate archives and saving to Parquet."""
+    temp_dir = tempfile.mkdtemp()
+    try:
+        csv_bytes = (
+            b"calc_time,funding_interval_hours,last_funding_rate\n"
+            b"1704067200000,8,0.00037409\n"
+            b"1704096000000,8,0.00027213\n"
+        )
+        with patch("data.downloader.fetch_vision_zip", return_value=csv_bytes):
+            df = download_funding_rates(
+                symbol="BTCUSDT",
+                start_year=2024,
+                start_month=1,
+                end_year=2024,
+                end_month=1,
+                output_dir=temp_dir,
+            )
+            assert len(df) == 2
+            parquet_path = os.path.join(temp_dir, "BTCUSDT.parquet")
+            assert os.path.exists(parquet_path)
+
+            loaded = pd.read_parquet(parquet_path)
+            assert len(loaded) == 2
+            assert loaded["calc_time"].iloc[0] == 1704067200000
+    finally:
+        shutil.rmtree(temp_dir)
 
