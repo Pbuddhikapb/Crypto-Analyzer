@@ -30,8 +30,11 @@ yarn-error.log*
 *.db-shm
 *.sqlite
 *.sqlite3
+data/*.db
+data/**/*.db
 
 # Environment & IDE
+.antigravity/
 .env
 .env.local
 .vscode/
