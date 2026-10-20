@@ -226,8 +226,10 @@ def simulate_portfolio_signals(
             gross_profit_usd=0.0,
             gross_loss_usd=0.0,
             profit_factor=0.0,
+            gross_profit_factor=0.0,
             expectancy_usd=0.0,
             expectancy_r=0.0,
+            gross_expectancy_r=0.0,
             avg_r_multiple=0.0,
             max_drawdown_pct=0.0,
             max_drawdown_duration_bars=0,
@@ -252,9 +254,15 @@ def simulate_portfolio_signals(
     loss_count = len(losses)
     win_rate = (win_count / total_trades) * 100.0
 
-    gross_profit = sum(t.gross_pnl_usd for t in wins)
-    gross_loss = abs(sum(t.gross_pnl_usd for t in losses))
-    profit_factor = (gross_profit / gross_loss) if gross_loss > 0 else (999.0 if gross_profit > 0 else 0.0)
+    # Net Profit Factor: sum(net > 0) / abs(sum(net <= 0))
+    net_profit = sum(t.net_pnl_usd for t in wins)
+    net_loss = abs(sum(t.net_pnl_usd for t in losses))
+    profit_factor = (net_profit / net_loss) if net_loss > 0 else (999.0 if net_profit > 0 else 0.0)
+
+    # Gross Profit Factor (diagnostics)
+    gross_profit = sum(t.gross_pnl_usd for t in completed_trades if t.gross_pnl_usd > 0)
+    gross_loss = abs(sum(t.gross_pnl_usd for t in completed_trades if t.gross_pnl_usd <= 0))
+    gross_profit_factor = (gross_profit / gross_loss) if gross_loss > 0 else (999.0 if gross_profit > 0 else 0.0)
 
     net_profit_usd = current_equity - initial_equity_usd
     net_profit_pct = (net_profit_usd / initial_equity_usd) * 100.0
@@ -265,12 +273,18 @@ def simulate_portfolio_signals(
     lr_frac = 1.0 - wr_frac
     expectancy_usd = (wr_frac * avg_win_usd) - (lr_frac * avg_loss_usd)
 
-    r_values = [t.realized_r for t in completed_trades]
-    avg_r = float(np.mean(r_values)) if r_values else 0.0
+    # Net expectancy R from net_r
+    net_r_values = [t.net_r for t in completed_trades]
+    avg_r = float(np.mean(net_r_values)) if net_r_values else 0.0
+    win_net_r_mean = float(np.mean([t.net_r for t in wins])) if wins else 0.0
+    loss_net_r_mean = float(np.mean([abs(t.net_r) for t in losses])) if losses else 0.0
+    expectancy_r = (wr_frac * win_net_r_mean) - (lr_frac * loss_net_r_mean)
 
-    win_r_mean = float(np.mean([t.realized_r for t in wins])) if wins else 0.0
-    loss_r_mean = float(np.mean([abs(t.realized_r) for t in losses])) if losses else 0.0
-    expectancy_r = (wr_frac * win_r_mean) - (lr_frac * loss_r_mean)
+    # Gross expectancy R from realized_r
+    gross_r_values = [t.realized_r for t in completed_trades]
+    gross_win_r_mean = float(np.mean([t.realized_r for t in wins])) if wins else 0.0
+    gross_loss_r_mean = float(np.mean([abs(t.realized_r) for t in losses])) if losses else 0.0
+    gross_expectancy_r = (wr_frac * gross_win_r_mean) - (lr_frac * gross_loss_r_mean)
 
     total_fees = sum(t.fees_usd for t in completed_trades)
     total_slippage = sum(t.slippage_usd for t in completed_trades)
@@ -311,8 +325,10 @@ def simulate_portfolio_signals(
         gross_profit_usd=round(gross_profit, 2),
         gross_loss_usd=round(gross_loss, 2),
         profit_factor=round(profit_factor, 2),
+        gross_profit_factor=round(gross_profit_factor, 2),
         expectancy_usd=round(expectancy_usd, 2),
         expectancy_r=round(expectancy_r, 4),
+        gross_expectancy_r=round(gross_expectancy_r, 4),
         avg_r_multiple=round(avg_r, 4),
         max_drawdown_pct=round(max_dd_pct, 2),
         max_drawdown_duration_bars=0,
@@ -342,19 +358,26 @@ def compute_per_symbol_breakdown(trades: List[ExecutedTrade]) -> Dict[str, Dict[
         losses = [t for t in s_trades if t.net_pnl_usd <= 0]
         wr = (len(wins) / n * 100.0) if n > 0 else 0.0
 
-        gp = sum(t.gross_pnl_usd for t in wins)
-        gl = abs(sum(t.gross_pnl_usd for t in losses))
+        gp = sum(t.net_pnl_usd for t in wins)
+        gl = abs(sum(t.net_pnl_usd for t in losses))
         pf = (gp / gl) if gl > 0 else (999.0 if gp > 0 else 0.0)
 
+        gross_gp = sum(t.gross_pnl_usd for t in s_trades if t.gross_pnl_usd > 0)
+        gross_gl = abs(sum(t.gross_pnl_usd for t in s_trades if t.gross_pnl_usd <= 0))
+        gross_pf = (gross_gp / gross_gl) if gross_gl > 0 else (999.0 if gross_gp > 0 else 0.0)
+
         net_pnl = sum(t.net_pnl_usd for t in s_trades)
-        avg_r = float(np.mean([t.realized_r for t in s_trades])) if s_trades else 0.0
+        avg_r = float(np.mean([t.net_r for t in s_trades])) if s_trades else 0.0
+        gross_avg_r = float(np.mean([t.realized_r for t in s_trades])) if s_trades else 0.0
 
         breakdown[sym] = {
             "trades": n,
             "win_rate": round(wr, 1),
             "profit_factor": round(pf, 2),
+            "gross_profit_factor": round(gross_pf, 2),
             "net_pnl": round(net_pnl, 2),
             "avg_r": round(avg_r, 4),
+            "gross_avg_r": round(gross_avg_r, 4),
         }
     return breakdown
 
@@ -471,8 +494,9 @@ def generate_markdown_report(results: List[StrategyRunResult], output_path: str)
         )
         row = (
             f"| **{ev.strategy_name}** | {ev.total_trades} | {ev.win_rate:.1f}% | "
-            f"{ev.profit_factor:.2f} | {ev.expectancy_r:+.4f}R | {ev.sharpe_ratio:.2f} | "
-            f"{ev.sortino_ratio:.2f} | {ev.max_drawdown_pct:.1f}% | {ev.net_profit_pct:+.1f}% | "
+            f"**{r.sim_result.profit_factor:.2f}** ({r.sim_result.gross_profit_factor:.2f}) | "
+            f"**{r.sim_result.expectancy_r:+.4f}R** ({r.sim_result.gross_expectancy_r:+.4f}R) | "
+            f"{ev.sharpe_ratio:.2f} | {ev.sortino_ratio:.2f} | {ev.max_drawdown_pct:.1f}% | {ev.net_profit_pct:+.1f}% | "
             f"`{r.sim_result.sizing_mode}` | {ruin_str} | "
             f"`p = {ev.p_composite:.4f}` | {badge} |"
         )
@@ -486,9 +510,11 @@ def generate_markdown_report(results: List[StrategyRunResult], output_path: str)
         ev = r.evaluation
         sym_lines = []
         for sym, sm in sorted(r.per_symbol_metrics.items()):
+            gross_pf_val = sm.get("gross_profit_factor", sm["profit_factor"])
+            gross_r_val = sm.get("gross_avg_r", sm["avg_r"])
             sym_lines.append(
-                f"| `{sym}` | {sm['trades']} | {sm['win_rate']:.1f}% | {sm['profit_factor']:.2f} | "
-                f"${sm['net_pnl']:+,.2f} | {sm['avg_r']:+.4f}R |"
+                f"| `{sym}` | {sm['trades']} | {sm['win_rate']:.1f}% | {sm['profit_factor']:.2f} ({gross_pf_val:.2f}) | "
+                f"${sm['net_pnl']:+,.2f} | {sm['avg_r']:+.4f}R ({gross_r_val:+.4f}R) |"
             )
         sym_table = "\n".join(sym_lines)
 
@@ -504,6 +530,8 @@ def generate_markdown_report(results: List[StrategyRunResult], output_path: str)
             f"> **Statistical Verdict**: **`{ev.verdict}`**  \n"
             f"> Composite $p$-value against Phase 2 Monte Carlo Hurdle: **`p = {ev.p_composite:.4f}`**  \n"
             f"> Total Candidate Signals: `{r.total_signals_generated}` | Executed Trades: `{r.signals_executed}`  \n"
+            f"> Net Profit Factor: **`{r.sim_result.profit_factor:.2f}`** (Gross: `{r.sim_result.gross_profit_factor:.2f}`)  \n"
+            f"> Net Expectancy: **`{r.sim_result.expectancy_r:+.4f}R`** (Gross: `{r.sim_result.gross_expectancy_r:+.4f}R`)  \n"
             f"> Sizing Mode: `{r.sim_result.sizing_mode}` | Account Ruined: `{ruin_info}`"
         )
 
@@ -516,11 +544,11 @@ def generate_markdown_report(results: List[StrategyRunResult], output_path: str)
 **Passed:**
 {passed_list}
 
-**Failed / Unmet:**
+#### Failed / Unmet:
 {failed_list}
 
 #### Per-Symbol Performance:
-| Symbol | Trades | Win Rate | Profit Factor | Net PnL (USD) | Avg Realized R |
+| Symbol | Trades | Win Rate | Net PF (Gross) | Net PnL (USD) | Net R (Gross R) |
 | :--- | :---: | :---: | :---: | :---: | :---: |
 {sym_table}
 
@@ -557,7 +585,7 @@ Four core discretionary trading hypotheses were codified with strict zero lookah
 
 ## 2. Master Strategy Scorecard
 
-| Strategy | Trades | Win Rate | Profit Factor | Expectancy | Sharpe | Sortino | Max DD | Net Return | Sizing | Ruined? | Empirical $p$-value | Alpha Verdict |
+| Strategy | Trades | Win Rate | Net PF (Gross) | Net EV (Gross EV) | Sharpe | Sortino | Max DD | Net Return | Sizing | Ruined? | Empirical $p$-value | Alpha Verdict |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
 {scorecard_table}
 

@@ -9,6 +9,7 @@ import pytest
 from engine.exits import ExitConfig
 from engine.simulator import (
     CandidateSignal,
+    ExecutedTrade,
     SimulationEngine,
     SimulationFriction,
 )
@@ -378,4 +379,149 @@ def test_no_ghost_trades_below_minimum_unless_before_ruin():
             assert t.position_size_usd >= 10.0 or t.entry_time_ms < summary.ruin_time_ms
         else:
             assert t.position_size_usd >= 10.0
+
+
+def test_net_profit_factor_and_net_r_with_fee_flipped_winner():
+    """
+    Test 3 hand-computed trades:
+    Trade 1: Gross +$150, fees $20 -> Net +$130 (Winner, gross & net)
+    Trade 2: Gross +$10, fees $25  -> Net -$15  (Gross winner flipped to net loser by fees)
+    Trade 3: Gross -$100, fees $20 -> Net -$120 (Loser, gross & net)
+
+    Total Gross: +$60.00 (> 0)
+    Total Fees:  $65.00 (> Gross PnL)
+    Total Net:   -$5.00 (< 0)
+
+    Gross PF: 160.0 / 100.0 = 1.60 (> 1.0)
+    Net PF:   130.0 / 135.0 = 0.9630 (< 1.0)
+    """
+    sim = SimulationEngine(initial_equity_usd=10000.0)
+
+    # Hand-constructed trade 1: Net Winner
+    t1 = ExecutedTrade(
+        trade_id="T1",
+        symbol="BTCUSDT",
+        side="LONG",
+        entry_time_ms=1000,
+        exit_time_ms=2000,
+        entry_price=100.0,
+        entry_fill_price=100.0,
+        exit_price=115.0,
+        exit_fill_price=115.0,
+        exit_reason="TAKE_PROFIT",
+        position_size_usd=1000.0,
+        gross_pnl_usd=150.0,
+        fees_usd=20.0,
+        slippage_usd=0.0,
+        funding_cost_usd=0.0,
+        net_pnl_usd=130.0,
+        net_return_pct=13.0,
+        realized_r=1.50,
+        bars_held=5,
+        mfe_r=1.50,
+        mae_r=0.0,
+        initial_risk_usd=100.0,
+        net_r=1.30,
+    )
+
+    # Hand-constructed trade 2: Gross winner flipped to net loser by fees
+    t2 = ExecutedTrade(
+        trade_id="T2",
+        symbol="ETHUSDT",
+        side="LONG",
+        entry_time_ms=3000,
+        exit_time_ms=4000,
+        entry_price=200.0,
+        entry_fill_price=200.0,
+        exit_price=202.0,
+        exit_fill_price=202.0,
+        exit_reason="TIME_STOP",
+        position_size_usd=1000.0,
+        gross_pnl_usd=10.0,
+        fees_usd=25.0,
+        slippage_usd=0.0,
+        funding_cost_usd=0.0,
+        net_pnl_usd=-15.0,
+        net_return_pct=-1.5,
+        realized_r=0.10,
+        bars_held=20,
+        mfe_r=0.20,
+        mae_r=-0.10,
+        initial_risk_usd=100.0,
+        net_r=-0.15,
+    )
+
+    # Hand-constructed trade 3: Loser
+    t3 = ExecutedTrade(
+        trade_id="T3",
+        symbol="SOLUSDT",
+        side="SHORT",
+        entry_time_ms=5000,
+        exit_time_ms=6000,
+        entry_price=50.0,
+        entry_fill_price=50.0,
+        exit_price=55.0,
+        exit_fill_price=55.0,
+        exit_reason="STOP_LOSS",
+        position_size_usd=1000.0,
+        gross_pnl_usd=-100.0,
+        fees_usd=20.0,
+        slippage_usd=0.0,
+        funding_cost_usd=0.0,
+        net_pnl_usd=-120.0,
+        net_return_pct=-12.0,
+        realized_r=-1.00,
+        bars_held=8,
+        mfe_r=0.0,
+        mae_r=-1.00,
+        initial_risk_usd=100.0,
+        net_r=-1.20,
+    )
+
+    sim.completed_trades = [t1, t2, t3]
+    sim.equity_usd = 10000.0 + 130.0 - 15.0 - 120.0  # $9995.00
+    sim.equity_curve = [(0, 10000.0), (6000, 9995.0)]
+
+    summary = sim.compute_summary()
+
+    # Exact trade net_r assertions
+    assert summary.trades[0].net_r == 1.30
+    assert summary.trades[1].net_r == -0.15
+    assert summary.trades[2].net_r == -1.20
+
+    # Trade counts
+    assert summary.total_trades == 3
+    assert summary.winning_trades == 1  # Only T1 is net > 0
+    assert summary.losing_trades == 2   # T2 and T3 are net <= 0
+
+    # Profit Factor assertions
+    # Gross PF = 160.0 / 100.0 = 1.60
+    assert abs(summary.gross_profit_factor - 1.60) < 1e-4
+    # Net PF = 130.0 / (15.0 + 120.0) = 130.0 / 135.0 = ~0.962963 -> rounded to 0.96
+    assert summary.profit_factor == 0.96
+    # Acceptance criteria: Gross PnL positive (+60) but fees ($65) > gross PnL -> Net PF < 1.0
+    assert summary.profit_factor < 1.0
+    assert summary.gross_profit_factor > 1.0
+
+    # Net Expectancy R assertion: (1/3 * 1.30) - (2/3 * 0.675) = -0.05 / 3 = -0.01667 -> rounded to -0.0167
+    expected_net_ev_r = round((1.30 - 0.15 - 1.20) / 3.0, 4)
+    assert abs(summary.expectancy_r - expected_net_ev_r) < 1e-4
+    assert summary.expectancy_r < 0.0
+
+    # Also verify that SimulationEngine.process_bar sets initial_risk_usd and net_r on simulated trades
+    sim_live = SimulationEngine(initial_equity_usd=10000.0, risk_per_trade_pct=1.0)
+    sig = CandidateSignal("BTCUSDT", "LONG", 100.0, 90.0, timestamp_ms=1000)
+    t_id = sim_live.open_position(sig, current_bar_idx=0)
+    assert t_id is not None
+    # 1% risk on 10,000 is $100.0 risk
+    assert sim_live.active_positions[t_id]["risk_usd"] == 100.0
+
+    # Bar hits stop loss
+    c_loss = (100.0, 101.0, 89.0, 89.0)
+    closed = sim_live.process_bar("BTCUSDT", c_loss, timestamp_ms=2000, current_bar_idx=1)
+    assert len(closed) == 1
+    assert closed[0].initial_risk_usd == 100.0
+    # Since it stopped out with slippage/fees, net_pnl is slightly worse than -$100, so net_r < -1.0
+    assert closed[0].net_r < -0.95
+
 

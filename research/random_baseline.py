@@ -242,6 +242,8 @@ def simulate_single_trade_lifecycle(
             else:
                 combined_r = calculate_r_multiple(side, entry_fill, exit_fill, state.risk_dist)
 
+            net_r = (net_pnl / risk_usd) if risk_usd > 0 else 0.0
+
             exit_trade = ExecutedTrade(
                 trade_id=state.trade_id,
                 symbol=symbol,
@@ -264,6 +266,8 @@ def simulate_single_trade_lifecycle(
                 bars_held=state.bars_held,
                 mfe_r=round(state.highest_r, 4),
                 mae_r=round(state.lowest_r, 4),
+                initial_risk_usd=round(risk_usd, 2),
+                net_r=round(net_r, 4),
             )
             break
 
@@ -407,8 +411,10 @@ def run_random_baseline_iteration(
         return {
             "win_rate": 0.0,
             "profit_factor": 0.0,
+            "gross_profit_factor": 0.0,
             "expectancy_usd": 0.0,
             "expectancy_r": 0.0,
+            "gross_expectancy_r": 0.0,
             "avg_r": 0.0,
             "max_drawdown_pct": 0.0,
             "sharpe_ratio": 0.0,
@@ -421,9 +427,13 @@ def run_random_baseline_iteration(
     losses = [t for t in completed_trades if t.net_pnl_usd <= 0]
     win_rate = (len(wins) / total_trades) * 100.0
 
-    gross_profit = sum(t.gross_pnl_usd for t in wins)
-    gross_loss = abs(sum(t.gross_pnl_usd for t in losses))
-    profit_factor = (gross_profit / gross_loss) if gross_loss > 0 else 999.0
+    net_profit = sum(t.net_pnl_usd for t in wins)
+    net_loss = abs(sum(t.net_pnl_usd for t in losses))
+    profit_factor = (net_profit / net_loss) if net_loss > 0 else (999.0 if net_profit > 0 else 0.0)
+
+    gross_profit = sum(t.gross_pnl_usd for t in completed_trades if t.gross_pnl_usd > 0)
+    gross_loss = abs(sum(t.gross_pnl_usd for t in completed_trades if t.gross_pnl_usd <= 0))
+    gross_profit_factor = (gross_profit / gross_loss) if gross_loss > 0 else (999.0 if gross_profit > 0 else 0.0)
 
     avg_win_usd = (sum(t.net_pnl_usd for t in wins) / len(wins)) if wins else 0.0
     avg_loss_usd = (abs(sum(t.net_pnl_usd for t in losses)) / len(losses)) if losses else 0.0
@@ -431,12 +441,18 @@ def run_random_baseline_iteration(
     lr_frac = 1.0 - wr_frac
     expectancy_usd = (wr_frac * avg_win_usd) - (lr_frac * avg_loss_usd)
 
-    r_values = [t.realized_r for t in completed_trades]
-    avg_r = float(np.mean(r_values)) if r_values else 0.0
+    # Net expectancy R from net_r
+    net_r_values = [t.net_r for t in completed_trades]
+    avg_r = float(np.mean(net_r_values)) if net_r_values else 0.0
+    win_net_r_mean = float(np.mean([t.net_r for t in wins])) if wins else 0.0
+    loss_net_r_mean = float(np.mean([abs(t.net_r) for t in losses])) if losses else 0.0
+    expectancy_r = (wr_frac * win_net_r_mean) - (lr_frac * loss_net_r_mean)
 
-    win_r_mean = float(np.mean([t.realized_r for t in wins])) if wins else 0.0
-    loss_r_mean = float(np.mean([abs(t.realized_r) for t in losses])) if losses else 0.0
-    expectancy_r = (wr_frac * win_r_mean) - (lr_frac * loss_r_mean)
+    # Gross expectancy R from realized_r
+    gross_r_values = [t.realized_r for t in completed_trades]
+    gross_win_r_mean = float(np.mean([t.realized_r for t in wins])) if wins else 0.0
+    gross_loss_r_mean = float(np.mean([abs(t.realized_r) for t in losses])) if losses else 0.0
+    gross_expectancy_r = (wr_frac * gross_win_r_mean) - (lr_frac * gross_loss_r_mean)
 
     # Drawdown from chronological trade PnL sequence
     completed_trades.sort(key=lambda t: t.exit_time_ms)
@@ -467,8 +483,10 @@ def run_random_baseline_iteration(
     return {
         "win_rate": round(win_rate, 2),
         "profit_factor": round(profit_factor, 2),
+        "gross_profit_factor": round(gross_profit_factor, 2),
         "expectancy_usd": round(expectancy_usd, 2),
         "expectancy_r": round(expectancy_r, 4),
+        "gross_expectancy_r": round(gross_expectancy_r, 4),
         "avg_r": round(avg_r, 4),
         "max_drawdown_pct": round(max_dd_pct, 2),
         "sharpe_ratio": round(sharpe, 2),
@@ -514,8 +532,10 @@ def run_monte_carlo_baseline(
     metrics_log: Dict[str, List[float]] = {
         "win_rate": [],
         "profit_factor": [],
+        "gross_profit_factor": [],
         "expectancy_usd": [],
         "expectancy_r": [],
+        "gross_expectancy_r": [],
         "avg_r": [],
         "max_drawdown_pct": [],
         "sharpe_ratio": [],

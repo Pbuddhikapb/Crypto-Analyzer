@@ -76,6 +76,8 @@ class ExecutedTrade:
     bars_held: int
     mfe_r: float
     mae_r: float
+    initial_risk_usd: float = 0.0
+    net_r: float = 0.0
 
 
 @dataclass
@@ -108,6 +110,8 @@ class SimulationResult:
     ruined: bool = False
     ruin_time_ms: Optional[int] = None
     sizing_mode: str = "fixed_risk"
+    gross_profit_factor: float = 0.0
+    gross_expectancy_r: float = 0.0
 
 
 class SimulationEngine:
@@ -252,6 +256,7 @@ class SimulationEngine:
             "tp1_realized_usd": 0.0,
             "tp1_fees_usd": 0.0,
             "tp1_r": 0.0,
+            "risk_usd": risk_usd,
         }
 
         # Deduct entry fee immediately from cash equity
@@ -347,6 +352,10 @@ class SimulationEngine:
                 # Update remaining cash equity (gross pnl already incorporates exit fill slippage)
                 self.equity_usd += (remaining_gross_pnl - exit_fee)
 
+                # Initial risk and net R
+                init_risk = pos.get("risk_usd", pos["notional_usd"] * 0.01)
+                net_r = (net_pnl / init_risk) if init_risk > 0 else 0.0
+
                 executed = ExecutedTrade(
                     trade_id=trade_id,
                     symbol=state.symbol,
@@ -369,6 +378,8 @@ class SimulationEngine:
                     bars_held=state.bars_held,
                     mfe_r=round(state.highest_r, 4),
                     mae_r=round(state.lowest_r, 4),
+                    initial_risk_usd=round(init_risk, 2),
+                    net_r=round(net_r, 4),
                 )
 
                 closed_trades.append(executed)
@@ -404,8 +415,10 @@ class SimulationEngine:
                 gross_profit_usd=0.0,
                 gross_loss_usd=0.0,
                 profit_factor=0.0,
+                gross_profit_factor=0.0,
                 expectancy_usd=0.0,
                 expectancy_r=0.0,
+                gross_expectancy_r=0.0,
                 avg_r_multiple=0.0,
                 max_drawdown_pct=0.0,
                 max_drawdown_duration_bars=0,
@@ -427,10 +440,15 @@ class SimulationEngine:
         loss_count = len(losses)
         win_rate = (win_count / total_trades) * 100.0
 
-        gross_profit = sum(t.gross_pnl_usd for t in wins)
-        gross_loss = abs(sum(t.gross_pnl_usd for t in losses))
+        # Net Profit Factor: sum(net > 0) / abs(sum(net <= 0))
+        net_profit = sum(t.net_pnl_usd for t in wins)
+        net_loss = abs(sum(t.net_pnl_usd for t in losses))
+        profit_factor = (net_profit / net_loss) if net_loss > 0 else (999.0 if net_profit > 0 else 0.0)
 
-        profit_factor = (gross_profit / gross_loss) if gross_loss > 0 else 999.0
+        # Gross Profit Factor (diagnostics)
+        gross_profit = sum(t.gross_pnl_usd for t in trades if t.gross_pnl_usd > 0)
+        gross_loss = abs(sum(t.gross_pnl_usd for t in trades if t.gross_pnl_usd <= 0))
+        gross_profit_factor = (gross_profit / gross_loss) if gross_loss > 0 else (999.0 if gross_profit > 0 else 0.0)
 
         net_profit_usd = self.equity_usd - self.initial_equity_usd
         net_profit_pct = (net_profit_usd / self.initial_equity_usd) * 100.0
@@ -441,12 +459,18 @@ class SimulationEngine:
         lr_frac = 1.0 - wr_frac
         expectancy_usd = (wr_frac * avg_win_usd) - (lr_frac * avg_loss_usd)
 
-        r_values = [t.realized_r for t in trades]
-        avg_r = float(np.mean(r_values)) if r_values else 0.0
+        # Net expectancy R from net_r
+        net_r_values = [t.net_r for t in trades]
+        avg_r = float(np.mean(net_r_values)) if net_r_values else 0.0
+        win_net_r_mean = float(np.mean([t.net_r for t in wins])) if wins else 0.0
+        loss_net_r_mean = float(np.mean([abs(t.net_r) for t in losses])) if losses else 0.0
+        expectancy_r = (wr_frac * win_net_r_mean) - (lr_frac * loss_net_r_mean)
 
-        win_r_mean = float(np.mean([t.realized_r for t in wins])) if wins else 0.0
-        loss_r_mean = float(np.mean([abs(t.realized_r) for t in losses])) if losses else 0.0
-        expectancy_r = (wr_frac * win_r_mean) - (lr_frac * loss_r_mean)
+        # Gross expectancy R from realized_r
+        gross_r_values = [t.realized_r for t in trades]
+        gross_win_r_mean = float(np.mean([t.realized_r for t in wins])) if wins else 0.0
+        gross_loss_r_mean = float(np.mean([abs(t.realized_r) for t in losses])) if losses else 0.0
+        gross_expectancy_r = (wr_frac * gross_win_r_mean) - (lr_frac * gross_loss_r_mean)
 
         total_fees = sum(t.fees_usd for t in trades)
         total_slippage = sum(t.slippage_usd for t in trades)
@@ -500,8 +524,10 @@ class SimulationEngine:
             gross_profit_usd=round(gross_profit, 2),
             gross_loss_usd=round(gross_loss, 2),
             profit_factor=round(profit_factor, 2),
+            gross_profit_factor=round(gross_profit_factor, 2),
             expectancy_usd=round(expectancy_usd, 2),
             expectancy_r=round(expectancy_r, 4),
+            gross_expectancy_r=round(gross_expectancy_r, 4),
             avg_r_multiple=round(avg_r, 4),
             max_drawdown_pct=round(max_dd_pct, 2),
             max_drawdown_duration_bars=max_dd_duration,
