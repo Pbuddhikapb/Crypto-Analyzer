@@ -9,7 +9,6 @@ import {
   Target,
   TrendingUp,
   TrendingDown,
-  Info,
   DollarSign,
   Clock,
 } from 'lucide-react';
@@ -154,14 +153,28 @@ export const TradeStagingCard: React.FC<TradeStagingCardProps> = ({
     };
   }, [setup, bracketGeometry, dollarRisk, leverage]);
 
-  // Baseline Reality context from Phase 3 empirical findings
+  // Baseline Reality context from research strategy results
   const baselineInfo = opportunity?.historical_baseline || setup.historical_baseline || {
-    pattern: 'SMC FVG Retest',
-    win_rate: 45.9,
-    profit_factor: 0.93,
-    sample_trades: 3805,
-    status: 'NEUTRAL BASELINE (Order flow confirmation required)',
+    pattern: 'Unknown',
+    win_rate: null,
+    profit_factor: null,
+    sample_trades: null,
+    status: 'UNTESTED',
+    message: 'No historical evidence',
   };
+
+  const isUntested = baselineInfo.status === 'UNTESTED';
+  const isNoEdge = baselineInfo.status === 'NO VALIDATED EDGE';
+  const timestampStr = baselineInfo.run_timestamp
+    ? new Date(baselineInfo.run_timestamp).toLocaleString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        timeZoneName: 'short',
+      })
+    : null;
 
   const handleCopy = () => {
     const cleanSym = symbol.replace('USDT', '');
@@ -194,9 +207,11 @@ Total Target:    +$${calculations.totalPotentialProfit.toFixed(2)} (+1.04R blend
 Max Loss:        -$${calculations.maxLoss.toFixed(2)} (-1.00R)
 Est. Friction:   -$${calculations.totalFriction.toFixed(2)} (0.10% round-trip)
 =========================================
-EMPIRICAL REALITY (Phase 3 Verified):
-Baseline:        ${baselineInfo.win_rate}% Win Rate | ${baselineInfo.profit_factor} PF (${baselineInfo.sample_trades} trades)
-Requirement:     ${baselineInfo.status}
+EMPIRICAL REALITY (Research Validation):
+Pattern:         ${baselineInfo.pattern}
+Status:          ${baselineInfo.status}${baselineInfo.message ? ` (${baselineInfo.message})` : ''}
+${isUntested ? 'Evidence:        No historical evidence (UNTESTED)' : `Metrics:         ${baselineInfo.win_rate !== null ? baselineInfo.win_rate + '%' : 'N/A'} Win Rate | ${baselineInfo.profit_factor !== null ? baselineInfo.profit_factor : 'N/A'} PF (${baselineInfo.sample_trades ?? 0} trades)`}
+${timestampStr ? `Validated:       stats are from ${timestampStr}` : ''}
 =========================================`;
 
     navigator.clipboard.writeText(slip);
@@ -226,20 +241,56 @@ Requirement:     ${baselineInfo.status}
         </div>
       </div>
 
-      {/* Phase 3 Empirical Baseline Reality Banner */}
-      <div className="p-2.5 rounded border border-amber-500/40 bg-amber-500/10 text-[11px] space-y-1">
-        <div className="flex items-center justify-between font-bold text-amber-400">
+      {/* Empirical Baseline Reality Warning Banner */}
+      <div
+        className={`p-2.5 rounded border text-[11px] space-y-1 ${
+          isUntested
+            ? 'border-slate-500/40 bg-slate-800/40 text-slate-300'
+            : isNoEdge
+            ? 'border-crimson-red/50 bg-crimson-red/10 text-crimson-red'
+            : 'border-amber-500/40 bg-amber-500/10 text-amber-300'
+        }`}
+      >
+        <div className="flex items-center justify-between font-bold">
           <div className="flex items-center space-x-1.5">
-            <Info size={13} className="shrink-0 text-amber-400" />
-            <span>EMPIRICAL BASELINE REALITY (Phase 3)</span>
+            <ShieldAlert size={14} className={isNoEdge ? 'text-crimson-red' : isUntested ? 'text-slate-400' : 'text-amber-400'} />
+            <span className={isNoEdge ? 'text-crimson-red tracking-wide' : isUntested ? 'text-slate-300' : 'text-amber-400'}>
+              {baselineInfo.status}
+            </span>
           </div>
-          <span className="text-[10px] px-1.5 py-0.2 bg-amber-400/20 rounded text-amber-300">
-            {baselineInfo.win_rate}% WR | {baselineInfo.profit_factor} PF
+          <span
+            className={`text-[10px] px-1.5 py-0.5 rounded font-mono font-bold ${
+              isNoEdge
+                ? 'bg-crimson-red/20 text-crimson-red border border-crimson-red/30'
+                : isUntested
+                ? 'bg-slate-700/50 text-slate-400 border border-slate-600/30'
+                : 'bg-amber-400/20 text-amber-300 border border-amber-400/30'
+            }`}
+          >
+            {isUntested
+              ? 'UNTESTED'
+              : `${baselineInfo.win_rate ?? 'N/A'}% WR | ${baselineInfo.profit_factor ?? 'N/A'} PF`}
           </span>
         </div>
         <p className="text-[10px] text-slate-300 leading-relaxed">
-          {baselineInfo.pattern} on 2-year backtest produced mechanical PF {baselineInfo.profit_factor}. Option B doctrine requires discretionary confirmation before execution.
+          {isUntested ? (
+            <span>
+              Pattern <span className="font-semibold text-slate-200">{baselineInfo.pattern}</span> has {baselineInfo.message || 'no historical evidence'}. Exercise discretionary caution.
+            </span>
+          ) : (
+            <span>
+              <span className="font-semibold text-slate-200">{baselineInfo.pattern}</span> backtest ({baselineInfo.sample_trades ?? 0} trades) shows PF {baselineInfo.profit_factor ?? 'N/A'} and EV {baselineInfo.expectancy_r !== undefined && baselineInfo.expectancy_r !== null ? `${baselineInfo.expectancy_r}R` : 'N/A'}. Warning: {baselineInfo.status}.
+            </span>
+          )}
         </p>
+        {timestampStr && (
+          <div className="text-[9px] text-slate-400 pt-0.5 border-t border-slate-700/40 flex items-center justify-between">
+            <span>stats are from {timestampStr}</span>
+            {baselineInfo.matched_p_value !== undefined && baselineInfo.matched_p_value !== null && (
+              <span>Rank p-val: {baselineInfo.matched_p_value}</span>
+            )}
+          </div>
+        )}
       </div>
 
       {/* 6-Pillar Institutional Confirmation Checklist */}

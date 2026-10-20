@@ -17,10 +17,18 @@ export interface FVGBox {
 
 export interface HistoricalBaseline {
   pattern: string;
-  win_rate: number;
-  profit_factor: number;
-  sample_trades: number;
+  strategy_name?: string | null;
+  win_rate: number | null;
+  profit_factor: number | null;
+  sample_trades: number | null;
   status: string;
+  message?: string;
+  expectancy_r?: number | null;
+  bootstrap_ci?: [number, number] | null;
+  matched_p_value?: number | null;
+  verdict?: string | null;
+  run_timestamp?: string | null;
+  data_date_range?: string | null;
 }
 
 export interface TradeSetup {

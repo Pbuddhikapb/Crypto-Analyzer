@@ -41,6 +41,100 @@ from microstructure import OrderBookEngine, SymbolNormalizer
 from risk import PortfolioRiskManager
 from trader import PaperTrader
 
+# Explicit Pattern -> Tested Strategy Mapping
+PATTERN_STRATEGY_MAP: Dict[str, Optional[str]] = {
+    "Multi-TF Confluence": "ConfluenceThreshold",
+    "FVG Retest": "FVGRetest",
+    "Trend Pullback": "TrendPullback",
+    "Liquidity Sweep": "LiquiditySweep",
+    "RSI Divergence": None,
+}
+
+_STRATEGY_RESULTS_CACHE: Dict[str, Any] = {}
+_STRATEGY_RESULTS_MTIME: float = -1.0
+
+
+def get_strategy_results(json_path: str = "research/reports/strategy_results.json") -> Dict[str, Any]:
+    """Load and cache strategy validation results with file mtime checking."""
+    global _STRATEGY_RESULTS_CACHE, _STRATEGY_RESULTS_MTIME
+    try:
+        if not os.path.exists(json_path):
+            return {}
+        current_mtime = os.path.getmtime(json_path)
+        if current_mtime != _STRATEGY_RESULTS_MTIME:
+            with open(json_path, "r", encoding="utf-8") as f:
+                _STRATEGY_RESULTS_CACHE = json.load(f)
+            _STRATEGY_RESULTS_MTIME = current_mtime
+        return _STRATEGY_RESULTS_CACHE
+    except Exception as e:
+        print(f"[Strategy Results Cache Error] {e}")
+        return {}
+
+
+def get_historical_baseline(pattern: str, json_path: str = "research/reports/strategy_results.json") -> Dict[str, Any]:
+    """
+    Look up empirical evidence from strategy_results.json for a pattern.
+    If untested, returns status='UNTESTED' and message='No historical evidence' with null numbers.
+    If rejected, returns status='NO VALIDATED EDGE' with real net numbers.
+    """
+    strat_name = PATTERN_STRATEGY_MAP.get(pattern)
+    if not strat_name:
+        return {
+            "pattern": pattern,
+            "strategy_name": None,
+            "status": "UNTESTED",
+            "message": "No historical evidence",
+            "win_rate": None,
+            "profit_factor": None,
+            "expectancy_r": None,
+            "sample_trades": None,
+            "bootstrap_ci": None,
+            "matched_p_value": None,
+            "verdict": None,
+            "run_timestamp": None,
+            "data_date_range": None,
+        }
+
+    results_data = get_strategy_results(json_path)
+    strats = results_data.get("strategies", {})
+    strat_data = strats.get(strat_name)
+
+    if not strat_data:
+        return {
+            "pattern": pattern,
+            "strategy_name": strat_name,
+            "status": "UNTESTED",
+            "message": "No historical evidence",
+            "win_rate": None,
+            "profit_factor": None,
+            "expectancy_r": None,
+            "sample_trades": None,
+            "bootstrap_ci": None,
+            "matched_p_value": None,
+            "verdict": None,
+            "run_timestamp": None,
+            "data_date_range": None,
+        }
+
+    verdict = str(strat_data.get("verdict", ""))
+    is_rejected = "REJECTED" in verdict.upper()
+    status = "NO VALIDATED EDGE" if is_rejected else "VALIDATED (p < 0.05)"
+
+    return {
+        "pattern": pattern,
+        "strategy_name": strat_name,
+        "win_rate": strat_data.get("net_win_rate"),
+        "profit_factor": strat_data.get("net_profit_factor"),
+        "expectancy_r": strat_data.get("net_expectancy_r"),
+        "sample_trades": strat_data.get("trade_count"),
+        "status": status,
+        "bootstrap_ci": strat_data.get("bootstrap_ci"),
+        "matched_p_value": strat_data.get("matched_p_value"),
+        "verdict": verdict,
+        "run_timestamp": strat_data.get("run_timestamp") or results_data.get("metadata", {}).get("run_timestamp"),
+        "data_date_range": strat_data.get("data_date_range") or results_data.get("metadata", {}).get("data_date_range"),
+    }
+
 
 class ConnectionManager:
     """Manages active client WebSocket connections with non-blocking broadcast."""
@@ -1053,50 +1147,22 @@ def create_app(
 
             # Categorize primary structural inflection pattern
             inflection_pattern = "EQUILIBRIUM"
-            baseline_info = {
-                "pattern": "Multi-TF Confluence",
-                "win_rate": 45.0,
-                "profit_factor": 0.90,
-                "sample_trades": 2500,
-                "status": "SELECTIVE (Requires discretionary discretion)",
-            }
+            pattern_key = "Multi-TF Confluence"
 
             if trend == "BULLISH" and indicators.get("has_bullish_fvg"):
                 inflection_pattern = "SMC Bullish FVG Retest"
-                baseline_info = {
-                    "pattern": "FVG Retest",
-                    "win_rate": 45.9,
-                    "profit_factor": 0.93,
-                    "sample_trades": 3805,
-                    "status": "NEUTRAL BASELINE (Order flow confirmation required)",
-                }
+                pattern_key = "FVG Retest"
             elif trend == "BEARISH" and indicators.get("has_bearish_fvg"):
                 inflection_pattern = "SMC Bearish FVG Retest"
-                baseline_info = {
-                    "pattern": "FVG Retest",
-                    "win_rate": 45.9,
-                    "profit_factor": 0.93,
-                    "sample_trades": 3805,
-                    "status": "NEUTRAL BASELINE (Order flow confirmation required)",
-                }
+                pattern_key = "FVG Retest"
             elif indicators.get("has_bullish_divergence") or indicators.get("has_bearish_divergence"):
                 inflection_pattern = "Momentum RSI Divergence"
-                baseline_info = {
-                    "pattern": "RSI Divergence",
-                    "win_rate": 48.0,
-                    "profit_factor": 0.95,
-                    "sample_trades": 1800,
-                    "status": "REVERSAL SETUP (Check volume absorption)",
-                }
+                pattern_key = "RSI Divergence"
             elif trend == htf_trend and trend in ("BULLISH", "BEARISH"):
                 inflection_pattern = f"Macro {trend.title()} Pullback"
-                baseline_info = {
-                    "pattern": "Trend Pullback",
-                    "win_rate": 48.7,
-                    "profit_factor": 0.85,
-                    "sample_trades": 3544,
-                    "status": "NEUTRAL BASELINE (Wait for confirmed bounce)",
-                }
+                pattern_key = "Trend Pullback"
+
+            baseline_info = get_historical_baseline(pattern_key)
 
             opportunities.append({
                 "symbol": sym,

@@ -8,8 +8,10 @@ and produces the formal validation report in research/reports/strategy_validatio
 """
 
 import argparse
+import json
 import logging
 import os
+import subprocess
 import sys
 import time
 
@@ -394,6 +396,7 @@ def run_strategy_evidence_validation(
     symbols: Optional[List[str]] = None,
     data_dir: str = "data/candles",
     output_report_path: str = "research/reports/strategy_validation_report.md",
+    output_json_path: str = "research/reports/strategy_results.json",
     sizing_mode: str = "fixed_risk",
     ruin_threshold_usd: Optional[float] = None,
     matched_passes: int = 1000,
@@ -523,7 +526,83 @@ def run_strategy_evidence_validation(
 
     # Generate and save master report
     generate_markdown_report(run_results, output_report_path)
+    save_strategy_results_json(run_results, output_json_path, candles_dict=candles_dict)
     return run_results
+
+
+def get_git_commit_hash() -> str:
+    """Return the current git commit hash, or 'unknown' if not in git."""
+    try:
+        return subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+    except Exception:
+        return "unknown"
+
+
+def save_strategy_results_json(
+    results: List[StrategyRunResult],
+    output_json_path: str,
+    candles_dict: Optional[Dict[str, np.ndarray]] = None,
+) -> None:
+    """Save machine-readable strategy validation outcomes to JSON."""
+    os.makedirs(os.path.dirname(output_json_path), exist_ok=True)
+    now_iso = datetime.now(timezone.utc).isoformat()
+    git_hash = get_git_commit_hash()
+
+    min_ts = 0
+    max_ts = 0
+    if candles_dict:
+        min_ts = min(int(arr[0, 4]) for arr in candles_dict.values()) if candles_dict else 0
+        max_ts = max(int(arr[-1, 4]) for arr in candles_dict.values()) if candles_dict else 0
+
+    start_date_str = datetime.fromtimestamp(min_ts / 1000.0, tz=timezone.utc).strftime("%Y-%m-%d") if min_ts > 0 else ""
+    end_date_str = datetime.fromtimestamp(max_ts / 1000.0, tz=timezone.utc).strftime("%Y-%m-%d") if max_ts > 0 else ""
+    date_range_str = f"{start_date_str} to {end_date_str}" if start_date_str and end_date_str else ""
+
+    strategies_data = {}
+    for r in results:
+        ev = r.evaluation
+        sim = r.sim_result
+        matched_p = ev.matched_p_value if ev.matched_p_value is not None else ev.p_composite
+        boot_ci = [round(r.bootstrap_ci[0], 4), round(r.bootstrap_ci[1], 4)] if r.bootstrap_ci else None
+
+        strategies_data[r.strategy_name] = {
+            "strategy_name": r.strategy_name,
+            "description": r.description,
+            "trade_count": r.signals_executed,
+            "net_win_rate": round(sim.win_rate_pct, 2),
+            "net_profit_factor": round(sim.profit_factor, 2),
+            "net_expectancy_r": round(sim.expectancy_r, 4),
+            "gross_profit_factor": round(sim.gross_profit_factor, 2),
+            "gross_expectancy_r": round(sim.gross_expectancy_r, 4),
+            "bootstrap_ci": boot_ci,
+            "matched_p_value": round(matched_p, 4) if matched_p is not None else None,
+            "verdict": ev.verdict,
+            "sizing_mode": sim.sizing_mode,
+            "ruined": sim.ruined,
+            "ruin_time_ms": sim.ruin_time_ms,
+            "sharpe_ratio": round(sim.sharpe_ratio, 2),
+            "max_drawdown_pct": round(sim.max_drawdown_pct, 2),
+            "net_profit_pct": round(sim.net_profit_pct, 2),
+            "run_timestamp": now_iso,
+            "data_date_range": date_range_str,
+            "git_commit": git_hash,
+        }
+
+    payload = {
+        "metadata": {
+            "run_timestamp": now_iso,
+            "git_commit": git_hash,
+            "data_date_range": date_range_str,
+            "start_time_ms": min_ts,
+            "end_time_ms": max_ts,
+        },
+        "strategies": strategies_data,
+    }
+
+    with open(output_json_path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2)
+
+    logger.info(f"Saved machine-readable strategy results to {output_json_path}")
 
 
 def generate_markdown_report(results: List[StrategyRunResult], output_path: str) -> None:
@@ -681,6 +760,12 @@ def main():
         help="Output report markdown path",
     )
     parser.add_argument(
+        "--output-json",
+        type=str,
+        default="research/reports/strategy_results.json",
+        help="Output strategy results JSON path",
+    )
+    parser.add_argument(
         "--sizing-mode",
         type=str,
         choices=["fixed_risk", "compounding"],
@@ -704,6 +789,7 @@ def main():
     results = run_strategy_evidence_validation(
         data_dir=args.data_dir,
         output_report_path=args.output,
+        output_json_path=args.output_json,
         sizing_mode=args.sizing_mode,
         ruin_threshold_usd=args.ruin_threshold,
         matched_passes=args.matched_passes,

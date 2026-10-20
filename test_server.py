@@ -382,3 +382,128 @@ def test_market_candles_timeframe_aggregation(app_and_client):
     assert candles[1]["time"] == base_t + 4 * 900
 
 
+def test_no_hardcoded_sample_trades_in_server():
+    """Verify that no hard-coded baseline numbers remain in server.py (grep-style test)."""
+    import re
+    with open("server.py", "r", encoding="utf-8") as f:
+        content = f.read()
+    # Check that sample_trades is never assigned integer literals in server.py
+    matches = re.findall(r'["\']sample_trades["\']\s*:\s*\d+', content)
+    assert len(matches) == 0, f"Found hardcoded sample_trades numbers in server.py: {matches}"
+
+    # Check that win_rate and profit_factor are also not hard-coded in dictionaries
+    matches_wr = re.findall(r'["\']win_rate["\']\s*:\s*\d+\.?\d*', content)
+    assert len(matches_wr) == 0, f"Found hardcoded win_rate numbers in server.py: {matches_wr}"
+
+
+def test_untested_pattern_returns_untested():
+    """Verify that untested patterns return status='UNTESTED', message='No historical evidence', and null numbers."""
+    from server import get_historical_baseline
+
+    res_rsi = get_historical_baseline("RSI Divergence")
+    assert res_rsi["status"] == "UNTESTED"
+    assert res_rsi["message"] == "No historical evidence"
+    assert res_rsi["win_rate"] is None
+    assert res_rsi["profit_factor"] is None
+    assert res_rsi["expectancy_r"] is None
+    assert res_rsi["sample_trades"] is None
+
+    res_unknown = get_historical_baseline("Unknown Arbitrary Pattern")
+    assert res_unknown["status"] == "UNTESTED"
+    assert res_unknown["message"] == "No historical evidence"
+    assert res_unknown["win_rate"] is None
+    assert res_unknown["profit_factor"] is None
+
+
+def test_rejected_strategy_returns_no_validated_edge_and_matches_json():
+    """Verify rejected strategy returns status='NO VALIDATED EDGE' with numbers matching strategy_results.json."""
+    import json
+    from server import get_historical_baseline
+
+    with open("research/reports/strategy_results.json", "r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    # Test FVG Retest -> FVGRetest
+    fvg_json = data["strategies"]["FVGRetest"]
+    fvg_baseline = get_historical_baseline("FVG Retest")
+    assert fvg_baseline["status"] == "NO VALIDATED EDGE"
+    assert fvg_baseline["win_rate"] == fvg_json["net_win_rate"]
+    assert fvg_baseline["profit_factor"] == fvg_json["net_profit_factor"]
+    assert fvg_baseline["expectancy_r"] == fvg_json["net_expectancy_r"]
+    assert fvg_baseline["sample_trades"] == fvg_json["trade_count"]
+
+    # Test Trend Pullback -> TrendPullback
+    tp_json = data["strategies"]["TrendPullback"]
+    tp_baseline = get_historical_baseline("Trend Pullback")
+    assert tp_baseline["status"] == "NO VALIDATED EDGE"
+    assert tp_baseline["win_rate"] == tp_json["net_win_rate"]
+    assert tp_baseline["profit_factor"] == tp_json["net_profit_factor"]
+    assert tp_baseline["sample_trades"] == tp_json["trade_count"]
+
+    # Test Multi-TF Confluence -> ConfluenceThreshold
+    conf_json = data["strategies"]["ConfluenceThreshold"]
+    conf_baseline = get_historical_baseline("Multi-TF Confluence")
+    assert conf_baseline["status"] == "NO VALIDATED EDGE"
+    assert conf_baseline["win_rate"] == conf_json["net_win_rate"]
+    assert conf_baseline["profit_factor"] == conf_json["net_profit_factor"]
+    assert conf_baseline["sample_trades"] == conf_json["trade_count"]
+
+
+def test_modifying_strategy_results_json_updates_endpoint_live(tmp_path):
+    """Verify acceptance criterion: changing strategy_results.json changes returned baseline with no code edits."""
+    import json
+    import os
+    import time
+    from server import get_historical_baseline
+
+    test_json = tmp_path / "strategy_results.json"
+    data1 = {
+        "metadata": {"run_timestamp": "2026-10-20T12:00:00Z"},
+        "strategies": {
+            "FVGRetest": {
+                "strategy_name": "FVGRetest",
+                "trade_count": 999,
+                "net_win_rate": 42.0,
+                "net_profit_factor": 0.65,
+                "net_expectancy_r": -0.15,
+                "verdict": "REJECTED (p >= 0.05)",
+            }
+        },
+    }
+    with open(test_json, "w", encoding="utf-8") as f:
+        json.dump(data1, f)
+
+    res1 = get_historical_baseline("FVG Retest", json_path=str(test_json))
+    assert res1["sample_trades"] == 999
+    assert res1["profit_factor"] == 0.65
+    assert res1["win_rate"] == 42.0
+    assert res1["status"] == "NO VALIDATED EDGE"
+
+    # Modify JSON and bump mtime
+    time.sleep(0.05)
+    data2 = {
+        "metadata": {"run_timestamp": "2026-10-20T12:30:00Z"},
+        "strategies": {
+            "FVGRetest": {
+                "strategy_name": "FVGRetest",
+                "trade_count": 1234,
+                "net_win_rate": 55.5,
+                "net_profit_factor": 1.25,
+                "net_expectancy_r": 0.08,
+                "verdict": "VALIDATED (p < 0.05)",
+            }
+        },
+    }
+    with open(test_json, "w", encoding="utf-8") as f:
+        json.dump(data2, f)
+    new_mtime = os.path.getmtime(test_json) + 2.0
+    os.utime(test_json, (new_mtime, new_mtime))
+
+    res2 = get_historical_baseline("FVG Retest", json_path=str(test_json))
+    assert res2["sample_trades"] == 1234
+    assert res2["profit_factor"] == 1.25
+    assert res2["win_rate"] == 55.5
+    assert res2["status"] == "VALIDATED (p < 0.05)"
+
+
+

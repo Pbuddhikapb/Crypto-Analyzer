@@ -118,10 +118,31 @@ export const OpportunityRadar: React.FC<OpportunityRadarProps> = ({
                   )}
                   {baseline && (
                     <span
-                      className="px-1.5 py-0.5 rounded text-[9px] font-mono text-slate-400 bg-dark-bg/80 border border-dark-border"
-                      title={`${baseline.pattern}: ${baseline.sample_trades} trades. ${baseline.status}`}
+                      className={`px-1.5 py-0.5 rounded text-[9px] font-mono border ${
+                        baseline.status === 'UNTESTED'
+                          ? 'bg-slate-800/80 text-slate-400 border-slate-600/40'
+                          : baseline.status === 'NO VALIDATED EDGE'
+                          ? 'bg-crimson-red/15 text-crimson-red border-crimson-red/40 font-semibold'
+                          : 'bg-dark-bg/80 text-slate-400 border-dark-border'
+                      }`}
+                      title={
+                        baseline.status === 'UNTESTED'
+                          ? `${baseline.pattern}: UNTESTED (No historical evidence)`
+                          : `${baseline.pattern}: ${baseline.sample_trades ?? 0} trades | PF ${baseline.profit_factor ?? 'N/A'} | WR ${baseline.win_rate ?? 'N/A'}% | ${baseline.status}${
+                              baseline.run_timestamp
+                                ? ` | stats are from ${new Date(baseline.run_timestamp).toLocaleDateString()}`
+                                : ''
+                            }`
+                      }
                     >
-                      Baseline: {baseline.win_rate}% WR | {baseline.profit_factor} PF
+                      {baseline.status === 'UNTESTED'
+                        ? 'UNTESTED'
+                        : `${baseline.status === 'NO VALIDATED EDGE' ? 'NO EDGE' : baseline.status}: ${baseline.profit_factor ?? 'N/A'} PF`}
+                    </span>
+                  )}
+                  {baseline?.run_timestamp && (
+                    <span className="text-[8px] text-slate-500 font-mono">
+                      stats are from {new Date(baseline.run_timestamp).toLocaleDateString()}
                     </span>
                   )}
                 </div>
