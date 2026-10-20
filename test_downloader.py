@@ -260,3 +260,68 @@ def test_parquet_save_and_load_roundtrip():
         assert len(df_filtered) == 30
     finally:
         shutil.rmtree(temp_dir)
+
+
+def test_checksum_mismatch_retry_and_raise():
+    """Verify SHA256 checksum mismatch triggers retry then raises ValueError."""
+    import hashlib
+
+    corrupted_zip_bytes = b"bad corrupted content"
+    valid_expected_sha = hashlib.sha256(b"original good content").hexdigest()
+    checksum_file_bytes = f"{valid_expected_sha}  test.zip\n".encode("utf-8")
+
+    call_count = {"zip": 0, "checksum": 0}
+
+    def fake_urlopen(req, timeout=12):
+        url = req.full_url if hasattr(req, "full_url") else str(req)
+        mock = MagicMock()
+        mock.status = 200
+        mock.__enter__.return_value = mock
+
+        if url.endswith(".CHECKSUM"):
+            call_count["checksum"] += 1
+            mock.read.return_value = checksum_file_bytes
+        else:
+            call_count["zip"] += 1
+            mock.read.return_value = corrupted_zip_bytes
+        return mock
+
+    with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+        with pytest.raises(ValueError, match="Checksum mismatch"):
+            fetch_vision_zip("https://fake.url/test.zip", max_retries=3)
+
+    # Must have attempted download, noticed mismatch, retried once, then raised
+    assert call_count["zip"] >= 2
+    assert call_count["checksum"] >= 2
+
+
+def test_checksum_valid_verification():
+    """Verify clean download and unpack when checksum matches exactly."""
+    import hashlib
+
+    csv_bytes = b"calc_time,funding_interval_hours,last_funding_rate\n1704067200000,8,0.00037\n"
+    zip_buf = io.BytesIO()
+    with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("test.csv", csv_bytes)
+    zip_data = zip_buf.getvalue()
+
+    sha256_hash = hashlib.sha256(zip_data).hexdigest()
+    checksum_file_bytes = f"{sha256_hash}  test.zip\n".encode("utf-8")
+
+    def fake_urlopen(req, timeout=12):
+        url = req.full_url if hasattr(req, "full_url") else str(req)
+        mock = MagicMock()
+        mock.status = 200
+        mock.__enter__.return_value = mock
+
+        if url.endswith(".CHECKSUM"):
+            mock.read.return_value = checksum_file_bytes
+        else:
+            mock.read.return_value = zip_data
+        return mock
+
+    with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+        extracted = fetch_vision_zip("https://fake.url/test.zip")
+        assert extracted is not None
+        assert b"0.00037" in extracted
+

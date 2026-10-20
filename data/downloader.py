@@ -8,6 +8,7 @@ strict schema standardization, and provenance metadata (source='binance_futures_
 """
 
 import argparse
+import hashlib
 import io
 import json
 import logging
@@ -126,9 +127,32 @@ def parse_kline_csv(csv_bytes: bytes) -> pd.DataFrame:
     return df[STANDARD_COLUMNS]
 
 
-def fetch_vision_zip(url: str, max_retries: int = 3) -> Optional[bytes]:
+def fetch_checksum(checksum_url: str, headers: Dict[str, str]) -> Optional[str]:
+    """Fetch expected SHA256 checksum string from data.binance.vision .CHECKSUM file."""
+    req = urllib.request.Request(checksum_url, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=12) as response:
+            if response.status == 200:
+                raw_text = response.read().decode("utf-8", errors="ignore").strip()
+                tokens = raw_text.split()
+                if tokens:
+                    candidate = tokens[0].lower()
+                    if len(candidate) == 64 and all(c in "0123456789abcdef" for c in candidate):
+                        return candidate
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            return None
+    except Exception as e:
+        logger.debug(f"Failed to fetch checksum from {checksum_url}: {e}")
+        return None
+    return None
+
+
+def fetch_vision_zip(url: str, max_retries: int = 3, verify_checksum: bool = True) -> Optional[bytes]:
     """
     Fetch a zip archive from data.binance.vision over HTTPS with backoff.
+    Verifies SHA256 against companion .CHECKSUM file before extracting.
+    On checksum mismatch, retries once, then raises ValueError.
     Returns uncompressed CSV bytes or None if 404/unavailable.
     """
     headers = {
@@ -137,11 +161,32 @@ def fetch_vision_zip(url: str, max_retries: int = 3) -> Optional[bytes]:
     }
 
     req = urllib.request.Request(url, headers=headers)
+    checksum_url = f"{url}.CHECKSUM"
+    mismatch_seen = False
+
     for attempt in range(max_retries):
         try:
             with urllib.request.urlopen(req, timeout=12) as response:
                 if response.status == 200:
                     zip_content = response.read()
+
+                    # 1. Download and verify SHA256 if checksum file exists
+                    if verify_checksum:
+                        expected_hash = fetch_checksum(checksum_url, headers)
+                        if expected_hash:
+                            actual_hash = hashlib.sha256(zip_content).hexdigest().lower()
+                            if actual_hash != expected_hash:
+                                if mismatch_seen:
+                                    raise ValueError(
+                                        f"Checksum mismatch for {url}: expected {expected_hash}, got {actual_hash}"
+                                    )
+                                logger.warning(
+                                    f"Checksum mismatch for {url}: expected {expected_hash}, got {actual_hash}. Retrying once..."
+                                )
+                                mismatch_seen = True
+                                time.sleep(0.5)
+                                continue
+
                     with zipfile.ZipFile(io.BytesIO(zip_content)) as z:
                         namelist = z.namelist()
                         if not namelist:
@@ -154,9 +199,14 @@ def fetch_vision_zip(url: str, max_retries: int = 3) -> Optional[bytes]:
                 # File not published yet or outside date range
                 return None
             time.sleep(0.5 * (attempt + 1))
+        except ValueError:
+            raise
         except Exception as e:
             logger.debug(f"Attempt {attempt + 1} failed for {url}: {e}")
             time.sleep(0.5 * (attempt + 1))
+
+    if mismatch_seen:
+        raise ValueError(f"Checksum mismatch for {url}: failed after retry")
 
     return None
 
