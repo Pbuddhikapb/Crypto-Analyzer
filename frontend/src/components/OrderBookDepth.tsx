@@ -1,5 +1,7 @@
-import React, { useMemo } from 'react';
-import { Layers } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { Layers, ShieldAlert } from 'lucide-react';
+import { OrderBookDepthData } from '../types/market';
+import { fetchMarketDepth } from '../state/api';
 
 interface OrderBookDepthProps {
   symbol: string;
@@ -7,43 +9,57 @@ interface OrderBookDepthProps {
 }
 
 export const OrderBookDepth: React.FC<OrderBookDepthProps> = ({ symbol, latestPrice }) => {
-  const currentPrice = latestPrice || 50000;
+  const [depth, setDepth] = useState<OrderBookDepthData | null>(null);
 
-  // Generate deterministic synthetic top-10 depth based on tick price
-  const { bids, asks, imbalancePct } = useMemo(() => {
-    const step = currentPrice * 0.0002;
-    const generatedBids = [];
-    const generatedAsks = [];
-    let bidVolTotal = 0;
-    let askVolTotal = 0;
+  // 1. Initial REST pre-seed on symbol change
+  useEffect(() => {
+    let cancelled = false;
+    fetchMarketDepth(symbol)
+      .then((data) => {
+        if (!cancelled && data.symbol === symbol) {
+          setDepth(data);
+        }
+      })
+      .catch(() => {});
 
-    for (let i = 1; i <= 8; i++) {
-      const bPrice = currentPrice - i * step;
-      // Deterministic pseudo-random volume
-      const bQty = Number(((Math.sin(bPrice * 100) + 1.2) * 2.5).toFixed(3));
-      generatedBids.push({ price: bPrice, qty: bQty, total: (bidVolTotal += bQty) });
-
-      const aPrice = currentPrice + i * step;
-      const aQty = Number(((Math.cos(aPrice * 100) + 1.2) * 2.5).toFixed(3));
-      generatedAsks.push({ price: aPrice, qty: aQty, total: (askVolTotal += aQty) });
-    }
-
-    const obi =
-      bidVolTotal + askVolTotal > 0
-        ? ((bidVolTotal - askVolTotal) / (bidVolTotal + askVolTotal)) * 100
-        : 0;
-
-    return {
-      bids: generatedBids,
-      asks: generatedAsks.reverse(),
-      imbalancePct: Math.round(obi),
+    return () => {
+      cancelled = true;
     };
-  }, [currentPrice]);
+  }, [symbol]);
+
+  // 2. High-performance event listener isolated strictly to this component (zero App re-renders)
+  useEffect(() => {
+    const handleDepthUpdate = (event: Event) => {
+      const customEvent = event as CustomEvent<OrderBookDepthData>;
+      if (customEvent.detail && customEvent.detail.symbol === symbol) {
+        setDepth(customEvent.detail);
+      }
+    };
+
+    window.addEventListener('crypto-order-book-depth', handleDepthUpdate);
+    return () => {
+      window.removeEventListener('crypto-order-book-depth', handleDepthUpdate);
+    };
+  }, [symbol]);
+
+  // Derived state from real depth, with graceful fallback
+  const bids = depth?.bids && depth.bids.length > 0 ? depth.bids : [];
+  const asks = depth?.asks && depth.asks.length > 0 ? depth.asks : [];
+  const imbalancePct = depth ? Math.round(depth.imbalance_pct) : 0;
 
   const maxTotal = Math.max(
     bids[bids.length - 1]?.total || 1,
-    asks[0]?.total || 1
+    asks[asks.length - 1]?.total || 1
   );
+
+  const formatLevelPrice = (p: number) => {
+    if (p >= 1000) return p.toFixed(2);
+    if (p >= 1) return p.toFixed(3);
+    return p.toFixed(4);
+  };
+
+  const hasBidWall = (depth?.bid_walls?.length || 0) > 0;
+  const hasAskWall = (depth?.ask_walls?.length || 0) > 0;
 
   return (
     <div className="h-64 flex flex-col bg-dark-panel border-b border-dark-border text-xs select-none">
@@ -52,14 +68,31 @@ export const OrderBookDepth: React.FC<OrderBookDepthProps> = ({ symbol, latestPr
           <Layers size={13} className="text-laser-cyan" />
           <span>ORDER BOOK &amp; IMBALANCE</span>
         </div>
-        <span className="text-[10px] text-slate-400 font-mono">{symbol}</span>
+        <div className="flex items-center space-x-2">
+          {hasBidWall && (
+            <span className="flex items-center text-[9px] text-laser-green bg-laser-green/10 px-1 rounded font-mono">
+              <ShieldAlert size={10} className="mr-0.5" /> BID WALL
+            </span>
+          )}
+          {hasAskWall && (
+            <span className="flex items-center text-[9px] text-crimson-red bg-crimson-red/10 px-1 rounded font-mono">
+              <ShieldAlert size={10} className="mr-0.5" /> ASK WALL
+            </span>
+          )}
+          {latestPrice != null && (
+            <span className="text-[10px] text-laser-cyan font-mono font-semibold">
+              ${latestPrice >= 1 ? latestPrice.toFixed(2) : latestPrice.toFixed(4)}
+            </span>
+          )}
+          <span className="text-[10px] text-slate-400 font-mono">{symbol}</span>
+        </div>
       </div>
 
       {/* Imbalance Meter */}
       <div className="px-3 py-1 bg-dark-bg/60 border-b border-dark-border/40 flex items-center justify-between text-[11px] font-mono">
-        <span className="text-laser-green font-bold">BIDS {50 + imbalancePct / 2}%</span>
+        <span className="text-laser-green font-bold">BIDS {Math.max(5, Math.min(95, 50 + imbalancePct / 2))}%</span>
         <span className="text-slate-400">OBI: {imbalancePct > 0 ? `+${imbalancePct}%` : `${imbalancePct}%`}</span>
-        <span className="text-crimson-red font-bold">ASKS {50 - imbalancePct / 2}%</span>
+        <span className="text-crimson-red font-bold">ASKS {Math.max(5, Math.min(95, 50 - imbalancePct / 2))}%</span>
       </div>
 
       {/* Visual OBI bar */}
@@ -79,8 +112,8 @@ export const OrderBookDepth: React.FC<OrderBookDepthProps> = ({ symbol, latestPr
         {/* Asks (Top) */}
         <div className="flex flex-col justify-end p-1 space-y-0.5">
           <span className="text-[9px] text-slate-500 uppercase px-1">Top Asks ($)</span>
-          {asks.slice(-5).map((a, i) => {
-            const depthPct = (a.total / maxTotal) * 100;
+          {asks.slice(0, 5).reverse().map((a, i) => {
+            const depthPct = Math.min(100, (a.total / maxTotal) * 100);
             return (
               <div
                 key={i}
@@ -91,7 +124,7 @@ export const OrderBookDepth: React.FC<OrderBookDepthProps> = ({ symbol, latestPr
                   style={{ width: `${depthPct}%` }}
                 />
                 <span className="text-crimson-red font-semibold relative z-10">
-                  {a.price.toFixed(2)}
+                  {formatLevelPrice(a.price)}
                 </span>
                 <span className="text-slate-400 relative z-10">{a.qty.toFixed(2)}</span>
               </div>
@@ -103,7 +136,7 @@ export const OrderBookDepth: React.FC<OrderBookDepthProps> = ({ symbol, latestPr
         <div className="flex flex-col justify-start p-1 space-y-0.5">
           <span className="text-[9px] text-slate-500 uppercase px-1">Top Bids ($)</span>
           {bids.slice(0, 5).map((b, i) => {
-            const depthPct = (b.total / maxTotal) * 100;
+            const depthPct = Math.min(100, (b.total / maxTotal) * 100);
             return (
               <div
                 key={i}
@@ -114,7 +147,7 @@ export const OrderBookDepth: React.FC<OrderBookDepthProps> = ({ symbol, latestPr
                   style={{ width: `${depthPct}%` }}
                 />
                 <span className="text-laser-green font-semibold relative z-10">
-                  {b.price.toFixed(2)}
+                  {formatLevelPrice(b.price)}
                 </span>
                 <span className="text-slate-400 relative z-10">{b.qty.toFixed(2)}</span>
               </div>

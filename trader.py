@@ -61,6 +61,8 @@ class PaperTrader:
         require_market_structure: bool = False,
         require_fibonacci_ote: bool = False,
         enable_order_blocks: bool = False,
+        enable_collinearity_cap: bool = False,
+        order_book_engine: Optional[Any] = None,
         max_stagnant_bars: int = 12,
     ):
         self.symbol = symbol
@@ -68,11 +70,13 @@ class PaperTrader:
         self.db_path = db_path
         self.risk_manager = risk_manager
         self.micro_mgr = micro_mgr
+        self.order_book_engine = order_book_engine
         self.require_fvg_retest = require_fvg_retest
         self.confirm_fvg_rejection = confirm_fvg_rejection
         self.require_market_structure = require_market_structure
         self.require_fibonacci_ote = require_fibonacci_ote
         self.enable_order_blocks = enable_order_blocks
+        self.enable_collinearity_cap = enable_collinearity_cap
         self.max_stagnant_bars = max_stagnant_bars
         self.adaptive_sl_floor = adaptive_sl_floor
         self.min_sl_pct = min_sl_pct if min_sl_pct is not None else (DEFAULT_ASSET_SL_FLOORS.get(symbol, 0.0120) if adaptive_sl_floor else 0.0120)
@@ -111,6 +115,63 @@ class PaperTrader:
             return 150_000.0
         else:
             return 50_000.0
+
+    def check_order_book_liquidity_gate(
+        self,
+        side: str,
+        entry_price: float,
+        atr: float,
+        tp1_price: float,
+    ) -> Tuple[bool, str]:
+        """Audit live L2 Order Book depth state to shield execution from adverse liquidity cliffs.
+
+        Veto Rules:
+        1. Opposing Wall Proximity:
+           - LONG: Check if an ask wall (resting sell wall >= 2.5x mean) exists between entry and entry + 0.5 * ATR,
+             or between entry and TP1. If an opposing wall directly blocks entry or path to TP1, veto.
+           - SHORT: Check if a bid wall exists between entry - 0.5 * ATR and entry,
+             or between TP1 and entry. If an opposing wall directly blocks entry or path to TP1, veto.
+        2. Severe Order Book Imbalance (OBI):
+           - LONG: If OBI < -25% (heavy sell depth skew), veto.
+           - SHORT: If OBI > +25% (heavy buy depth skew), veto.
+
+        Returns:
+            (allowed: bool, reason: str)
+        """
+        if self.order_book_engine is None:
+            return True, "OK (No OrderBookEngine configured)"
+
+        snapshot = self.order_book_engine.get_snapshot(self.symbol, fallback_price=entry_price)
+        if snapshot is None:
+            return True, "OK (OrderBook snapshot unavailable)"
+
+        side_upper = side.upper()
+        # 1. Opposing Wall Checks
+        if side_upper == "LONG":
+            # Check ask walls within 0.5 * ATR or between entry and TP1
+            wall_ceiling = max(entry_price + (0.5 * atr), tp1_price)
+            for wall_price, wall_qty in getattr(snapshot, "ask_walls", ()):
+                if entry_price <= wall_price <= wall_ceiling:
+                    return False, f"Opposing Ask Wall detected at ${wall_price:,.2f} (qty: {wall_qty:,.2f}) within target path"
+
+            # Check severe negative OBI (heavy ask volume pushing down)
+            imbalance = getattr(snapshot, "imbalance_pct", 0.0)
+            if imbalance < -25.0:
+                return False, f"Heavy Ask Imbalance (OBI={imbalance:.1f}% < -25.0%)"
+
+        elif side_upper == "SHORT":
+            # Check bid walls within 0.5 * ATR or between entry and TP1
+            wall_floor = min(entry_price - (0.5 * atr), tp1_price)
+            for wall_price, wall_qty in getattr(snapshot, "bid_walls", ()):
+                if wall_floor <= wall_price <= entry_price:
+                    return False, f"Opposing Bid Wall detected at ${wall_price:,.2f} (qty: {wall_qty:,.2f}) within target path"
+
+            # Check severe positive OBI (heavy bid volume pushing up)
+            imbalance = getattr(snapshot, "imbalance_pct", 0.0)
+            if imbalance > 25.0:
+                return False, f"Heavy Bid Imbalance (OBI={imbalance:.1f}% > +25.0%)"
+
+        return True, "OK"
 
     def set_htf_trend(self, trend: Optional[str]) -> None:
         """Explicitly set or mock the 4h higher-timeframe trend ('BULLISH', 'BEARISH', 'NEUTRAL', or None)."""
@@ -629,6 +690,33 @@ class PaperTrader:
             f"Exit: {format_price(exit_price)} | Net Return: {net_return_pct:.2f}% | R-Multiple: {r_multiple:.2f}R"
         )
 
+    def _calculate_trade_returns(
+        self,
+        entry: float,
+        exit_price: float,
+        side: str,
+        risk_dist: float,
+        tp1_hit: bool,
+        tp1_price: Optional[float],
+        bars_held: int = 1,
+    ) -> Tuple[float, float]:
+        """Compute true dynamic gross return % and net R-multiple from real fill prices."""
+        fee_pct = 0.15
+        periods_8h = max(0, bars_held // 32)
+        funding_cost_pct = periods_8h * 0.01
+
+        if tp1_hit and tp1_price is not None:
+            r1 = ((tp1_price - entry) / risk_dist) if side == "LONG" else ((entry - tp1_price) / risk_dist)
+            r2 = ((exit_price - entry) / risk_dist) if side == "LONG" else ((entry - exit_price) / risk_dist)
+            combined_gross_r = (0.5 * r1) + (0.5 * r2)
+            gross_ret_pct = ((combined_gross_r * risk_dist) / entry) * 100.0
+        else:
+            gross_ret_pct = ((exit_price - entry) / entry) * 100.0 if side == "LONG" else ((entry - exit_price) / entry) * 100.0
+
+        net_ret_pct = gross_ret_pct - fee_pct - funding_cost_pct
+        r_mult = ((net_ret_pct / 100.0) * entry) / risk_dist if risk_dist > 0 else 0.0
+        return round(net_ret_pct, 4), round(r_mult, 4)
+
     def on_tick(
         self,
         price: float,
@@ -690,50 +778,52 @@ class PaperTrader:
                 if trade_id:
                     self._update_trade_stop_loss(trade_id, new_sl, be_armed=True)
 
-        # Step 3: Check Take Profit 2 (Full Exit)
-        take_profit_hit = (price >= tp2 if side == "LONG" else price <= tp2)
-
-        # Step 4: Check Stop Loss Hit
+        # Step 3: Check Stop Loss Hit & Take Profit 2 with Pessimistic Collision Resolution
         curr_sl = self.active_trade["stop_loss"]
         stop_loss_hit = (price <= curr_sl if side == "LONG" else price >= curr_sl)
+        take_profit_hit = (price >= tp2 if side == "LONG" else price <= tp2)
 
         exit_reason = None
         exit_price = None
         net_return_pct = 0.0
         r_multiple = 0.0
 
-        if take_profit_hit:
-            exit_price = tp2
-            exit_reason = "TAKE_PROFIT"
-            if tp1_hit:
-                r_multiple = 1.30
-                net_return_pct = (((r_multiple * risk_dist) / entry) * 100.0) - 0.15
-            else:
-                gross_ret = ((tp2 - entry) / entry) * 100.0 if side == "LONG" else ((entry - tp2) / entry) * 100.0
-                net_return_pct = gross_ret - 0.15
-                r_multiple = ((net_return_pct / 100.0) * entry) / risk_dist if risk_dist > 0 else 0.0
+        # Pessimistic collision resolution: If both touched, Stop Loss executes first!
+        if stop_loss_hit and take_profit_hit:
+            stop_loss_hit = True
+            take_profit_hit = False
 
-        elif stop_loss_hit:
+        if stop_loss_hit:
             exit_price = curr_sl
             if be_armed:
-                if tp1_hit:
-                    r_multiple = 0.425
-                    net_return_pct = (((r_multiple * risk_dist) / entry) * 100.0) - 0.15
-                    exit_reason = "BREAKEVEN"
-                else:
-                    gross_ret = ((exit_price - entry) / entry) * 100.0 if side == "LONG" else ((entry - exit_price) / entry) * 100.0
-                    net_return_pct = gross_ret - 0.15
-                    r_multiple = ((net_return_pct / 100.0) * entry) / risk_dist if risk_dist > 0 else 0.0
-                    exit_reason = "BREAKEVEN"
+                exit_reason = "BREAKEVEN"
             elif tp1_hit:
-                r_multiple = -0.075
-                net_return_pct = (((r_multiple * risk_dist) / entry) * 100.0) - 0.15
                 exit_reason = "PARTIAL_LOSS"
             else:
-                gross_ret = ((exit_price - entry) / entry) * 100.0 if side == "LONG" else ((entry - exit_price) / entry) * 100.0
-                net_return_pct = gross_ret - 0.15
-                r_multiple = ((net_return_pct / 100.0) * entry) / risk_dist if risk_dist > 0 else 0.0
                 exit_reason = "STOP_LOSS"
+
+            net_return_pct, r_multiple = self._calculate_trade_returns(
+                entry=entry,
+                exit_price=exit_price,
+                side=side,
+                risk_dist=risk_dist,
+                tp1_hit=tp1_hit,
+                tp1_price=tp1,
+                bars_held=1,
+            )
+
+        elif take_profit_hit:
+            exit_price = tp2
+            exit_reason = "TAKE_PROFIT"
+            net_return_pct, r_multiple = self._calculate_trade_returns(
+                entry=entry,
+                exit_price=exit_price,
+                side=side,
+                risk_dist=risk_dist,
+                tp1_hit=tp1_hit,
+                tp1_price=tp1,
+                bars_held=1,
+            )
 
         if exit_reason is not None and exit_price is not None:
             closed_snapshot = {
@@ -869,47 +959,49 @@ class PaperTrader:
                 # Conservative rule: if both touched in same candle, prioritize stop loss with slippage protection
                 candle_open = candle_data[0]
                 exit_price = min(candle_open, sl_at_bar_start) if side == "LONG" else max(candle_open, sl_at_bar_start)
-                gross_return_pct = ((exit_price - entry) / entry) * 100.0 if side == "LONG" else ((entry - exit_price) / entry) * 100.0
-                net_return_pct = gross_return_pct - 0.15
-                r_multiple = ((net_return_pct / 100.0) * entry) / risk_dist if risk_dist > 0 else 0.0
                 exit_reason = "STOP_LOSS"
-
-            elif take_profit_hit:
-                exit_price = tp2
-                exit_reason = "TAKE_PROFIT"
-                if tp1_hit:
-                    # 50% banked at +0.85R, 50% banked at +1.75R -> Combined 1.30R
-                    r_multiple = 1.30
-                    net_return_pct = (((r_multiple * risk_dist) / entry) * 100.0) - 0.15
-                else:
-                    gross_return_pct = ((tp2 - entry) / entry) * 100.0 if side == "LONG" else ((entry - tp2) / entry) * 100.0
-                    net_return_pct = gross_return_pct - 0.15
-                    r_multiple = ((net_return_pct / 100.0) * entry) / risk_dist if risk_dist > 0 else 0.0
+                net_return_pct, r_multiple = self._calculate_trade_returns(
+                    entry=entry,
+                    exit_price=exit_price,
+                    side=side,
+                    risk_dist=risk_dist,
+                    tp1_hit=tp1_hit,
+                    tp1_price=tp1,
+                    bars_held=bars_held,
+                )
 
             elif stop_loss_hit:
                 candle_open = candle_data[0]
                 exit_price = min(candle_open, sl) if side == "LONG" else max(candle_open, sl)
                 if be_armed:
-                    if tp1_hit:
-                        # 50% banked at +0.85R, 50% stopped at BE (0.0R) -> Combined +0.425R WIN
-                        r_multiple = 0.425
-                        net_return_pct = (((r_multiple * risk_dist) / entry) * 100.0) - 0.15
-                        exit_reason = "BREAKEVEN"
-                    else:
-                        gross_return_pct = ((exit_price - entry) / entry) * 100.0 if side == "LONG" else ((entry - exit_price) / entry) * 100.0
-                        net_return_pct = gross_return_pct - 0.15
-                        r_multiple = ((net_return_pct / 100.0) * entry) / risk_dist if risk_dist > 0 else 0.0
-                        exit_reason = "BREAKEVEN"
+                    exit_reason = "BREAKEVEN"
                 elif tp1_hit:
-                    # 50% banked at +0.85R, 50% hit initial SL (-1.0R) -> Combined -0.075R scratch
-                    r_multiple = -0.075
-                    net_return_pct = (((r_multiple * risk_dist) / entry) * 100.0) - 0.15
                     exit_reason = "PARTIAL_LOSS"
                 else:
-                    gross_return_pct = ((exit_price - entry) / entry) * 100.0 if side == "LONG" else ((entry - exit_price) / entry) * 100.0
-                    net_return_pct = gross_return_pct - 0.15
-                    r_multiple = ((net_return_pct / 100.0) * entry) / risk_dist if risk_dist > 0 else 0.0
                     exit_reason = "STOP_LOSS"
+
+                net_return_pct, r_multiple = self._calculate_trade_returns(
+                    entry=entry,
+                    exit_price=exit_price,
+                    side=side,
+                    risk_dist=risk_dist,
+                    tp1_hit=tp1_hit,
+                    tp1_price=tp1,
+                    bars_held=bars_held,
+                )
+
+            elif take_profit_hit:
+                exit_price = tp2
+                exit_reason = "TAKE_PROFIT"
+                net_return_pct, r_multiple = self._calculate_trade_returns(
+                    entry=entry,
+                    exit_price=exit_price,
+                    side=side,
+                    risk_dist=risk_dist,
+                    tp1_hit=tp1_hit,
+                    tp1_price=tp1,
+                    bars_held=bars_held,
+                )
 
             elif not tp1_hit and bars_held >= self.max_stagnant_bars and close_r < -0.15:
                 # Step E: Kinetic Stagnancy Exit Lifecycle Management
@@ -917,9 +1009,15 @@ class PaperTrader:
                 # that remain underwater (close_r < -0.15R), cutting losses before they drag to -0.51R or full SL.
                 exit_price = candle_close
                 exit_reason = "STAGNANCY_SCRATCH" if close_r >= -0.25 else "TIME_STOP_UNDERWATER"
-                gross_return_pct = ((exit_price - entry) / entry) * 100.0 if side == "LONG" else ((entry - exit_price) / entry) * 100.0
-                net_return_pct = gross_return_pct - 0.15
-                r_multiple = ((net_return_pct / 100.0) * entry) / risk_dist if risk_dist > 0.0 else 0.0
+                net_return_pct, r_multiple = self._calculate_trade_returns(
+                    entry=entry,
+                    exit_price=exit_price,
+                    side=side,
+                    risk_dist=risk_dist,
+                    tp1_hit=False,
+                    tp1_price=None,
+                    bars_held=bars_held,
+                )
 
             if exit_reason is not None and exit_price is not None:
                 self._record_closed_trade(
@@ -950,6 +1048,7 @@ class PaperTrader:
             all_lows = [c[2] for c in self.candles]
             all_volumes = [c[4] for c in self.candles]
 
+            ema_20 = calculate_ema(all_closes, 20)
             ema_50 = calculate_ema(all_closes, 50)
             ema_200 = calculate_ema(all_closes, 200)
 
@@ -1020,7 +1119,7 @@ class PaperTrader:
             )
 
             is_overextended, ext_reason = check_market_overextension(
-                candle_close, ema_50, atr_14, curr_rsi, side="LONG"
+                candle_close, ema_50, atr_14, curr_rsi, side="LONG", ema20=ema_20
             )
             candle_range = candle_high - candle_low
             upper_wick = candle_high - max(candle_open, candle_close)
@@ -1084,11 +1183,15 @@ class PaperTrader:
                     if has_ob_conf:
                         long_score += ob_info.get("freshness_score", 15.0)
 
-                # 1. Macro Trend: 20 pts
-                long_score += 20.0
-
-                # 2. Trend Strength (ADX): 15 pts (>=25) or 10 pts (20-25)
-                long_score += 15.0 if adx_14 >= 25.0 else 10.0
+                # 1. Macro Trend, 2. Trend Strength (ADX), 5. Volume Expansion
+                if self.enable_collinearity_cap:
+                    trend_adx_vol_pts = 20.0 + (15.0 if adx_14 >= 25.0 else 10.0) + (10.0 if vol_expansion else 0.0)
+                    long_score += min(trend_adx_vol_pts, 35.0)
+                else:
+                    long_score += 20.0
+                    long_score += 15.0 if adx_14 >= 25.0 else 10.0
+                    if vol_expansion:
+                        long_score += 10.0
 
                 # 3. SMC FVG Retest Mitigation: 25 pts, or Fresh FVG: 15 pts (if not require_fvg_retest)
                 if long_retest:
@@ -1101,10 +1204,6 @@ class PaperTrader:
                 if bull_div:
                     long_score += 20.0
                 elif has_rsi_cross:
-                    long_score += 10.0
-
-                # 5. Sequential Volume Expansion: 10 pts
-                if vol_expansion:
                     long_score += 10.0
 
                 # 6. Microstructure & Order Flow Alignment: 10 pts
@@ -1127,23 +1226,46 @@ class PaperTrader:
                         long_score += 5.0
 
                     if hasattr(self.micro_mgr, "liq_tracker"):
-                        _, is_cascade = self.micro_mgr.liq_tracker.get_rolling_summary(self.symbol)
-                        if is_cascade:
-                            long_blocked = True
-                            long_block_reason = "Liquidation Cascade Active"
-
-                    if hasattr(self.micro_mgr, "whale_filter") and hasattr(self.micro_mgr.whale_filter, "tape"):
-                        sym_trades = [t for t in self.micro_mgr.whale_filter.tape if t.symbol in (self.symbol, getattr(self.micro_mgr, "futures_to_spot", {}).get(t.symbol, t.symbol))]
-                        if sym_trades:
-                            net_whale_delta = sum(t.notional if t.side == "BUY" else -t.notional for t in sym_trades)
-                            whale_threshold = self.get_whale_threshold(self.symbol)
-                            if net_whale_delta < -whale_threshold:
+                        try:
+                            _, is_long_cascade = self.micro_mgr.liq_tracker.get_rolling_summary(self.symbol, side="LONG")
+                            if is_long_cascade:
                                 long_blocked = True
-                                long_block_reason = f"Whale Net Selling Delta (${net_whale_delta:,.2f}) < -${whale_threshold:,.0f}"
-                            elif net_whale_delta > 0:
+                                long_block_reason = "Long Liquidation Cascade Active (Falling Knife)"
+                        except TypeError:
+                            _, is_cascade = self.micro_mgr.liq_tracker.get_rolling_summary(self.symbol)
+                            if is_cascade:
+                                long_blocked = True
+                                long_block_reason = "Liquidation Cascade Active"
+
+                    if hasattr(self.micro_mgr, "whale_filter"):
+                        if hasattr(self.micro_mgr.whale_filter, "get_time_decayed_net_delta"):
+                            whale_threshold = self.get_whale_threshold(self.symbol)
+                            tape_empty = not getattr(self.micro_mgr.whale_filter, "tape", None)
+                            if tape_empty:
                                 long_score += 5.0
                             else:
-                                long_score += 2.5
+                                net_whale_delta = self.micro_mgr.whale_filter.get_time_decayed_net_delta(self.symbol)
+                                if net_whale_delta < -whale_threshold:
+                                    long_blocked = True
+                                    long_block_reason = f"Whale Net Selling Delta (${net_whale_delta:,.2f}) < -${whale_threshold:,.0f}"
+                                elif net_whale_delta > 0:
+                                    long_score += 5.0
+                                else:
+                                    long_score += 2.5
+                        elif hasattr(self.micro_mgr.whale_filter, "tape"):
+                            sym_trades = [t for t in self.micro_mgr.whale_filter.tape if t.symbol in (self.symbol, getattr(self.micro_mgr, "futures_to_spot", {}).get(t.symbol, t.symbol))]
+                            if sym_trades:
+                                net_whale_delta = sum(t.notional if t.side == "BUY" else -t.notional for t in sym_trades)
+                                whale_threshold = self.get_whale_threshold(self.symbol)
+                                if net_whale_delta < -whale_threshold:
+                                    long_blocked = True
+                                    long_block_reason = f"Whale Net Selling Delta (${net_whale_delta:,.2f}) < -${whale_threshold:,.0f}"
+                                elif net_whale_delta > 0:
+                                    long_score += 5.0
+                                else:
+                                    long_score += 2.5
+                            else:
+                                long_score += 5.0
                         else:
                             long_score += 5.0
                     else:
@@ -1164,22 +1286,27 @@ class PaperTrader:
                         return None
 
                 atr_14 = calculate_atr(all_highs, all_lows, all_closes, period=14)
+                entry_price = candle_close * 1.0002
+                min_sl_dist = self.get_min_sl_dist(entry_price)
                 if long_retest and long_retest_info:
-                    ce_price = float(long_retest_info["ce"])
-                    if candle_low <= ce_price:
-                        entry_price = min(candle_open, ce_price) if candle_open <= ce_price else ce_price
-                    else:
-                        entry_price = candle_close * 1.0002
-                    min_sl_dist = self.get_min_sl_dist(entry_price)
                     fvg_invalidation_dist = (entry_price - long_retest_info["lower"]) + (0.35 * atr_14)
                     sl_distance = max(1.8 * atr_14, fvg_invalidation_dist, min_sl_dist)
                 else:
-                    entry_price = candle_close * 1.0002
-                    min_sl_dist = self.get_min_sl_dist(entry_price)
                     sl_distance = max(1.8 * atr_14, min_sl_dist)
                 stop_loss = max(entry_price - sl_distance, entry_price * 0.01)  # Sub-dollar protection
                 tp1_price = entry_price + (sl_distance * self.tp1_ratio)  # 50% scale-out at tp1_ratio (+0.80R)
                 take_profit = entry_price + (sl_distance * 1.75)  # Empirically proven 1.75R final target
+
+                if self.order_book_engine is not None:
+                    allowed, ob_reason = self.check_order_book_liquidity_gate(
+                        side="LONG",
+                        entry_price=entry_price,
+                        atr=atr_14,
+                        tp1_price=tp1_price,
+                    )
+                    if not allowed:
+                        print(f"[{self.symbol} LONG VETOED BY ORDER BOOK SHIELD] {ob_reason}")
+                        return None
 
                 # Calculate position sizing and leverage bounds
                 sizing = {}
@@ -1307,7 +1434,7 @@ class PaperTrader:
             )
 
             is_overextended_short, ext_reason_short = check_market_overextension(
-                candle_close, ema_50, atr_14, curr_rsi, side="SHORT"
+                candle_close, ema_50, atr_14, curr_rsi, side="SHORT", ema20=ema_20
             )
             lower_wick = min(candle_open, candle_close) - candle_low
             is_vol_climax_buyer = (
@@ -1369,11 +1496,15 @@ class PaperTrader:
                     if has_ob_conf:
                         short_score += ob_info.get("freshness_score", 15.0)
 
-                # 1. Macro Trend: 20 pts
-                short_score += 20.0
-
-                # 2. Trend Strength (ADX): 15 pts (>=25) or 10 pts (20-25)
-                short_score += 15.0 if adx_14 >= 25.0 else 10.0
+                # 1. Macro Trend, 2. Trend Strength (ADX), 5. Volume Expansion
+                if self.enable_collinearity_cap:
+                    trend_adx_vol_pts = 20.0 + (15.0 if adx_14 >= 25.0 else 10.0) + (10.0 if vol_expansion else 0.0)
+                    short_score += min(trend_adx_vol_pts, 35.0)
+                else:
+                    short_score += 20.0
+                    short_score += 15.0 if adx_14 >= 25.0 else 10.0
+                    if vol_expansion:
+                        short_score += 10.0
 
                 # 3. SMC FVG Retest Mitigation: 25 pts, or Fresh FVG: 15 pts (if not require_fvg_retest)
                 if short_retest:
@@ -1386,10 +1517,6 @@ class PaperTrader:
                 if bear_div:
                     short_score += 20.0
                 elif has_rsi_cross:
-                    short_score += 10.0
-
-                # 5. Sequential Volume Expansion: 10 pts
-                if vol_expansion:
                     short_score += 10.0
 
                 # 6. Microstructure & Order Flow Alignment: 10 pts
@@ -1412,23 +1539,46 @@ class PaperTrader:
                         short_score += 5.0
 
                     if hasattr(self.micro_mgr, "liq_tracker"):
-                        _, is_cascade = self.micro_mgr.liq_tracker.get_rolling_summary(self.symbol)
-                        if is_cascade:
-                            short_blocked = True
-                            short_block_reason = "Liquidation Cascade Active"
-
-                    if hasattr(self.micro_mgr, "whale_filter") and hasattr(self.micro_mgr.whale_filter, "tape"):
-                        sym_trades = [t for t in self.micro_mgr.whale_filter.tape if t.symbol in (self.symbol, getattr(self.micro_mgr, "futures_to_spot", {}).get(t.symbol, t.symbol))]
-                        if sym_trades:
-                            net_whale_delta = sum(t.notional if t.side == "BUY" else -t.notional for t in sym_trades)
-                            whale_threshold = self.get_whale_threshold(self.symbol)
-                            if net_whale_delta > whale_threshold:
+                        try:
+                            _, is_short_cascade = self.micro_mgr.liq_tracker.get_rolling_summary(self.symbol, side="SHORT")
+                            if is_short_cascade:
                                 short_blocked = True
-                                short_block_reason = f"Whale Net Buying Delta (${net_whale_delta:,.2f}) > +${whale_threshold:,.0f}"
-                            elif net_whale_delta < 0:
+                                short_block_reason = "Short Liquidation Cascade Active (Squeeze)"
+                        except TypeError:
+                            _, is_cascade = self.micro_mgr.liq_tracker.get_rolling_summary(self.symbol)
+                            if is_cascade:
+                                short_blocked = True
+                                short_block_reason = "Liquidation Cascade Active"
+
+                    if hasattr(self.micro_mgr, "whale_filter"):
+                        if hasattr(self.micro_mgr.whale_filter, "get_time_decayed_net_delta"):
+                            whale_threshold = self.get_whale_threshold(self.symbol)
+                            tape_empty = not getattr(self.micro_mgr.whale_filter, "tape", None)
+                            if tape_empty:
                                 short_score += 5.0
                             else:
-                                short_score += 2.5
+                                net_whale_delta = self.micro_mgr.whale_filter.get_time_decayed_net_delta(self.symbol)
+                                if net_whale_delta > whale_threshold:
+                                    short_blocked = True
+                                    short_block_reason = f"Whale Net Buying Delta (${net_whale_delta:,.2f}) > +${whale_threshold:,.0f}"
+                                elif net_whale_delta < 0:
+                                    short_score += 5.0
+                                else:
+                                    short_score += 2.5
+                        elif hasattr(self.micro_mgr.whale_filter, "tape"):
+                            sym_trades = [t for t in self.micro_mgr.whale_filter.tape if t.symbol in (self.symbol, getattr(self.micro_mgr, "futures_to_spot", {}).get(t.symbol, t.symbol))]
+                            if sym_trades:
+                                net_whale_delta = sum(t.notional if t.side == "BUY" else -t.notional for t in sym_trades)
+                                whale_threshold = self.get_whale_threshold(self.symbol)
+                                if net_whale_delta > whale_threshold:
+                                    short_blocked = True
+                                    short_block_reason = f"Whale Net Buying Delta (${net_whale_delta:,.2f}) > +${whale_threshold:,.0f}"
+                                elif net_whale_delta < 0:
+                                    short_score += 5.0
+                                else:
+                                    short_score += 2.5
+                            else:
+                                short_score += 5.0
                         else:
                             short_score += 5.0
                     else:
@@ -1449,23 +1599,28 @@ class PaperTrader:
                         return None
 
                 atr_14 = calculate_atr(all_highs, all_lows, all_closes, period=14)
+                entry_price = candle_close * 0.9998
+                min_sl_dist = self.get_min_sl_dist(entry_price)
                 if short_retest and short_retest_info:
-                    ce_price = float(short_retest_info["ce"])
-                    if candle_high >= ce_price:
-                        entry_price = max(candle_open, ce_price) if candle_open >= ce_price else ce_price
-                    else:
-                        entry_price = candle_close * 0.9998
-                    min_sl_dist = self.get_min_sl_dist(entry_price)
                     fvg_invalidation_dist = (short_retest_info["upper"] - entry_price) + (0.35 * atr_14)
                     sl_distance = max(1.8 * atr_14, fvg_invalidation_dist, min_sl_dist)
                 else:
-                    entry_price = candle_close * 0.9998
-                    min_sl_dist = self.get_min_sl_dist(entry_price)
                     sl_distance = max(1.8 * atr_14, min_sl_dist)
                 stop_loss = entry_price + sl_distance
                 tp1_price = entry_price - (sl_distance * self.tp1_ratio)  # 50% scale-out at tp1_ratio (+0.80R)
                 raw_tp = entry_price - (sl_distance * 1.75)  # Empirically proven 1.75R final target
                 take_profit = max(raw_tp, entry_price * 0.01)  # Sub-dollar protection
+
+                if self.order_book_engine is not None:
+                    allowed, ob_reason = self.check_order_book_liquidity_gate(
+                        side="SHORT",
+                        entry_price=entry_price,
+                        atr=atr_14,
+                        tp1_price=tp1_price,
+                    )
+                    if not allowed:
+                        print(f"[{self.symbol} SHORT VETOED BY ORDER BOOK SHIELD] {ob_reason}")
+                        return None
 
                 # Calculate position sizing and leverage bounds
                 sizing = {}
@@ -1630,8 +1785,13 @@ class PaperTrader:
         if (ema_50 > ema_200) and (close > ema_50) and not (self.htf_trend_filter and effective_htf == "BEARISH") and not (self.intermediate_1h_filter and not long_1h_allowed):
             long_retest, _ = check_bullish_fvg_retest(candles_sim, lookback=15)
             long_fresh_fvg = check_recent_bullish_fvg(candles_sim, lookback=5)
-            long_score += 20.0
-            long_score += 15.0 if adx_14 >= 25.0 else 10.0
+            if self.enable_collinearity_cap:
+                long_score += min(20.0 + (15.0 if adx_14 >= 25.0 else 10.0) + (10.0 if vol_expansion else 0.0), 35.0)
+            else:
+                long_score += 20.0
+                long_score += 15.0 if adx_14 >= 25.0 else 10.0
+                if vol_expansion:
+                    long_score += 10.0
             if long_retest:
                 long_score += 25.0
             elif long_fresh_fvg and not self.require_fvg_retest:
@@ -1639,8 +1799,6 @@ class PaperTrader:
             if bull_div:
                 long_score += 20.0
             elif has_rsi_cross_long:
-                long_score += 10.0
-            if vol_expansion:
                 long_score += 10.0
             if self.enable_order_blocks:
                 has_ob, _, ob_info = check_order_block_confluence(close, candles_sim, side="LONG")
@@ -1652,8 +1810,13 @@ class PaperTrader:
         if (ema_50 < ema_200) and (close < ema_50) and not (self.htf_trend_filter and effective_htf == "BULLISH") and not (self.intermediate_1h_filter and not short_1h_allowed):
             short_retest, _ = check_bearish_fvg_retest(candles_sim, lookback=15)
             short_fresh_fvg = check_recent_bearish_fvg(candles_sim, lookback=5)
-            short_score += 20.0
-            short_score += 15.0 if adx_14 >= 25.0 else 10.0
+            if self.enable_collinearity_cap:
+                short_score += min(20.0 + (15.0 if adx_14 >= 25.0 else 10.0) + (10.0 if vol_expansion else 0.0), 35.0)
+            else:
+                short_score += 20.0
+                short_score += 15.0 if adx_14 >= 25.0 else 10.0
+                if vol_expansion:
+                    short_score += 10.0
             if short_retest:
                 short_score += 25.0
             elif short_fresh_fvg and not self.require_fvg_retest:
@@ -1661,8 +1824,6 @@ class PaperTrader:
             if bear_div:
                 short_score += 20.0
             elif has_rsi_cross_short:
-                short_score += 10.0
-            if vol_expansion:
                 short_score += 10.0
             if self.enable_order_blocks:
                 has_ob, _, ob_info = check_order_block_confluence(close, candles_sim, side="SHORT")
@@ -1700,12 +1861,23 @@ class PaperTrader:
                 "avg_r_multiple": 0.0,
                 "winning_trades": 0,
                 "losing_trades": 0,
+                "target_wins": 0,
+                "breakeven_scratches": 0,
+                "target_win_rate_pct": 0.0,
+                "breakeven_pct": 0.0,
+                "expectancy_r": 0.0,
+                "profit_factor": 0.0,
             }
 
         returns = [float(r["net_return_pct"]) for r in rows if r["net_return_pct"] is not None]
         r_multiples = [float(r["r_multiple"]) for r in rows if r["r_multiple"] is not None]
         wins = sum(1 for ret in returns if ret > 0)
         losses = sum(1 for ret in returns if ret <= 0)
+        target_wins = sum(1 for r in r_multiples if r >= 0.8)
+        breakeven_scratches = sum(1 for r in r_multiples if 0.0 <= r < 0.8)
+        gross_profit = sum(ret for ret in returns if ret > 0)
+        gross_loss = sum(abs(ret) for ret in returns if ret < 0)
+        profit_factor = round(gross_profit / gross_loss, 2) if gross_loss > 0 else (float("inf") if gross_profit > 0 else 0.0)
 
         return {
             "symbol": self.symbol,
@@ -1715,6 +1887,12 @@ class PaperTrader:
             "avg_r_multiple": float(np.mean(r_multiples)) if r_multiples else 0.0,
             "winning_trades": wins,
             "losing_trades": losses,
+            "target_wins": target_wins,
+            "breakeven_scratches": breakeven_scratches,
+            "target_win_rate_pct": (target_wins / total_trades) * 100.0 if total_trades > 0 else 0.0,
+            "breakeven_pct": (breakeven_scratches / total_trades) * 100.0 if total_trades > 0 else 0.0,
+            "expectancy_r": float(np.mean(r_multiples)) if r_multiples else 0.0,
+            "profit_factor": profit_factor,
         }
 
     # Alias for convenience

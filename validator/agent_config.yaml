@@ -15,7 +15,7 @@ schedule:
 # Backtest execution settings
 backtest:
   # Path to backtest.py
-  script: "e:\\Crypto Analyzer\\backtest.py"
+  script: "backtest.py"
   # Default CLI arguments for single-asset mode
   single_defaults:
     symbol: "XRPUSDT"
@@ -39,11 +39,11 @@ backtest:
 
 # Engine files to monitor for configuration drift
 monitored_files:
-  - "e:\\Crypto Analyzer\\indicators.py"
-  - "e:\\Crypto Analyzer\\trader.py"
-  - "e:\\Crypto Analyzer\\risk.py"
-  - "e:\\Crypto Analyzer\\microstructure.py"
-  - "e:\\Crypto Analyzer\\backtest.py"
+  - "indicators.py"
+  - "trader.py"
+  - "risk.py"
+  - "microstructure.py"
+  - "backtest.py"
 
 # Validation thresholds (overrides for validation.py defaults)
 validation:
@@ -63,17 +63,17 @@ validation:
 # Notification settings
 notification:
   # Options: "file", "email", "slack"
-  method: "email"
+  method: "file"
   # Output directory for markdown reports
-  report_dir: "e:\\Crypto Analyzer\\reports"
+  report_dir: "reports"
   # Email settings (used when method is "email")
   email:
     smtp_server: "smtp.gmail.com"
     smtp_port: 587
-    from_address: "pbuddhika.pb@gmail.com"
-    to_address: "pbuddhika.pb@gmail.com"
-    username: "pbuddhika.pb@gmail.com"
-    password: "subhrhnagyvgarjn"
+    from_address: ""
+    to_address: ""
+    username: ""
+    password: ""
     use_tls: true
   # Slack webhook URL (used when method is "slack")
   slack_webhook_url: ""
@@ -93,6 +93,6 @@ research:
 
 # Database
 database:
-  path: "e:\\Crypto Analyzer\\data\\backtest_runs.db"
+  path: "data/backtest_runs.db"
   # Number of historical runs to keep for trend analysis
   history_window: 30

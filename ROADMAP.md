@@ -1,8 +1,7 @@
 # Binance Cryptocurrency Analysis Tool - Master Architectural Blueprint
 
-> **Status:** Planning & Specification Phase (Not yet built)  
-> **Target Directory:** `e:\Crypto Analyzer`  
-> **Architecture Pattern:** Strict Hexagonal / Onion Layered Architecture (Unidirectional & Immutable Contracts)
+> **Status:** Production / Hardened Quantitative Engine  
+> **Architecture Pattern:** Institutional Market Microstructure & SMC Execution Engine
 
 ---
 
@@ -153,8 +152,8 @@ FRONTEND ARCHITECTURE (React / Vite / TypeScript / Tailwind)
 ## 7. Directory Tree Structure
 
 ```
-e:\Crypto Analyzer\
-├── PROJECT_BLUEPRINT.md           <-- This specification document
+Crypto-Analyzer/
+├── collector.py           # Multi-market real-time and historical kline collector
 ├── backend/
 │   ├── pyproject.toml             # Managed by uv (Python 3.12)
 │   ├── run.py                     # Entry point (runs uvicorn on port 8000)

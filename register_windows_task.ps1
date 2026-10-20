@@ -1,9 +1,9 @@
 # register_windows_task.ps1
 # Registers a Windows Scheduled Task to run the Validator every 4 hours automatically
 $TaskName = "CryptoAnalyzer_Validator_4H"
-$WorkingDir = "e:\Crypto Analyzer"
-$PythonExe = "C:\Users\pbuddhika\AppData\Local\Python\pythoncore-3.14-64\python.exe"
-$ScriptPath = "e:\Crypto Analyzer\validator\backtest_agent.py"
+$WorkingDir = $PSScriptRoot
+$PythonExe = "python.exe"
+$ScriptPath = Join-Path $PSScriptRoot "validator\backtest_agent.py"
 
 try {
     $Action = New-ScheduledTaskAction -Execute $PythonExe -Argument "`"$ScriptPath`" --portfolio" -WorkingDirectory $WorkingDir

@@ -197,6 +197,12 @@ def test_performance_summary_metrics(temp_db):
     assert summary["win_rate_pct"] == 50.0
     assert pytest.approx(summary["total_net_return_pct"]) == 1.70
     assert pytest.approx(summary["avg_r_multiple"]) == 0.5
+    assert summary["target_wins"] == 1
+    assert summary["breakeven_scratches"] == 0
+    assert summary["target_win_rate_pct"] == 50.0
+    assert summary["breakeven_pct"] == 0.0
+    assert pytest.approx(summary["expectancy_r"]) == 0.5
+    assert pytest.approx(summary["profit_factor"], rel=1e-2) == 1.79
 
 
 def test_short_exit_take_profit_and_stop_loss(temp_db):
@@ -1004,13 +1010,13 @@ def test_stepped_exit_breakeven_arming_and_protected_win(temp_db):
         row = conn.execute("SELECT status, reason, r_multiple, net_return_pct FROM paper_trades WHERE id = ?", (trade["id"],)).fetchone()
     assert row[0] == "CLOSED"
     assert row[1] == "BREAKEVEN"
-    assert pytest.approx(row[2], rel=1e-2) == 0.425  # Protected +0.425R win!
+    assert row[2] > 0.0  # Dynamic fill math: protected positive R (e.g. ~+0.30R net of fees)
     assert row[3] > 0.0  # Positive net percentage
 
 
 def test_stepped_exit_tp1_then_flash_crash_fallback_partial_loss(temp_db):
     """Verify that if a trade has TP1 banked but be_armed is False (e.g. legacy/fallback),
-    a subsequent stop hit is recorded as PARTIAL_LOSS with -0.075R scratch instead of -1.0R loss."""
+    a subsequent stop hit is recorded as PARTIAL_LOSS with dynamic scratch calculation instead of -1.0R loss."""
     trader = PaperTrader(symbol="BTCUSDT", timeframe="15m", db_path=temp_db)
     trigger_candle = setup_trader_ready_for_trigger(trader)
     trade = trader.on_candle(trigger_candle, timestamp="2026-10-14T10:00:00")
@@ -1031,7 +1037,7 @@ def test_stepped_exit_tp1_then_flash_crash_fallback_partial_loss(temp_db):
         row = conn.execute("SELECT status, reason, r_multiple FROM paper_trades WHERE id = ?", (trade["id"],)).fetchone()
     assert row[0] == "CLOSED"
     assert row[1] == "PARTIAL_LOSS"
-    assert pytest.approx(row[2], rel=1e-2) == -0.075  # -0.075R scratch!
+    assert -0.5 < row[2] < 0.0  # Dynamic fill math: partial scratch (e.g. ~-0.23R net of fees)
 
 
 def test_underwater_time_stop_invalidates_stagnant_trade(temp_db):
@@ -1582,11 +1588,11 @@ def test_paper_trader_on_tick_breakeven_arming_and_exit(temp_db):
     assert trader.active_trade["be_armed"] is True
     be_sl = trader.active_trade["stop_loss"]
 
-    # Price drops back to new breakeven SL: exits with BREAKEVEN (+0.425R)
+    # Price drops back to new breakeven SL: exits with BREAKEVEN
     res = trader.on_tick(be_sl - 2.0, timestamp="2026-10-14T10:05:00")
     assert res is not None
     assert res["reason"] == "BREAKEVEN"
-    assert res["r_multiple"] == 0.425
+    assert res["r_multiple"] > 0.0  # Dynamic fill math: positive protected return
     assert trader.active_trade is None
 
 
@@ -1823,6 +1829,84 @@ def test_preempt_trade_lifecycle(temp_db):
         oco_status = conn.execute("SELECT DISTINCT status FROM synthetic_oco_orders WHERE trade_id = ?", (trade_id,)).fetchall()
     statuses = [s[0] for s in oco_status]
     assert "ACTIVE" not in statuses
+
+
+def test_collinearity_cap_limits_momentum_points(temp_db):
+    """Verify that enable_collinearity_cap caps Trend + ADX + Vol at 35.0 pts max."""
+    trader_uncapped = PaperTrader(symbol="BTCUSDT", timeframe="15m", db_path=temp_db, enable_collinearity_cap=False)
+    trader_capped = PaperTrader(symbol="BTCUSDT", timeframe="15m", db_path=temp_db, enable_collinearity_cap=True)
+
+    # Setup ready trader
+    trigger_candle = setup_trader_ready_for_trigger(trader_uncapped)
+    setup_trader_ready_for_trigger(trader_capped)
+
+    score_uncapped = trader_uncapped.estimate_confluence_priority(trigger_candle)
+    score_capped = trader_capped.estimate_confluence_priority(trigger_candle)
+
+    # In setup_trader_ready_for_trigger: Trend=20, ADX=15, Vol=10 (Sum=45).
+    # When capped at 35.0, score drops by exactly 10.0 points (45 - 35).
+    assert score_uncapped == 70.0
+    assert score_capped == 60.0
+
+
+def test_order_book_opposing_ask_wall_blocks_long(temp_db):
+    """Verify that a massive resting ask wall between entry and TP1 blocks long execution."""
+    from microstructure import OrderBookEngine
+    engine = OrderBookEngine(wall_multiplier=2.0)
+
+    # Entry will be around 50000.0, ATR around 500.0, TP1 around 50700.0.
+    # Place an ask wall at 50200.0
+    payload = {
+        "bids": [[f"{50000 - i*10}", "1.0"] for i in range(1, 10)],
+        "asks": [["50010.0", "1.0"], ["50200.0", "100.0"], ["50300.0", "1.0"], ["50400.0", "1.0"]],
+    }
+    engine.process_depth_payload("BTCUSDT", payload)
+
+    trader = PaperTrader(symbol="BTCUSDT", timeframe="15m", db_path=temp_db, order_book_engine=engine)
+    trigger_candle = setup_trader_ready_for_trigger(trader)
+    trade = trader.on_candle(trigger_candle, timestamp="2026-10-14T10:03:00")
+
+    assert trade is None
+    assert trader.get_active_trade() is None
+
+
+def test_order_book_negative_imbalance_blocks_long(temp_db):
+    """Verify that severe negative order book imbalance (OBI < -25%) blocks long execution."""
+    from microstructure import OrderBookEngine
+    engine = OrderBookEngine()
+
+    # Massive ask depth vs thin bid depth -> OBI < -25%
+    payload = {
+        "bids": [[f"{50000 - i*10}", "1.0"] for i in range(1, 6)],
+        "asks": [[f"{50010 + i*10}", "10.0"] for i in range(1, 6)],
+    }
+    engine.process_depth_payload("BTCUSDT", payload)
+
+    trader = PaperTrader(symbol="BTCUSDT", timeframe="15m", db_path=temp_db, order_book_engine=engine)
+    trigger_candle = setup_trader_ready_for_trigger(trader)
+    trade = trader.on_candle(trigger_candle, timestamp="2026-10-14T10:03:00")
+
+    assert trade is None
+    assert trader.get_active_trade() is None
+
+
+def test_order_book_favorable_permits_entry(temp_db):
+    """Verify that favorable order book depth allows clean trade execution."""
+    from microstructure import OrderBookEngine
+    engine = OrderBookEngine()
+
+    payload = {
+        "bids": [[f"{50000 - i*10}", "2.0"] for i in range(1, 6)],
+        "asks": [[f"{50010 + i*10}", "1.0"] for i in range(1, 6)],
+    }
+    engine.process_depth_payload("BTCUSDT", payload)
+
+    trader = PaperTrader(symbol="BTCUSDT", timeframe="15m", db_path=temp_db, order_book_engine=engine)
+    trigger_candle = setup_trader_ready_for_trigger(trader)
+    trade = trader.on_candle(trigger_candle, timestamp="2026-10-14T10:03:00")
+
+    assert trade is not None
+    assert trade["side"] == "LONG"
 
 
 

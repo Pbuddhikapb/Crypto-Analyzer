@@ -1,7 +1,8 @@
 import collections
+import math
 import time
 from dataclasses import dataclass
-from typing import Deque, Dict, List, Optional, Tuple
+from typing import Any, Deque, Dict, List, Optional, Tuple
 import urllib.request
 import json
 import os
@@ -140,6 +141,47 @@ class WhaleTradeFilter:
         self.tape.append(trade)
         return trade
 
+    def get_time_decayed_net_delta(
+        self,
+        symbol: Optional[str] = None,
+        window_seconds: float = 900.0,
+        tau: float = 300.0,
+        current_time: Optional[float] = None,
+    ) -> float:
+        """Calculate exponential time-decayed net whale delta ($).
+
+        Formula: weight = exp(-(now - trade_ts) / tau)
+        Net delta = sum(sign * notional * weight)
+        where sign is +1 for BUY (taker buying) and -1 for SELL (taker selling).
+        Trades older than window_seconds are ignored.
+        """
+        now = time.time() if current_time is None else current_time
+        sym = symbol.upper() if symbol else None
+        decayed_delta = 0.0
+
+        for trade in self.tape:
+            if sym is not None:
+                trade_sym = getattr(trade, "symbol", "").upper()
+                if (
+                    trade_sym != sym
+                    and SymbolNormalizer.to_spot_symbol(trade_sym) != sym
+                    and SymbolNormalizer.to_futures_symbol(sym) != trade_sym
+                ):
+                    continue
+
+            ts = getattr(trade, "timestamp", now)
+            age_sec = now - ts
+            if age_sec < 0:
+                age_sec = 0.0
+            if window_seconds is not None and age_sec > window_seconds:
+                continue
+
+            weight = math.exp(-age_sec / tau) if tau > 0 else 1.0
+            sign = 1.0 if getattr(trade, "side", "BUY") == "BUY" else -1.0
+            decayed_delta += sign * float(getattr(trade, "notional", 0.0)) * weight
+
+        return decayed_delta
+
 
 class LiquidationTracker:
     """Tracks forced liquidation orders, rolling 60s volume, and cascade alerts."""
@@ -187,17 +229,46 @@ class LiquidationTracker:
         self.liquidations.append(event)
         return event
 
-    def get_rolling_summary(self, symbol: Optional[str] = None) -> Tuple[float, bool]:
-        """Returns (rolling_60s_notional, is_cascade_active)."""
-        now = time.time()
+    def get_rolling_summary(
+        self,
+        symbol: Optional[str] = None,
+        side: Optional[str] = None,
+        current_time: Optional[float] = None,
+    ) -> Tuple[float, bool]:
+        """Returns (rolling_60s_notional, is_cascade_active).
+        
+        If side is provided ("LONG" or "SHORT"), only liquidations of that position side are counted.
+        """
+        now = time.time() if current_time is None else current_time
         cutoff = now - self.window_seconds
+        req_side = side.upper() if side else None
         matching = [
             liq.notional
             for liq in self.liquidations
-            if liq.timestamp >= cutoff and (symbol is None or liq.symbol == symbol.upper())
+            if liq.timestamp >= cutoff
+            and (symbol is None or liq.symbol == symbol.upper() or SymbolNormalizer.to_spot_symbol(liq.symbol) == symbol.upper())
+            and (req_side is None or getattr(liq, "liquidated_position", "") == req_side)
         ]
         total_vol = sum(matching)
         return total_vol, total_vol >= self.cascade_threshold
+
+    def get_directional_summary(
+        self,
+        symbol: Optional[str] = None,
+        current_time: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        """Returns directional liquidation metrics: long vs short volume and cascade status."""
+        long_vol, is_long_cascade = self.get_rolling_summary(symbol=symbol, side="LONG", current_time=current_time)
+        short_vol, is_short_cascade = self.get_rolling_summary(symbol=symbol, side="SHORT", current_time=current_time)
+        total_vol, is_any_cascade = self.get_rolling_summary(symbol=symbol, side=None, current_time=current_time)
+        return {
+            "total_vol": total_vol,
+            "is_cascade": is_any_cascade,
+            "long_liq_vol": long_vol,
+            "is_long_cascade": is_long_cascade,
+            "short_liq_vol": short_vol,
+            "is_short_cascade": is_short_cascade,
+        }
 
 
 class OpenInterestEngine:
@@ -639,3 +710,203 @@ class HistoricalMicrostructureReplayer:
                 funding_rate=funding_rate,
                 next_funding_time_ms=funding_ts_ms + (8 * 3600 * 1000),
             )
+
+
+@dataclass(frozen=True)
+class OrderBookSnapshot:
+    """Represents a validated L2 Order Book depth state with quantitative microstructure metrics."""
+    symbol: str
+    timestamp_ms: int
+    bids: Tuple[Tuple[float, float, float], ...]  # ((price, qty, cumulative_total), ...)
+    asks: Tuple[Tuple[float, float, float], ...]  # ((price, qty, cumulative_total), ...)
+    best_bid: float
+    best_ask: float
+    spread: float
+    spread_bps: float
+    mid_price: float
+    weighted_mid: float
+    imbalance_pct: float  # -100 to +100
+    bid_walls: Tuple[Tuple[float, float], ...]  # ((price, qty), ...)
+    ask_walls: Tuple[Tuple[float, float], ...]  # ((price, qty), ...)
+    status: str = "LIVE"
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "symbol": self.symbol,
+            "timestamp_ms": self.timestamp_ms,
+            "bids": [{"price": b[0], "qty": b[1], "total": b[2]} for b in self.bids],
+            "asks": [{"price": a[0], "qty": a[1], "total": a[2]} for a in self.asks],
+            "best_bid": self.best_bid,
+            "best_ask": self.best_ask,
+            "spread": round(self.spread, 6),
+            "spread_bps": round(self.spread_bps, 2),
+            "mid_price": self.mid_price,
+            "weighted_mid": self.weighted_mid,
+            "imbalance_pct": round(self.imbalance_pct, 1),
+            "bid_walls": [{"price": w[0], "qty": w[1]} for w in self.bid_walls],
+            "ask_walls": [{"price": w[0], "qty": w[1]} for w in self.ask_walls],
+            "status": self.status,
+        }
+
+
+class OrderBookEngine:
+    """Institutional Order Book L2 Depth Engine.
+
+    Features:
+    - Maintains top-20 bid/ask depth ladders with running cumulative volume totals.
+    - Vectorized Order Book Imbalance (OBI) computation with deadband noise filtering.
+    - Institutional wall detector identifying resting limit clusters >= wall_multiplier * mean depth.
+    - Volume-weighted micro-price calculation.
+    """
+
+    def __init__(self, wall_multiplier: float = 2.5, depth_levels: int = 20):
+        self.wall_multiplier = wall_multiplier
+        self.depth_levels = depth_levels
+        self._books: Dict[str, OrderBookSnapshot] = {}
+
+    def process_depth_payload(self, symbol: str, payload: dict) -> OrderBookSnapshot:
+        """Process a Binance @depth20 or @depth payload and calculate microstructure metrics."""
+        sym = symbol.upper()
+        raw_bids = payload.get("bids") or payload.get("b") or []
+        raw_asks = payload.get("asks") or payload.get("a") or []
+        raw_ts = payload.get("E") or payload.get("T")
+        ts_ms = int(raw_ts) if raw_ts else int(time.time() * 1000)
+
+        # Parse and sort bids (descending) & asks (ascending)
+        parsed_bids = []
+        for item in raw_bids[:self.depth_levels]:
+            try:
+                p, q = float(item[0]), float(item[1])
+                if p > 0.0 and q > 0.0:
+                    parsed_bids.append((p, q))
+            except (ValueError, TypeError, IndexError):
+                continue
+        parsed_bids.sort(key=lambda x: -x[0])
+
+        parsed_asks = []
+        for item in raw_asks[:self.depth_levels]:
+            try:
+                p, q = float(item[0]), float(item[1])
+                if p > 0.0 and q > 0.0:
+                    parsed_asks.append((p, q))
+            except (ValueError, TypeError, IndexError):
+                continue
+        parsed_asks.sort(key=lambda x: x[0])
+
+        # If empty payload, return cached or fallback
+        if not parsed_bids or not parsed_asks:
+            if sym in self._books:
+                return self._books[sym]
+            return self._create_fallback_snapshot(sym, ts_ms)
+
+        # Calculate cumulative totals
+        bids_with_tot = []
+        cum_bid = 0.0
+        for p, q in parsed_bids:
+            cum_bid += q
+            bids_with_tot.append((p, q, round(cum_bid, 4)))
+
+        asks_with_tot = []
+        cum_ask = 0.0
+        for p, q in parsed_asks:
+            cum_ask += q
+            asks_with_tot.append((p, q, round(cum_ask, 4)))
+
+        best_bid = parsed_bids[0][0]
+        best_bid_q = parsed_bids[0][1]
+        best_ask = parsed_asks[0][0]
+        best_ask_q = parsed_asks[0][1]
+
+        spread = max(0.0, best_ask - best_bid)
+        mid_price = (best_bid + best_ask) / 2.0 if (best_bid + best_ask) > 0 else best_bid
+        spread_bps = (spread / mid_price * 10000.0) if mid_price > 0 else 0.0
+
+        # Weighted micro-price
+        top_qty_sum = best_bid_q + best_ask_q
+        if top_qty_sum > 0:
+            weighted_mid = (best_bid * best_ask_q + best_ask * best_bid_q) / top_qty_sum
+        else:
+            weighted_mid = mid_price
+
+        # Order Book Imbalance (OBI) across all top-20 levels
+        tot_depth_vol = cum_bid + cum_ask
+        if tot_depth_vol > 0:
+            imbalance_pct = ((cum_bid - cum_ask) / tot_depth_vol) * 100.0
+        else:
+            imbalance_pct = 0.0
+
+        # Liquidity wall detection
+        mean_bid_qty = (cum_bid / len(parsed_bids)) if parsed_bids else 1.0
+        mean_ask_qty = (cum_ask / len(parsed_asks)) if parsed_asks else 1.0
+        bid_wall_threshold = mean_bid_qty * self.wall_multiplier
+        ask_wall_threshold = mean_ask_qty * self.wall_multiplier
+
+        bid_walls = tuple((p, q) for p, q, _ in bids_with_tot if q >= bid_wall_threshold)
+        ask_walls = tuple((p, q) for p, q, _ in asks_with_tot if q >= ask_wall_threshold)
+
+        snapshot = OrderBookSnapshot(
+            symbol=sym,
+            timestamp_ms=ts_ms,
+            bids=tuple(bids_with_tot),
+            asks=tuple(asks_with_tot),
+            best_bid=best_bid,
+            best_ask=best_ask,
+            spread=spread,
+            spread_bps=spread_bps,
+            mid_price=mid_price,
+            weighted_mid=weighted_mid,
+            imbalance_pct=imbalance_pct,
+            bid_walls=bid_walls,
+            ask_walls=ask_walls,
+        )
+        self._books[sym] = snapshot
+        return snapshot
+
+    def get_snapshot(self, symbol: str, fallback_price: float = 50000.0) -> OrderBookSnapshot:
+        """Retrieve latest snapshot for symbol, or generate a valid fallback."""
+        sym = symbol.upper()
+        if sym in self._books:
+            return self._books[sym]
+        return self._create_fallback_snapshot(sym, int(time.time() * 1000), fallback_price=fallback_price)
+
+    def _create_fallback_snapshot(
+        self,
+        symbol: str,
+        timestamp_ms: int,
+        fallback_price: float = 50000.0,
+    ) -> OrderBookSnapshot:
+        """Create a valid baseline snapshot when exchange feed is warming up."""
+        step = fallback_price * 0.0002
+        bids = []
+        cum_b = 0.0
+        for i in range(1, 9):
+            p = round(fallback_price - i * step, 2)
+            q = round(1.0 + (i * 0.2), 3)
+            cum_b += q
+            bids.append((p, q, round(cum_b, 4)))
+
+        asks = []
+        cum_a = 0.0
+        for i in range(1, 9):
+            p = round(fallback_price + i * step, 2)
+            q = round(1.0 + (i * 0.2), 3)
+            cum_a += q
+            asks.append((p, q, round(cum_a, 4)))
+
+        return OrderBookSnapshot(
+            symbol=symbol,
+            timestamp_ms=timestamp_ms,
+            bids=tuple(bids),
+            asks=tuple(asks),
+            best_bid=bids[0][0],
+            best_ask=asks[0][0],
+            spread=step,
+            spread_bps=(step / fallback_price) * 10000.0,
+            mid_price=fallback_price,
+            weighted_mid=fallback_price,
+            imbalance_pct=0.0,
+            bid_walls=(),
+            ask_walls=(),
+            status="DISCONNECTED",
+        )
+

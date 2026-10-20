@@ -352,4 +352,77 @@ def test_find_preemption_candidate_protects_profitable_or_tp1_trade(temp_risk_db
     assert sym2 is None
 
 
+def test_correlation_gating_caps_correlated_altcoins_when_btc_open(temp_risk_db):
+    """Verify that when BTC is open, at most 1 concurrent altcoin can open in the same direction."""
+    risk_manager = PortfolioRiskManager(
+        max_open_positions=4, max_directional_positions=3, db_path=temp_risk_db
+    )
+
+    # 1. Open BTC LONG
+    with risk_manager._get_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO paper_trades (
+                symbol, timeframe, side, status, timestamp, entry_price, stop_loss, take_profit
+            ) VALUES ('BTCUSDT', '15m', 'LONG', 'OPEN', '2026-10-14T10:00:00', 50000.0, 49000.0, 52000.0)
+            """
+        )
+
+    # 2. First correlated altcoin (ETH LONG) should be approved
+    allowed_eth, reason_eth = risk_manager.can_open_position("ETHUSDT", current_bar_index=10, side="LONG")
+    assert allowed_eth is True
+    assert reason_eth == "Approved"
+
+    # Insert ETH LONG as active
+    with risk_manager._get_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO paper_trades (
+                symbol, timeframe, side, status, timestamp, entry_price, stop_loss, take_profit
+            ) VALUES ('ETHUSDT', '15m', 'LONG', 'OPEN', '2026-10-14T10:00:00', 3000.0, 2900.0, 3200.0)
+            """
+        )
+
+    # 3. Second correlated altcoin (SOL LONG) must be rejected by correlation gate
+    allowed_sol, reason_sol = risk_manager.can_open_position("SOLUSDT", current_bar_index=10, side="LONG")
+    assert allowed_sol is False
+    assert "Correlation Gate: BTCUSDT is already LONG" in reason_sol
+    assert "max 1 concurrent correlated altcoin allowed" in reason_sol
+
+    # 4. Uncorrelated/opposing altcoin (SOL SHORT) should be allowed
+    allowed_sol_short, reason_short = risk_manager.can_open_position("SOLUSDT", current_bar_index=10, side="SHORT")
+    assert allowed_sol_short is True
+    assert reason_short == "Approved"
+
+
+def test_dynamic_risk_scaling_halves_altcoin_risk_when_btc_open(temp_risk_db):
+    """Verify that altcoin risk is dynamically halved (1.0% -> 0.5%) when correlated BTC position is open."""
+    risk_manager = PortfolioRiskManager(
+        account_equity_usd=10000.0, risk_per_trade_pct=1.0, db_path=temp_risk_db
+    )
+
+    # Baseline: No BTC position open -> full 1.0% ($100) risk
+    sizing_baseline = risk_manager.calculate_position_size(entry_price=2000.0, stop_loss=1950.0, symbol="ETHUSDT")
+    assert sizing_baseline["risk_usd"] == 100.0
+
+    # Insert BTC LONG position
+    with risk_manager._get_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO paper_trades (
+                symbol, timeframe, side, status, timestamp, entry_price, stop_loss, take_profit
+            ) VALUES ('BTCUSDT', '15m', 'LONG', 'OPEN', '2026-10-14T10:00:00', 50000.0, 49000.0, 52000.0)
+            """
+        )
+
+    # Correlated ETH LONG: Risk scaled to 0.5% ($50)
+    sizing_scaled = risk_manager.calculate_position_size(entry_price=2000.0, stop_loss=1950.0, symbol="ETHUSDT")
+    assert sizing_scaled["risk_usd"] == 50.0
+
+    # Opposing ETH SHORT: Uncorrelated hedge -> full 1.0% ($100) risk
+    sizing_hedged = risk_manager.calculate_position_size(entry_price=2000.0, stop_loss=2050.0, symbol="ETHUSDT")
+    assert sizing_hedged["risk_usd"] == 100.0
+
+
+
 

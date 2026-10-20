@@ -417,10 +417,14 @@ def generate_report(
     return "\n".join(sections)
 
 
+from pathlib import Path
+DEFAULT_REPORTS_DIR = str(Path(__file__).resolve().parent.parent / "reports")
+
+
 def save_report(
     report_md: str,
     run_id: int,
-    output_dir: str = r"e:\Crypto Analyzer\reports",
+    output_dir: Optional[str] = None,
 ) -> str:
     """Write the markdown report to disk and return the file path.
 
@@ -438,6 +442,8 @@ def save_report(
     str
         Absolute path to the saved report file.
     """
+    if output_dir is None:
+        output_dir = DEFAULT_REPORTS_DIR
     os.makedirs(output_dir, exist_ok=True)
     timestamp_slug = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     filename = f"validation_run{run_id}_{timestamp_slug}.md"

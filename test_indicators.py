@@ -524,3 +524,32 @@ def test_order_block_touch_decay():
     assert details3["touch_count"] == 3
     assert details3["freshness_score"] == 0.0
 
+
+def test_check_market_overextension_fast_mean():
+    """Verify that price stretched > 2.0x ATR from EMA20 is vetoed as an overextension trap."""
+    from indicators import check_market_overextension
+
+    # Price = 50,000, EMA50 = 49,000, ATR = 200, RSI = 60 (well below 75 threshold)
+    # Distance to EMA20 (49,500) = 500 = 2.5x ATR (> 2.0x ATR threshold)
+    is_overextended, reason = check_market_overextension(
+        curr_close=50000.0,
+        ema50=49000.0,
+        atr=200.0,
+        rsi=60.0,
+        side="LONG",
+        ema20=49500.0,
+    )
+    assert is_overextended is True
+    assert "Fast Mean" in reason
+
+    # Within 2.0x ATR -> Permitted
+    is_overextended2, _ = check_market_overextension(
+        curr_close=49800.0,
+        ema50=49000.0,
+        atr=200.0,
+        rsi=60.0,
+        side="LONG",
+        ema20=49500.0,
+    )
+    assert is_overextended2 is False
+

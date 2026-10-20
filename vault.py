@@ -683,14 +683,19 @@ class AsyncVaultWriter:
     async def stop(self) -> None:
         """Gracefully stop the worker, flushing any remaining queued items."""
         self._running = False
-        if self._worker_task:
-            self._worker_task.cancel()
+        if self._worker_task and not self._worker_task.done():
             try:
-                await self._worker_task
-            except asyncio.CancelledError:
-                pass
-        # Final synchronous flush
-        await self._flush_pending()
+                await asyncio.wait_for(asyncio.shield(self._worker_task), timeout=0.5)
+            except (asyncio.TimeoutError, asyncio.CancelledError, Exception):
+                if not self._worker_task.done():
+                    self._worker_task.cancel()
+                    try:
+                        await self._worker_task
+                    except Exception:
+                        pass
+        # Final flush for all items remaining in queue
+        while not self.queue.empty():
+            await self._flush_pending()
 
     def record_event(self, table_type: str, payload: Dict[str, Any]) -> None:
         """Non-blocking enqueue of an event from a WebSocket callback."""
@@ -701,6 +706,8 @@ class AsyncVaultWriter:
         while self._running:
             try:
                 await asyncio.sleep(self.flush_interval_sec)
+                if not self._running:
+                    break
                 await self._flush_pending()
             except asyncio.CancelledError:
                 break
@@ -732,19 +739,23 @@ class AsyncVaultWriter:
             except asyncio.QueueEmpty:
                 break
 
-        # Dispatch batch writes in thread pool to keep event loop free
+        # Dispatch batch writes atomically in a single thread pool task to keep event loop free
         loop = asyncio.get_running_loop()
-        if items_by_table["whale_trades"]:
-            await loop.run_in_executor(None, self.vault.insert_whale_trades, items_by_table["whale_trades"])
-        if items_by_table["liquidation_events"]:
-            await loop.run_in_executor(None, self.vault.insert_liquidations, items_by_table["liquidation_events"])
-        if items_by_table["derivatives_snapshots"]:
-            await loop.run_in_executor(None, self.vault.insert_derivatives_snapshots, items_by_table["derivatives_snapshots"])
-        if items_by_table["order_book_bbo_snapshots"]:
-            await loop.run_in_executor(None, self.vault.insert_bbo_snapshots, items_by_table["order_book_bbo_snapshots"])
-        if items_by_table["sentiment_metrics"]:
-            await loop.run_in_executor(None, self.vault.insert_sentiment_metrics, items_by_table["sentiment_metrics"])
-        if items_by_table["candle_microstructure_bars"]:
-            await loop.run_in_executor(None, self.vault.insert_candle_bars, items_by_table["candle_microstructure_bars"])
-        if items_by_table["strategy_telemetry_audit"]:
-            await loop.run_in_executor(None, self.vault.insert_strategy_audits, items_by_table["strategy_telemetry_audit"])
+
+        def _write_all(items_dict: Dict[str, List[Dict[str, Any]]]) -> None:
+            if items_dict["whale_trades"]:
+                self.vault.insert_whale_trades(items_dict["whale_trades"])
+            if items_dict["liquidation_events"]:
+                self.vault.insert_liquidations(items_dict["liquidation_events"])
+            if items_dict["derivatives_snapshots"]:
+                self.vault.insert_derivatives_snapshots(items_dict["derivatives_snapshots"])
+            if items_dict["order_book_bbo_snapshots"]:
+                self.vault.insert_bbo_snapshots(items_dict["order_book_bbo_snapshots"])
+            if items_dict["sentiment_metrics"]:
+                self.vault.insert_sentiment_metrics(items_dict["sentiment_metrics"])
+            if items_dict["candle_microstructure_bars"]:
+                self.vault.insert_candle_bars(items_dict["candle_microstructure_bars"])
+            if items_dict["strategy_telemetry_audit"]:
+                self.vault.insert_strategy_audits(items_dict["strategy_telemetry_audit"])
+
+        await loop.run_in_executor(None, _write_all, items_by_table)

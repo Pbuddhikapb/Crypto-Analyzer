@@ -127,7 +127,7 @@ export const ActiveTradeCockpit: React.FC<ActiveTradeCockpitProps> = ({
             const entry = trade.entry_price;
             const sl = trade.stop_loss;
             const initialSl = trade.initial_stop_loss || sl;
-            const tp1 = trade.tp1_price || (isLong ? entry + (entry - initialSl) * 0.8 : entry - (initialSl - entry) * 0.8);
+            const tp1 = trade.tp1_price || (isLong ? entry + (entry - initialSl) * 0.75 : entry - (initialSl - entry) * 0.75);
             const tp2 = trade.take_profit;
             const riskDist = Math.max(0.00001, Math.abs(entry - initialSl));
             const pnlUsd = trade.unrealized_pnl_usd ?? 0.0;
@@ -264,7 +264,7 @@ export const ActiveTradeCockpit: React.FC<ActiveTradeCockpitProps> = ({
                     <span>-1.0R</span>
                     <span className="text-slate-400 font-semibold">0.0R (Entry)</span>
                     <span className={trade.tp1_hit ? 'text-laser-green font-bold' : ''}>
-                      +0.8R (${tp1.toLocaleString(undefined, { maximumFractionDigits: 2 })}) {trade.tp1_hit ? '✓' : ''}
+                      +0.75R (${tp1.toLocaleString(undefined, { maximumFractionDigits: 2 })}) {trade.tp1_hit ? '✓' : ''}
                     </span>
                     <span>+{((tp2 - entry) / riskDist).toFixed(1)}R</span>
                   </div>

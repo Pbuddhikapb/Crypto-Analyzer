@@ -508,7 +508,8 @@ class ForensicAnomalyAuditor:
             total_shadows = sum(shadow_counts.values())
             saved_losses = shadow_counts.get("SAVED_LOSS", 0)
             blocked_winners = shadow_counts.get("BLOCKED_WINNER", 0)
-            filter_efficiency = (saved_losses / (saved_losses + blocked_winners) * 100.0) if (saved_losses + blocked_winners) > 0 else 100.0
+            total_evaluated = saved_losses + blocked_winners
+            filter_efficiency = (saved_losses / total_evaluated * 100.0) if total_evaluated > 0 else None
 
             # Excursion statistics
             excursions = cur.execute("SELECT * FROM trade_excursion_audit").fetchall()
@@ -537,13 +538,17 @@ class ForensicAnomalyAuditor:
     def format_markdown_report(self, report: Dict[str, Any]) -> str:
         """Render a formatted, institutional markdown report."""
         eff = report["filter_efficiency_pct"]
-        eff_badge = "HIGH ALPHA PROTECTION (>75%)" if eff >= 75.0 else ("BALANCED (50-75%)" if eff >= 50.0 else "LEAKING ALPHA (<50%)")
+        if eff is not None:
+            eff_badge = "HIGH ALPHA PROTECTION (>75%)" if eff >= 75.0 else ("BALANCED (50-75%)" if eff >= 50.0 else "LEAKING ALPHA (<50%)")
+            eff_str = f"**{eff:.1f}%** ({eff_badge})"
+        else:
+            eff_str = "**N/A (0 signals evaluated)**"
 
         lines = [
             "# Live Forensic Loophole Analysis & Telemetry Audit Report",
             f"\n**Audit Timestamp**: `{report['generated_at']}`",
             "\n## 1. Executive Summary & Filter Efficiency",
-            f"- **Counterfactual Filter Efficiency**: **{eff:.1f}%** ({eff_badge})",
+            f"- **Counterfactual Filter Efficiency**: {eff_str}",
             f"- **Saved Losses (Protected Capital)**: **{report['saved_losses']} setups**",
             f"- **Blocked Potential Winners (Filtered Alpha)**: **{report['blocked_winners']} setups**",
             f"- **'Almost TP1' Peak Fades Detected**: **{report['almost_tp1_fades']}**",
@@ -713,7 +718,9 @@ def main():
         # Run single diagnostic pass
         print("[FORENSIC] Running single diagnostic audit pass...")
         report_data = auditor.generate_forensic_report()
-        print(f"Filter Efficiency:       {report_data['filter_efficiency_pct']:.1f}%")
+        eff_val = report_data['filter_efficiency_pct']
+        eff_str = f"{eff_val:.1f}%" if eff_val is not None else "N/A"
+        print(f"Filter Efficiency:       {eff_str}")
         print(f"Saved Losses:            {report_data['saved_losses']}")
         print(f"Blocked Winners:         {report_data['blocked_winners']}")
         print(f"Almost TP1 Fades:        {report_data['almost_tp1_fades']}")

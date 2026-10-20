@@ -49,3 +49,22 @@ export async function fetchScannerOpportunities(): Promise<import('../types/mark
   if (!res.ok) throw new Error(`HTTP ${res.status}: Failed to fetch scanner opportunities`);
   return res.json();
 }
+
+export async function fetchMarketDepth(symbol: string): Promise<import('../types/market').OrderBookDepthData> {
+  const res = await fetch(`${API_BASE}/market/depth?symbol=${encodeURIComponent(symbol)}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}: Failed to fetch market depth for ${symbol}`);
+  return res.json();
+}
+
+export async function fetchTradeBracket(
+  symbol: string,
+  side: 'LONG' | 'SHORT',
+  entryPrice: number,
+  stopLoss: number
+) {
+  const res = await fetch(
+    `${API_BASE}/trade/bracket?symbol=${encodeURIComponent(symbol)}&side=${encodeURIComponent(side)}&entry_price=${entryPrice}&stop_loss=${stopLoss}`
+  );
+  if (!res.ok) throw new Error(`HTTP ${res.status}: Failed to calculate trade bracket`);
+  return res.json();
+}

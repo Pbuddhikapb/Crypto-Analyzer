@@ -11,9 +11,12 @@ from microstructure import (
     OpenInterestEngine,
     SymbolNormalizer,
     WhaleTradeFilter,
+    WhaleTrade,
     get_whale_thresholds,
     fetch_historical_funding_rates,
     fetch_historical_open_interest,
+    OrderBookEngine,
+    OrderBookSnapshot,
 )
 
 
@@ -317,4 +320,116 @@ def test_whale_trade_filter_tier_scaling():
     # Explicit threshold overrides tier defaults
     wf_override = WhaleTradeFilter(symbol="XRPUSDT", whale_threshold=200_000.0)
     assert wf_override.whale_threshold == 200_000.0
+
+
+def test_order_book_engine_payload_processing_and_metrics():
+    """Verify OrderBookEngine processes L2 depth payload and computes OBI, spread, and wall clusters."""
+    engine = OrderBookEngine(wall_multiplier=2.5, depth_levels=5)
+    raw_payload = {
+        "E": 1700000000000,
+        "bids": [
+            ["50000.0", "1.0"],
+            ["49990.0", "1.5"],
+            ["49980.0", "5.0"],  # Wall!
+            ["49970.0", "1.0"],
+            ["49960.0", "0.5"],
+        ],
+        "asks": [
+            ["50010.0", "1.0"],
+            ["50020.0", "1.0"],
+            ["50030.0", "1.0"],
+            ["50040.0", "1.0"],
+            ["50050.0", "1.0"],
+        ],
+    }
+    snap = engine.process_depth_payload("BTCUSDT", raw_payload)
+    assert snap.symbol == "BTCUSDT"
+    assert snap.best_bid == 50000.0
+    assert snap.best_ask == 50010.0
+    assert snap.spread == 10.0
+    assert round(snap.spread_bps, 2) == round((10.0 / 50005.0) * 10000, 2)
+
+    # Total bid vol: 1 + 1.5 + 5 + 1 + 0.5 = 9.0
+    # Total ask vol: 1 + 1 + 1 + 1 + 1 = 5.0
+    # OBI = (9 - 5) / (9 + 5) * 100 = 4 / 14 * 100 = 28.57%
+    assert round(snap.imbalance_pct, 1) == 28.6
+
+    # Wall detection: mean bid qty = 9.0 / 5 = 1.8. Wall threshold = 1.8 * 2.5 = 4.5.
+    # 5.0 >= 4.5 -> Bid wall detected at 49980.0
+    assert len(snap.bid_walls) == 1
+    assert snap.bid_walls[0][0] == 49980.0
+    assert len(snap.ask_walls) == 0
+
+    # Test dictionary export
+    d = snap.to_dict()
+    assert d["symbol"] == "BTCUSDT"
+    assert len(d["bids"]) == 5
+    assert d["bids"][0]["total"] == 1.0
+    assert d["bids"][1]["total"] == 2.5
+    assert d["bids"][2]["total"] == 7.5
+
+
+def test_order_book_engine_fallback():
+    """Verify OrderBookEngine provides a valid fallback snapshot before live stream arrives."""
+    engine = OrderBookEngine()
+    snap = engine.get_snapshot("SOLUSDT", fallback_price=150.0)
+    assert snap.symbol == "SOLUSDT"
+    assert snap.mid_price == 150.0
+    assert snap.best_bid < snap.best_ask
+    assert len(snap.bids) == 8
+    assert len(snap.asks) == 8
+
+
+def test_whale_trade_filter_time_decay():
+    """Verify exponential time-decay on whale net delta computation."""
+    import math
+    filter_ = WhaleTradeFilter(symbol="BTCUSDT")
+    now = 10000.0
+
+    # Trade 1: Buy $100k at now (weight = 1.0) -> +$100,000
+    filter_.tape.append(WhaleTrade("BTCUSDT", 50000.0, 2.0, 100_000.0, "BUY", "WHALE", now))
+    # Trade 2: Sell $100k at now - 300s (weight = exp(-1) = 0.367879) -> -$36,787.94
+    filter_.tape.append(WhaleTrade("BTCUSDT", 50000.0, 2.0, 100_000.0, "SELL", "WHALE", now - 300.0))
+    # Trade 3: Sell $100k at now - 1200s (> 900s window -> ignored) -> 0
+    filter_.tape.append(WhaleTrade("BTCUSDT", 50000.0, 2.0, 100_000.0, "SELL", "WHALE", now - 1200.0))
+
+    decayed = filter_.get_time_decayed_net_delta(symbol="BTCUSDT", window_seconds=900.0, tau=300.0, current_time=now)
+    expected = 100_000.0 - (100_000.0 * math.exp(-1.0))
+    assert pytest.approx(decayed, rel=1e-3) == expected
+
+
+def test_liquidation_directional_tracking():
+    """Verify directional liquidation aggregation separates long vs short cascades."""
+    tracker = LiquidationTracker(cascade_threshold=500_000.0, window_seconds=60.0)
+    now = 10000.0
+
+    # Long liquidation (forced SELL) of $600k
+    raw_long_liq = {"s": "BTCUSDT", "S": "SELL", "q": "12.0", "p": "50000.0", "T": int(now * 1000)}
+    tracker.process_order(raw_long_liq)
+
+    # Short liquidation (forced BUY) of $200k
+    raw_short_liq = {"s": "BTCUSDT", "S": "BUY", "q": "4.0", "p": "50000.0", "T": int(now * 1000)}
+    tracker.process_order(raw_short_liq)
+
+    # Overall: 800k > 500k -> cascade active
+    tot_vol, is_any = tracker.get_rolling_summary("BTCUSDT", current_time=now)
+    assert tot_vol == 800_000.0
+    assert is_any is True
+
+    # Long only: 600k > 500k -> long cascade active
+    long_vol, is_long = tracker.get_rolling_summary("BTCUSDT", side="LONG", current_time=now)
+    assert long_vol == 600_000.0
+    assert is_long is True
+
+    # Short only: 200k < 500k -> short cascade NOT active
+    short_vol, is_short = tracker.get_rolling_summary("BTCUSDT", side="SHORT", current_time=now)
+    assert short_vol == 200_000.0
+    assert is_short is False
+
+    # Directional summary dict
+    d = tracker.get_directional_summary("BTCUSDT", current_time=now)
+    assert d["is_cascade"] is True
+    assert d["is_long_cascade"] is True
+    assert d["is_short_cascade"] is False
+
 

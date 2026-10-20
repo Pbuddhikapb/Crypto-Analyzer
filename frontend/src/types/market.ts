@@ -15,6 +15,14 @@ export interface FVGBox {
   candle_index: number;
 }
 
+export interface HistoricalBaseline {
+  pattern: string;
+  win_rate: number;
+  profit_factor: number;
+  sample_trades: number;
+  status: string;
+}
+
 export interface TradeSetup {
   side: 'LONG' | 'SHORT';
   limit_entry: number;
@@ -22,11 +30,18 @@ export interface TradeSetup {
   risk_dist: number;
   risk_pct: number;
   tp1: number;
+  tp1_r?: number;
+  be_trigger?: number;
+  be_trigger_r?: number;
+  be_price?: number;
   tp2: number;
+  tp2_r?: number;
+  stagnancy_bars?: number;
   rr_ratio: number;
   macro_bias: string;
   is_counter_trend: boolean;
   recommendation: string;
+  historical_baseline?: HistoricalBaseline;
 }
 
 export interface ScannerOpportunity {
@@ -38,6 +53,8 @@ export interface ScannerOpportunity {
   volume_surge: number;
   confluence_score: number;
   is_chop: boolean;
+  inflection_pattern?: string;
+  historical_baseline?: HistoricalBaseline;
   trade_setup: TradeSetup | null;
 }
 
@@ -208,11 +225,34 @@ export interface SystemHealth {
   connected_ws_clients: number;
 }
 
+export interface OrderBookLevel {
+  price: number;
+  qty: number;
+  total: number;
+}
+
+export interface OrderBookDepthData {
+  symbol: string;
+  timestamp_ms: number;
+  bids: OrderBookLevel[];
+  asks: OrderBookLevel[];
+  best_bid: number;
+  best_ask: number;
+  spread: number;
+  spread_bps: number;
+  mid_price: number;
+  weighted_mid: number;
+  imbalance_pct: number;
+  bid_walls: { price: number; qty: number }[];
+  ask_walls: { price: number; qty: number }[];
+}
+
 export type WSMessage =
   | { type: 'tick'; symbol: string; price: number; timestamp: number }
   | { type: 'candle'; symbol: string; candle: Candle; indicators: Indicators }
   | { type: 'whale_trade'; trade: WhaleTrade }
   | { type: 'liquidation'; event: LiquidationEvent }
+  | { type: 'order_book_depth'; depth: OrderBookDepthData }
   | { type: 'trade_opened'; trade: ActiveTrade }
   | { type: 'trade_closed'; symbol: string }
   | { type: 'pong'; timestamp: number };

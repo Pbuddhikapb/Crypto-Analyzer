@@ -4,11 +4,44 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 Candle = Union[Tuple[float, float, float, float, float], Sequence[float]]
 
 
+def normalize_candle_to_5tuple(c: Any) -> Tuple[float, float, float, float, float]:
+    """Convert any candle format (5-tuple, 6-tuple, dict, or sequence) into standard (open, high, low, close, volume)."""
+    if isinstance(c, dict):
+        o = c.get("open") if "open" in c else c.get("o")
+        h = c.get("high") if "high" in c else c.get("h")
+        l = c.get("low") if "low" in c else c.get("l")
+        cl = c.get("close") if "close" in c else c.get("c")
+        v = c.get("volume") if "volume" in c else c.get("v", 0.0)
+        if o is None or h is None or l is None or cl is None:
+            raise ValueError(f"Missing required OHLC keys in candle dict: {c}")
+        return (float(o), float(h), float(l), float(cl), float(v))
+    if len(c) >= 6:
+        # (ts, o, h, l, c, v)
+        return (float(c[1]), float(c[2]), float(c[3]), float(c[4]), float(c[5]))
+    if len(c) == 5:
+        # (o, h, l, c, v)
+        return (float(c[0]), float(c[1]), float(c[2]), float(c[3]), float(c[4]))
+    raise ValueError(f"Unrecognized candle format with length {len(c)}: {c}")
+
+
+def normalize_candles_5tuple(candles: Sequence[Any]) -> List[Tuple[float, float, float, float, float]]:
+    """Batch convert a candle sequence into standard 5-tuples with fast-path optimization.
+    
+    Guarantees a true List output to protect against slicing errors when fed collections.deque.
+    """
+    if not candles:
+        return []
+    first = candles[0]
+    if isinstance(candles, list) and isinstance(first, tuple) and len(first) == 5 and all(isinstance(x, (float, int)) for x in first):
+        return candles
+    return [normalize_candle_to_5tuple(c) for c in candles]
+
+
 def calculate_ema(closes: Sequence[float], period: int) -> float:
     """Calculate Exponential Moving Average (EMA) and return the latest value."""
     arr = np.asarray(closes, dtype=float)
-    if len(arr) == 0:
-        return 0.0
+    if len(arr) == 0 or period <= 0:
+        return float(arr[-1]) if len(arr) > 0 else 0.0
     if len(arr) < period:
         return float(arr[-1])
 
@@ -118,11 +151,12 @@ def detect_rsi_divergences(
         (has_bullish, has_bearish) if include_hidden=False
         (has_bullish, has_bearish, has_hidden_bullish, has_hidden_bearish) if include_hidden=True
     """
-    n = len(candles)
+    c_norm = normalize_candles_5tuple(candles)
+    n = len(c_norm)
     if n < period + 5:
         return (False, False, False, False) if include_hidden else (False, False)
 
-    full_closes = [float(c[3]) for c in candles]
+    full_closes = [float(c[3]) for c in c_norm]
     rsi_series = calculate_rsi_series(full_closes, period=period)
     start_idx = max(period, n - lookback)
 
@@ -130,11 +164,11 @@ def detect_rsi_divergences(
     swing_lows = []
     swing_highs = []
     for i in range(start_idx + 1, n - 1):
-        low_i = float(candles[i][2])
-        high_i = float(candles[i][1])
-        if low_i < float(candles[i - 1][2]) and low_i <= float(candles[i + 1][2]):
+        low_i = float(c_norm[i][2])
+        high_i = float(c_norm[i][1])
+        if low_i < float(c_norm[i - 1][2]) and low_i <= float(c_norm[i + 1][2]):
             swing_lows.append((i, low_i, float(rsi_series[i])))
-        if high_i > float(candles[i - 1][1]) and high_i >= float(candles[i + 1][1]):
+        if high_i > float(c_norm[i - 1][1]) and high_i >= float(c_norm[i + 1][1]):
             swing_highs.append((i, high_i, float(rsi_series[i])))
 
     bull_div = False
@@ -188,8 +222,9 @@ def check_recent_bullish_fvg(candles: Sequence[Candle], lookback: int = 5) -> bo
     A Bullish FVG occurs when:
     current_low > high_2_bars_ago AND middle candle body is at least 50% of its high-low range.
     Subsequent candles must not have closed below high_2_bars_ago (which would invalidate the gap).
-    Candle format: (open, high, low, close, volume)
+    Supports 5-tuples, 6-tuples, dicts, and sequences.
     """
+    candles = normalize_candles_5tuple(candles)
     n = len(candles)
     if n < 3:
         return False
@@ -228,8 +263,9 @@ def check_recent_bearish_fvg(candles: Sequence[Candle], lookback: int = 5) -> bo
     current_high < low_2_bars_ago AND middle candle is a red displacement candle 
     with body at least 50% of its high-low range.
     Subsequent candles must not have closed above low_2_bars_ago (which would invalidate the gap).
-    Candle format: (open, high, low, close, volume)
+    Supports 5-tuples, 6-tuples, dicts, and sequences.
     """
+    candles = normalize_candles_5tuple(candles)
     n = len(candles)
     if n < 3:
         return False
@@ -335,6 +371,7 @@ def check_bullish_fvg_retest(
     Returns:
         (is_retesting, fvg_details_dict)
     """
+    candles = normalize_candles_5tuple(candles)
     n = len(candles)
     if n < 4:
         return False, None
@@ -344,7 +381,7 @@ def check_bullish_fvg_retest(
     curr_close = float(candles[curr_idx][3])
 
     start_idx = max(2, n - lookback)
-    for i in range(start_idx, curr_idx):
+    for i in range(curr_idx - 1, start_idx - 1, -1):
         fvg_lower = float(candles[i - 2][1])  # Candle i-2 High
         fvg_upper = float(candles[i][2])      # Candle i Low
 
@@ -402,6 +439,7 @@ def check_bearish_fvg_retest(
     Returns:
         (is_retesting, fvg_details_dict)
     """
+    candles = normalize_candles_5tuple(candles)
     n = len(candles)
     if n < 4:
         return False, None
@@ -411,7 +449,7 @@ def check_bearish_fvg_retest(
     curr_close = float(candles[curr_idx][3])
 
     start_idx = max(2, n - lookback)
-    for i in range(start_idx, curr_idx):
+    for i in range(curr_idx - 1, start_idx - 1, -1):
         fvg_upper = float(candles[i - 2][2])  # Candle i-2 Low
         fvg_lower = float(candles[i][1])      # Candle i High
 
@@ -477,23 +515,24 @@ def check_fvg_rejection_confirmation(candle: Sequence[Any], side: str) -> bool:
     Prevents entering on aggressive displacement bars falling directly through the gap.
     Candle format: (open, high, low, close, volume)
     """
-    raw_c = candle[1:] if len(candle) >= 6 else candle
-    o, h, l, c = float(raw_c[0]), float(raw_c[1]), float(raw_c[2]), float(raw_c[3])
+    raw_c = normalize_candle_to_5tuple(candle)
+    o, h, l, c = raw_c[0], raw_c[1], raw_c[2], raw_c[3]
     bar_range = h - l
     if bar_range <= 0.0:
         return True
 
     side_upper = side.upper()
-    if side_upper == "LONG":
+    if side_upper in ("LONG", "BUY"):
         lower_wick = min(o, c) - l
         has_absorption_wick = (lower_wick / bar_range) >= 0.30
         close_in_upper_half = ((c - l) / bar_range) >= 0.50 and c >= o
         return has_absorption_wick or close_in_upper_half
-    else:  # SHORT
+    elif side_upper in ("SHORT", "SELL"):
         upper_wick = h - max(o, c)
         has_defense_wick = (upper_wick / bar_range) >= 0.30
         close_in_lower_half = ((h - c) / bar_range) >= 0.50 and c <= o
         return has_defense_wick or close_in_lower_half
+    return True
 
 
 def check_market_overextension(
@@ -502,22 +541,29 @@ def check_market_overextension(
     atr: float,
     rsi: float,
     side: str,
+    ema20: Optional[float] = None,
 ) -> Tuple[bool, str]:
-    """Check if price momentum is excessively overextended relative to EMA and RSI.
+    """Check if price momentum is excessively overextended relative to EMA (fast EMA20 or baseline EMA50) and RSI.
     
     Prevents buying at parabolic wave exhaustion or shorting into oversold climatic bottoms.
     """
     side_upper = side.upper()
-    if side_upper == "LONG":
+    if side_upper in ("LONG", "BUY"):
         if rsi > 75.0:
             return True, f"RSI Overbought ({rsi:.1f} > 75.0)"
+        if ema20 is not None and atr > 0.0 and (curr_close - ema20) > (2.0 * atr):
+            return True, f"Price Overextended from Fast Mean ({curr_close - ema20:.2f} > 2.0x ATR {2.0 * atr:.2f})"
         if rsi > 65.0 and atr > 0.0 and (curr_close - ema50) > (3.0 * atr):
             return True, f"Price Overextended ({curr_close - ema50:.2f} > 3.0x ATR {3.0 * atr:.2f})"
-    else:  # SHORT
+    elif side_upper in ("SHORT", "SELL"):
         if rsi < 25.0:
             return True, f"RSI Oversold ({rsi:.1f} < 25.0)"
+        if ema20 is not None and atr > 0.0 and (ema20 - curr_close) > (2.0 * atr):
+            return True, f"Price Overextended from Fast Mean ({ema20 - curr_close:.2f} > 2.0x ATR {2.0 * atr:.2f})"
         if rsi < 35.0 and atr > 0.0 and (ema50 - curr_close) > (3.0 * atr):
             return True, f"Price Overextended ({ema50 - curr_close:.2f} > 3.0x ATR {3.0 * atr:.2f})"
+    else:
+        return False, f"Invalid side: {side}"
 
     return False, ""
 
@@ -532,15 +578,17 @@ def calculate_optimal_trade_setup(
     """Calculate institutional limit order trade staging parameters.
     
     Uses FVG 50% Consequent Encroachment (CE) for limit entry, structural invalidation
-    stop loss, and asymmetric 1:2.5+ targets.
+    stop loss, and mathematically verified Single Exit Authority targets (+0.75R TP1, +0.85R BE, +1.33R TP2).
     """
+    from engine.exits import calculate_bracket_geometry
+
     side_upper = side.upper()
     is_counter_trend = (
-        (side_upper == "SHORT" and macro_bias == "BULLISH")
-        or (side_upper == "LONG" and macro_bias == "BEARISH")
+        (side_upper in ("SHORT", "SELL") and macro_bias == "BULLISH")
+        or (side_upper in ("LONG", "BUY") and macro_bias == "BEARISH")
     )
 
-    if side_upper == "LONG":
+    if side_upper in ("LONG", "BUY"):
         if fvg_info and "ce" in fvg_info:
             limit_entry = float(fvg_info["ce"])
             fvg_lower = float(fvg_info.get("lower", limit_entry - atr))
@@ -551,9 +599,7 @@ def calculate_optimal_trade_setup(
 
         risk_dist = max(limit_entry - stop_loss, limit_entry * 0.003)
         stop_loss = limit_entry - risk_dist
-        tp1 = limit_entry + (0.80 * risk_dist)
-        tp2 = limit_entry + (2.75 * risk_dist)
-    else:  # SHORT
+    elif side_upper in ("SHORT", "SELL"):
         if fvg_info and "ce" in fvg_info:
             limit_entry = float(fvg_info["ce"])
             fvg_upper = float(fvg_info.get("upper", limit_entry + atr))
@@ -564,22 +610,30 @@ def calculate_optimal_trade_setup(
 
         risk_dist = max(stop_loss - limit_entry, limit_entry * 0.003)
         stop_loss = limit_entry + risk_dist
-        tp1 = max(limit_entry - (0.80 * risk_dist), limit_entry * 0.01)
-        tp2 = max(limit_entry - (2.75 * risk_dist), limit_entry * 0.01)
+    else:
+        raise ValueError(f"Invalid side: {side}. Must be 'LONG' or 'SHORT'")
 
-    risk_pct = (risk_dist / limit_entry) * 100.0 if limit_entry > 0 else 0.0
-    reward_dist = abs(tp2 - limit_entry)
-    rr_ratio = reward_dist / risk_dist if risk_dist > 0 else 2.75
+    bracket = calculate_bracket_geometry(
+        side="LONG" if side_upper in ("LONG", "BUY") else "SHORT",
+        entry_price=limit_entry,
+        stop_loss=stop_loss,
+    )
 
     return {
-        "side": side_upper,
-        "limit_entry": limit_entry,
-        "stop_loss": stop_loss,
-        "risk_dist": risk_dist,
-        "risk_pct": risk_pct,
-        "tp1": tp1,
-        "tp2": tp2,
-        "rr_ratio": round(rr_ratio, 2),
+        "side": bracket["side"],
+        "limit_entry": bracket["limit_entry"],
+        "stop_loss": bracket["stop_loss"],
+        "risk_dist": bracket["risk_dist"],
+        "risk_pct": bracket["risk_pct"],
+        "tp1": bracket["tp1"],
+        "tp1_r": bracket["tp1_r"],
+        "be_trigger": bracket["be_trigger"],
+        "be_trigger_r": bracket["be_trigger_r"],
+        "be_price": bracket["be_price"],
+        "tp2": bracket["tp2"],
+        "tp2_r": bracket["tp2_r"],
+        "stagnancy_bars": bracket["stagnancy_bars"],
+        "rr_ratio": bracket["rr_ratio"],
         "macro_bias": macro_bias,
         "is_counter_trend": is_counter_trend,
         "recommendation": (
@@ -621,9 +675,9 @@ def detect_swing_points(
         pivot_low = True
 
         for k in range(1, window + 1):
-            if h[i] <= h[i - k] or h[i] <= h[i + k]:
+            if h[i] < h[i - k] or h[i] <= h[i + k]:
                 pivot_high = False
-            if l[i] >= l[i - k] or l[i] >= l[i + k]:
+            if l[i] > l[i - k] or l[i] >= l[i + k]:
                 pivot_low = False
 
         confirmed_idx = i + window
@@ -663,9 +717,11 @@ def detect_market_structure(
     4. Current trend state ("BULLISH", "BEARISH", or "RANGING").
     5. Mid-range status (is_in_range: True if current price is trapped inside un-broken swing points).
     """
+    candles = normalize_candles_5tuple(candles)
     n = len(candles)
     default_state: Dict[str, Any] = {
         "current_trend": "RANGING",
+        "market_structure": "RANGING",
         "last_swing_high": None,
         "last_swing_low": None,
         "active_swing_high": None,
@@ -780,6 +836,7 @@ def detect_market_structure(
 
     return {
         "current_trend": current_trend,
+        "market_structure": current_trend,
         "last_swing_high": latest_high["price"] if latest_high else None,
         "last_swing_low": latest_low["price"] if latest_low else None,
         "active_swing_high": active_high["price"] if active_high else None,
@@ -947,13 +1004,14 @@ def get_active_dealing_range(
     Zero-Lookahead Guarantee:
     Only swing points confirmed by index n - 1 are utilized.
     """
+    candles = normalize_candles_5tuple(candles)
     n = len(candles)
     if n < (2 * window + 1):
         return None
 
     # Slice lookback window
     start_idx = max(0, n - lookback)
-    active_candles = candles[start_idx:]
+    active_candles = list(candles)[start_idx:]
     highs = [c[1] for c in active_candles]
     lows = [c[2] for c in active_candles]
     closes = [c[3] for c in active_candles]
@@ -977,11 +1035,13 @@ def get_active_dealing_range(
 
     if swing_high <= swing_low:
         # Fallback to absolute max/min of confirmed swings if ordering was inverted
-        max_h = max(float(s["price"]) for s in confirmed_highs)
-        min_l = min(float(s["price"]) for s in confirmed_lows)
-        if max_h > min_l:
-            swing_high = max_h
-            swing_low = min_l
+        max_h_swing = max(confirmed_highs, key=lambda s: float(s["price"]))
+        min_l_swing = min(confirmed_lows, key=lambda s: float(s["price"]))
+        if float(max_h_swing["price"]) > float(min_l_swing["price"]):
+            last_high = max_h_swing
+            last_low = min_l_swing
+            swing_high = float(last_high["price"])
+            swing_low = float(last_low["price"])
         else:
             return None
 
@@ -1092,6 +1152,7 @@ def detect_order_blocks(
       Lower boundary (bottom): Body bottom (open of the up candle).
       Mean Threshold (MT): Midpoint (top + bottom) / 2.0.
     """
+    candles = normalize_candles_5tuple(candles)
     n = len(candles)
     if n < 4:
         return []
@@ -1223,6 +1284,7 @@ def detect_breaker_blocks(
     - Violated Bullish OB (Demand violated) -> Promotes to Bearish Breaker Block (New Supply).
     - Violated Bearish OB (Supply violated) -> Promotes to Bullish Breaker Block (New Demand).
     """
+    candles = normalize_candles_5tuple(candles)
     n = len(candles)
     if n < 4:
         return []
@@ -1343,8 +1405,12 @@ def check_order_block_confluence(
     min_dist = float("inf")
 
     for block in active_blocks:
-        top = block["top"] * (1.0 + tolerance_pct)
-        bottom = block["bottom"] * (1.0 - tolerance_pct)
+        if side_upper in ("LONG", "BUY"):
+            top = block["top"] * (1.0 + tolerance_pct)
+            bottom = block["bottom"]  # Hard invalidation floor
+        else:
+            top = block["top"]        # Hard invalidation ceiling
+            bottom = block["bottom"] * (1.0 - tolerance_pct)
 
         if bottom <= price <= top:
             dist = abs(price - block["mean_threshold"])
@@ -1389,6 +1455,215 @@ def check_order_block_confluence(
         "touch_count": 0,
         "freshness_score": 0.0,
     }
+
+
+def compute_terminal_features(
+    candles: Sequence[Candle],
+    lookback: int = 100,
+    symbol: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Compute verified, institutional multi-factor features from a candle sequence.
+    
+    Pure functional interface: Candles In -> Feature Dictionary Out.
+    Zero DB side-effects, zero logging, zero global state.
+    
+    Supports 5-tuples (open, high, low, close, volume) and 6-tuples (ts, open, high, low, close, volume).
+    """
+    n = len(candles)
+    if n == 0:
+        return {"error": "Empty candle sequence", "status": "INSUFFICIENT_DATA"}
+
+    # Normalize candle parsing - extract timestamp from current (latest) candle
+    last_c = candles[-1]
+    has_ts = isinstance(last_c, (list, tuple)) and len(last_c) >= 6
+    timestamp = str(last_c[0]) if has_ts else (last_c.get("timestamp") or last_c.get("open_time") if isinstance(last_c, dict) else None)
+
+    all_5tuple = normalize_candles_5tuple(candles)
+    c_5tuple = all_5tuple[-lookback:] if n > lookback else all_5tuple
+
+    opens = [c[0] for c in c_5tuple]
+    highs = [c[1] for c in c_5tuple]
+    lows = [c[2] for c in c_5tuple]
+    closes = [c[3] for c in c_5tuple]
+    volumes = [c[4] for c in c_5tuple]
+
+    all_closes = [c[3] for c in all_5tuple]
+    all_highs = [c[1] for c in all_5tuple]
+    all_lows = [c[2] for c in all_5tuple]
+    all_volumes = [c[4] for c in all_5tuple]
+
+    current_close = closes[-1]
+    current_high = highs[-1]
+    current_low = lows[-1]
+    current_open = opens[-1]
+    current_vol = volumes[-1]
+
+    # 1. Moving Averages & Trend
+    ema_9 = calculate_ema(all_closes, 9) if len(all_closes) >= 9 else None
+    ema_21 = calculate_ema(all_closes, 21) if len(all_closes) >= 21 else None
+    ema_50 = calculate_ema(all_closes, 50) if len(all_closes) >= 50 else None
+    ema_200 = calculate_ema(all_closes, 200) if len(all_closes) >= 200 else None
+
+    if ema_50 is not None and ema_200 is not None:
+        if ema_50 > ema_200 and current_close > ema_50:
+            trend_regime = "BULLISH"
+        elif ema_50 < ema_200 and current_close < ema_50:
+            trend_regime = "BEARISH"
+        else:
+            trend_regime = "NEUTRAL"
+    elif ema_50 is not None:
+        if current_close > ema_50:
+            trend_regime = "BULLISH"
+        elif current_close < ema_50:
+            trend_regime = "BEARISH"
+        else:
+            trend_regime = "NEUTRAL"
+    else:
+        trend_regime = "NEUTRAL"
+
+    # 2. Momentum & Divergence
+    rsi_series = calculate_rsi_series(all_closes, period=14)
+    curr_rsi = float(rsi_series[-1]) if len(rsi_series) > 0 else 50.0
+    prev_rsi = float(rsi_series[-2]) if len(rsi_series) > 1 else curr_rsi
+
+    has_rsi_cross_long = (prev_rsi < 40.0) and (curr_rsi >= 40.0)
+    has_rsi_cross_short = (prev_rsi > 60.0) and (curr_rsi <= 60.0)
+
+    bull_div, bear_div, h_bull_div, h_bear_div = detect_rsi_divergences(
+        c_5tuple, period=14, lookback=min(35, len(c_5tuple)), include_hidden=True
+    )
+    adx_14 = calculate_adx(all_highs, all_lows, all_closes, period=14)
+
+    # 3. Volatility & Impulse
+    atr_14 = calculate_atr(all_highs, all_lows, all_closes, period=14)
+    atr_pct = (atr_14 / current_close) * 100.0 if current_close > 0 else 0.0
+
+    prior_volumes = all_volumes[-21:-1] if len(all_volumes) >= 21 else all_volumes[:-1]
+    avg_vol_20 = float(np.mean(prior_volumes)) if len(prior_volumes) > 0 else current_vol
+    vol_ratio = current_vol / avg_vol_20 if avg_vol_20 > 0 else 1.0
+    vol_expansion = vol_ratio >= 1.5
+
+    # Mean reversion overextension: distance from 20-period EMA normalized by ATR
+    ema_20 = calculate_ema(all_closes, 20)
+    ema_dist_atr = abs(current_close - ema_20) / atr_14 if atr_14 > 0 else 0.0
+    is_overextended = ema_dist_atr >= 2.5
+
+    # SMC Market Structure & Dealing Range
+    structure_info = detect_market_structure(c_5tuple, window=2)
+    ms_state = structure_info.get("current_trend", structure_info.get("market_structure", "RANGING"))
+
+    # Dealing Range (Equilibrium, Discount, Premium)
+    dealing_range = get_active_dealing_range(c_5tuple, lookback=60, window=2)
+    if dealing_range:
+        zone_long, ratio_long = classify_discount_premium(
+            current_close,
+            dealing_range["swing_low"],
+            dealing_range["swing_high"],
+            side="LONG",
+        )
+        zone_short, ratio_short = classify_discount_premium(
+            current_close,
+            dealing_range["swing_low"],
+            dealing_range["swing_high"],
+            side="SHORT",
+        )
+        discount_premium = {
+            "zone": zone_long,
+            "retrace_ratio": ratio_long,
+            "is_discount": "DISCOUNT" in zone_long or zone_long == "OTE",
+            "is_premium": zone_long == "PREMIUM",
+            "zone_short": zone_short,
+            "retrace_ratio_short": ratio_short,
+            "swing_low": dealing_range["swing_low"],
+            "swing_high": dealing_range["swing_high"],
+        }
+    else:
+        discount_premium = {
+            "zone": "EQUILIBRIUM",
+            "retrace_ratio": 0.5,
+            "is_discount": False,
+            "is_premium": False,
+            "zone_short": "EQUILIBRIUM",
+            "retrace_ratio_short": 0.5,
+            "swing_low": None,
+            "swing_high": None,
+        }
+
+    # 5. Smart Money Concept Zones (FVGs and Order Blocks)
+
+    bull_fvg_active = check_recent_bullish_fvg(c_5tuple, lookback=5)
+    bear_fvg_active = check_recent_bearish_fvg(c_5tuple, lookback=5)
+
+    bull_retest, bull_fvg_info = check_bullish_fvg_retest(c_5tuple, lookback=15)
+    bear_retest, bear_fvg_info = check_bearish_fvg_retest(c_5tuple, lookback=15)
+
+    has_bull_ob, _, bull_ob_info = check_order_block_confluence(current_close, c_5tuple, side="LONG")
+    has_bear_ob, _, bear_ob_info = check_order_block_confluence(current_close, c_5tuple, side="SHORT")
+
+    return {
+        "symbol": symbol,
+        "timestamp": timestamp,
+        "bar_count": n,
+        "price": {
+            "open": current_open,
+            "high": current_high,
+            "low": current_low,
+            "close": current_close,
+            "volume": current_vol,
+        },
+        "trend": {
+            "ema_9": round(ema_9, 4) if ema_9 is not None else None,
+            "ema_21": round(ema_21, 4) if ema_21 is not None else None,
+            "ema_50": round(ema_50, 4) if ema_50 is not None else None,
+            "ema_200": round(ema_200, 4) if ema_200 is not None else None,
+            "regime": trend_regime,
+        },
+        "momentum": {
+            "rsi_14": round(curr_rsi, 2),
+            "rsi_prev": round(prev_rsi, 2),
+            "rsi_recovery_long": has_rsi_cross_long,
+            "rsi_recovery_short": has_rsi_cross_short,
+            "bullish_divergence": bull_div,
+            "bearish_divergence": bear_div,
+            "hidden_bullish_divergence": h_bull_div,
+            "hidden_bearish_divergence": h_bear_div,
+            "adx_14": round(adx_14, 2),
+            "is_trending": adx_14 >= 25.0,
+            "is_choppy": adx_14 < 20.0,
+        },
+        "volatility": {
+            "atr_14": round(atr_14, 4),
+            "atr_pct": round(atr_pct, 2),
+            "avg_volume_20": round(avg_vol_20, 2),
+            "volume_ratio": round(vol_ratio, 2),
+            "volume_expansion": vol_expansion,
+            "ema_20_dist_atr": round(ema_dist_atr, 2),
+            "is_overextended": is_overextended,
+        },
+        "structure": {
+            "market_structure": ms_state,
+            "current_trend": ms_state,
+            "last_event": structure_info.get("last_event"),
+            "last_event_side": structure_info.get("last_event_side"),
+            "bars_since_last_event": structure_info.get("bars_since_last_event"),
+            "is_in_range": structure_info.get("is_in_range", False),
+            "discount_premium": discount_premium,
+            "dealing_range": dealing_range,
+        },
+        "smc": {
+            "bullish_fvg_active": bull_fvg_active,
+            "bearish_fvg_active": bear_fvg_active,
+            "bullish_fvg_retest": bull_retest,
+            "bearish_fvg_retest": bear_retest,
+            "bullish_fvg_info": bull_fvg_info,
+            "bearish_fvg_info": bear_fvg_info,
+            "bullish_order_block": has_bull_ob,
+            "bearish_order_block": has_bear_ob,
+            "bullish_ob_info": bull_ob_info if has_bull_ob else None,
+            "bearish_ob_info": bear_ob_info if has_bear_ob else None,
+        },
+    }
+
 
 
 

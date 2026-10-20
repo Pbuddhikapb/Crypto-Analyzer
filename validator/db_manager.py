@@ -13,7 +13,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-DB_PATH = r"e:\Crypto Analyzer\data\backtest_runs.db"
+BASE_DIR = Path(__file__).resolve().parent.parent
+DB_PATH = str(BASE_DIR / "data" / "backtest_runs.db")
 
 # ---------------------------------------------------------------------------
 # Connection helper

@@ -133,7 +133,20 @@ class PortfolioRiskManager:
         if sl_dist <= 0.0:
             sl_dist = entry_price * 0.01  # Fallback 1% distance
 
-        target_risk_usd = self.account_equity_usd * (self.risk_per_trade_pct / 100.0)
+        target_risk_pct = self.risk_per_trade_pct
+        if symbol and symbol != "BTCUSDT":
+            side_deduced = "LONG" if entry_price > stop_loss else "SHORT"
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT side FROM paper_trades WHERE symbol = 'BTCUSDT' AND status = 'OPEN' LIMIT 1"
+                )
+                btc_row = cursor.fetchone()
+                if btc_row and btc_row[0].upper() == side_deduced:
+                    # Halve altcoin risk when correlated BTC is open in same direction
+                    target_risk_pct = self.risk_per_trade_pct * 0.5
+
+        target_risk_usd = self.account_equity_usd * (target_risk_pct / 100.0)
         unclamped_qty = target_risk_usd / sl_dist
         unclamped_notional = unclamped_qty * entry_price
         max_notional = self.account_equity_usd * self.max_leverage
@@ -230,7 +243,29 @@ class PortfolioRiskManager:
                     f"Directional exposure limit reached ({side_count}/{self.max_directional_positions} {norm_side}s active)",
                 )
 
-        # 5. Portfolio-wide active position limit check
+        # 5. Cross-asset correlation check (BTC benchmark)
+        # When BTC is open in direction D, altcoins in direction D are capped to at most 1 concurrent position
+        if side is not None and symbol != "BTCUSDT":
+            norm_side = side.upper()
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT side FROM paper_trades WHERE symbol = 'BTCUSDT' AND status = 'OPEN' LIMIT 1"
+                )
+                btc_row = cursor.fetchone()
+                if btc_row and btc_row[0].upper() == norm_side:
+                    cursor.execute(
+                        "SELECT COUNT(*) FROM paper_trades WHERE status = 'OPEN' AND side = ? AND symbol != 'BTCUSDT'",
+                        (norm_side,),
+                    )
+                    alt_count = int(cursor.fetchone()[0])
+                    if alt_count >= 1:
+                        return (
+                            False,
+                            f"Correlation Gate: BTCUSDT is already {norm_side}; max 1 concurrent correlated altcoin allowed ({alt_count}/1 active)",
+                        )
+
+        # 6. Portfolio-wide active position limit check
         open_count = self.get_open_positions_count()
         if open_count >= self.max_open_positions:
             return (

@@ -21,12 +21,14 @@ from indicators import (
     check_recent_bearish_fvg,
     check_recent_bullish_fvg,
     classify_discount_premium,
+    compute_terminal_features,
     detect_breaker_blocks,
     detect_market_structure,
     detect_order_blocks,
     detect_rsi_divergences,
     format_price,
     get_active_dealing_range,
+    normalize_candles_5tuple,
 )
 from main import (
     TOP_10_SYMBOLS,
@@ -35,7 +37,7 @@ from main import (
     poll_htf_candles,
     warmup_all_traders,
 )
-from microstructure import SymbolNormalizer
+from microstructure import OrderBookEngine, SymbolNormalizer
 from risk import PortfolioRiskManager
 from trader import PaperTrader
 
@@ -67,7 +69,8 @@ class ConnectionManager:
 
 def extract_fvg_boxes(candles: Sequence[Any], lookback: int = 20) -> List[Dict[str, Any]]:
     """Extract coordinates of active unmitigated FVG boxes for chart rendering."""
-    n = len(candles)
+    c_norm = normalize_candles_5tuple(candles) if candles else []
+    n = len(c_norm)
     if n < 3:
         return []
 
@@ -76,12 +79,12 @@ def extract_fvg_boxes(candles: Sequence[Any], lookback: int = 20) -> List[Dict[s
 
     for i in range(start_idx, n):
         # Bullish FVG
-        curr_low = float(candles[i][2])
-        high_2_bars_ago = float(candles[i - 2][1])
-        mid_open = float(candles[i - 1][0])
-        mid_high = float(candles[i - 1][1])
-        mid_low = float(candles[i - 1][2])
-        mid_close = float(candles[i - 1][3])
+        curr_low = float(c_norm[i][2])
+        high_2_bars_ago = float(c_norm[i - 2][1])
+        mid_open = float(c_norm[i - 1][0])
+        mid_high = float(c_norm[i - 1][1])
+        mid_low = float(c_norm[i - 1][2])
+        mid_close = float(c_norm[i - 1][3])
         mid_body = mid_close - mid_open
         mid_range = mid_high - mid_low
 
@@ -89,7 +92,7 @@ def extract_fvg_boxes(candles: Sequence[Any], lookback: int = 20) -> List[Dict[s
             if (mid_body / mid_range) >= 0.5:
                 invalidated = False
                 for k in range(i + 1, n):
-                    if float(candles[k][3]) < high_2_bars_ago:
+                    if float(c_norm[k][3]) < high_2_bars_ago:
                         invalidated = True
                         break
                 if not invalidated:
@@ -102,14 +105,14 @@ def extract_fvg_boxes(candles: Sequence[Any], lookback: int = 20) -> List[Dict[s
                     })
 
         # Bearish FVG
-        curr_high = float(candles[i][1])
-        low_2_bars_ago = float(candles[i - 2][2])
+        curr_high = float(c_norm[i][1])
+        low_2_bars_ago = float(c_norm[i - 2][2])
         mid_body_red = mid_open - mid_close
         if curr_high < low_2_bars_ago and mid_range > 0.0 and mid_body_red > 0.0:
             if (mid_body_red / mid_range) >= 0.5:
                 invalidated = False
                 for k in range(i + 1, n):
-                    if float(candles[k][3]) > low_2_bars_ago:
+                    if float(c_norm[k][3]) > low_2_bars_ago:
                         invalidated = True
                         break
                 if not invalidated:
@@ -124,8 +127,11 @@ def extract_fvg_boxes(candles: Sequence[Any], lookback: int = 20) -> List[Dict[s
 
 
 def compute_indicators(candles: Sequence[Any]) -> Dict[str, Any]:
-    """Compute TA indicators, trend, divergences, and FVG boxes for a candle series."""
-    if not candles:
+    """Compute TA indicators, trend, divergences, and FVG boxes for a candle series.
+    Adapts compute_terminal_features to the frontend market schema.
+    """
+    c_norm = normalize_candles_5tuple(candles) if candles else []
+    if not c_norm:
         return {
             "ema_50": None,
             "ema_200": None,
@@ -149,49 +155,38 @@ def compute_indicators(candles: Sequence[Any]) -> Dict[str, Any]:
             "order_block_confluence": None,
         }
 
-    highs = [float(c[1]) for c in candles]
-    lows = [float(c[2]) for c in candles]
-    closes = [float(c[3]) for c in candles]
-    latest_close = closes[-1]
-    ema_50 = calculate_ema(closes, 50) if len(closes) >= 50 else None
-    ema_200 = calculate_ema(closes, 200) if len(closes) >= 200 else None
+    feat = compute_terminal_features(c_norm)
+    trend = feat["trend"]["regime"]
+    latest_close = feat["price"]["close"]
+    n = len(c_norm)
 
-    trend = "NEUTRAL"
-    if ema_50 is not None and ema_200 is not None:
-        if latest_close > ema_50 and ema_50 > ema_200:
-            trend = "BULLISH"
-        elif latest_close < ema_50 and ema_50 < ema_200:
-            trend = "BEARISH"
+    # Active FVG boxes for visual rendering
+    boxes = extract_fvg_boxes(c_norm, lookback=20)
 
-    rsi = calculate_rsi(closes, period=14) if len(closes) >= 15 else None
-    atr_14 = calculate_atr(highs, lows, closes, period=14) if len(closes) >= 15 else None
-    adx_14 = calculate_adx(highs, lows, closes, period=14) if len(closes) >= 30 else None
-    is_chop = (adx_14 is not None and adx_14 < 25.0)
-
-    has_bull_fvg = check_recent_bullish_fvg(candles, lookback=5)
-    has_bear_fvg = check_recent_bearish_fvg(candles, lookback=5)
-    bull_div, bear_div = detect_rsi_divergences(candles, period=14, lookback=30)
-    boxes = extract_fvg_boxes(candles, lookback=20)
-
-    dr = get_active_dealing_range(candles)
+    # Dealing range and pricing zone
+    dr = feat["structure"]["dealing_range"]
     fib_levels = None
     pricing_zone = None
     if dr:
         side_bias = "LONG" if trend == "BULLISH" else "SHORT"
         fib_levels = calculate_fibonacci_levels(dr["swing_low"], dr["swing_high"], side=side_bias)
-        pricing_zone, _ = classify_discount_premium(latest_close, dr["swing_low"], dr["swing_high"], side=side_bias)
+        dp = feat["structure"]["discount_premium"]
+        pricing_zone = dp["zone"] if side_bias == "LONG" else dp["zone_short"]
 
-    ms = detect_market_structure(candles)
+    # Order blocks and breaker blocks
+    active_obs = []
+    active_bbs = []
+    if n >= 15:
+        all_obs = detect_order_blocks(c_norm, lookback=50)
+        all_bbs = detect_breaker_blocks(c_norm, order_blocks=all_obs, lookback=50)
+        active_obs = [ob for ob in all_obs if ob["status"] in ("UNMITIGATED", "MITIGATED")]
+        active_bbs = [bb for bb in all_bbs if bb["status"] in ("UNMITIGATED", "MITIGATED")]
 
-    order_blocks = detect_order_blocks(candles, lookback=50)
-    breaker_blocks = detect_breaker_blocks(candles, order_blocks=order_blocks, lookback=50)
-    active_obs = [ob for ob in order_blocks if ob["status"] in ("UNMITIGATED", "MITIGATED")]
-    active_bbs = [bb for bb in breaker_blocks if bb["status"] in ("UNMITIGATED", "MITIGATED")]
-
+    # Order block confluence
     ob_confluence = None
-    if latest_close > 0 and trend in ("BULLISH", "BEARISH"):
+    if latest_close > 0 and trend in ("BULLISH", "BEARISH") and n >= 15:
         side_chk = "LONG" if trend == "BULLISH" else "SHORT"
-        has_ob, ob_msg, ob_details = check_order_block_confluence(latest_close, candles, side=side_chk, lookback=50)
+        has_ob, ob_msg, ob_details = check_order_block_confluence(latest_close, c_norm, side=side_chk, lookback=50)
         ob_confluence = {
             "has_confluence": has_ob,
             "message": ob_msg,
@@ -199,8 +194,11 @@ def compute_indicators(candles: Sequence[Any]) -> Dict[str, Any]:
             "mean_threshold_tapped": ob_details.get("mean_threshold_tapped", False),
         }
 
+    # Trade setup
     trade_setup = None
-    if len(closes) >= 15 and latest_close > 0:
+    has_bull_fvg = feat["smc"]["bullish_fvg_active"]
+    has_bear_fvg = feat["smc"]["bearish_fvg_active"]
+    if n >= 15 and latest_close > 0:
         setup_side = "LONG" if (trend == "BULLISH" or has_bull_fvg) else ("SHORT" if (trend == "BEARISH" or has_bear_fvg) else None)
         if setup_side is not None:
             target_box = next((b for b in reversed(boxes) if b["type"] == setup_side), None)
@@ -208,20 +206,25 @@ def compute_indicators(candles: Sequence[Any]) -> Dict[str, Any]:
             trade_setup = calculate_optimal_trade_setup(
                 side=setup_side,
                 current_price=latest_close,
-                atr=atr_14 or (latest_close * 0.01),
+                atr=feat["volatility"]["atr_14"] or (latest_close * 0.01),
                 fvg_info=fvg_dict,
                 macro_bias=trend,
             )
 
+    rsi = feat["momentum"]["rsi_14"] if n >= 15 else None
+    atr_14 = feat["volatility"]["atr_14"] if n >= 15 else None
+    adx_14 = feat["momentum"]["adx_14"] if n >= 30 else None
+    is_chop = feat["momentum"]["is_choppy"] if n >= 30 else False
+
     return {
-        "ema_50": ema_50,
-        "ema_200": ema_200,
+        "ema_50": feat["trend"]["ema_50"],
+        "ema_200": feat["trend"]["ema_200"],
         "rsi": rsi,
         "trend": trend,
         "has_bullish_fvg": has_bull_fvg,
         "has_bearish_fvg": has_bear_fvg,
-        "has_bullish_divergence": bull_div,
-        "has_bearish_divergence": bear_div,
+        "has_bullish_divergence": feat["momentum"]["bullish_divergence"],
+        "has_bearish_divergence": feat["momentum"]["bearish_divergence"],
         "active_fvg_boxes": boxes,
         "adx_14": adx_14,
         "atr_14": atr_14,
@@ -230,11 +233,58 @@ def compute_indicators(candles: Sequence[Any]) -> Dict[str, Any]:
         "fibonacci_levels": fib_levels,
         "dealing_range": dr,
         "pricing_zone": pricing_zone,
-        "market_structure": ms,
+        "market_structure": feat["structure"],
         "order_blocks": active_obs,
         "breaker_blocks": active_bbs,
         "order_block_confluence": ob_confluence,
     }
+
+
+def timeframe_to_seconds(tf: str) -> int:
+    """Convert timeframe string (e.g. 1m, 15m, 1h, 4h, 1d) to integer seconds."""
+    if tf.endswith("m"):
+        return int(tf[:-1]) * 60
+    elif tf.endswith("h"):
+        return int(tf[:-1]) * 3600
+    elif tf.endswith("d"):
+        return int(tf[:-1]) * 86400
+    return 60
+
+
+def aggregate_candles(
+    candles: Sequence[Any],
+    factor: int,
+    timestamps: Optional[Sequence[int]] = None,
+) -> Tuple[List[Tuple[float, float, float, float, float]], Optional[List[int]]]:
+    """Aggregate lower timeframe candles into higher timeframe bars.
+    
+    E.g. factor=4 combines 4x 15m candles into 1x 1h candle.
+    Calculates True OHLCV: open=first open, high=max high, low=min low, close=last close, vol=sum vol.
+    """
+    if factor <= 1 or not candles:
+        c_norm = normalize_candles_5tuple(candles) if candles else []
+        return c_norm, list(timestamps) if timestamps else None
+
+    c_norm = normalize_candles_5tuple(candles)
+    n = len(c_norm)
+    agg_candles: List[Tuple[float, float, float, float, float]] = []
+    agg_ts: Optional[List[int]] = [] if timestamps else None
+    ts_list = list(timestamps) if timestamps else []
+
+    for i in range(0, n, factor):
+        chunk = c_norm[i:i + factor]
+        chunk_open = chunk[0][0]
+        chunk_high = max(c[1] for c in chunk)
+        chunk_low = min(c[2] for c in chunk)
+        chunk_close = chunk[-1][3]
+        chunk_vol = sum(c[4] for c in chunk)
+        agg_candles.append((chunk_open, chunk_high, chunk_low, chunk_close, chunk_vol))
+
+        if agg_ts is not None and ts_list:
+            if i < len(ts_list):
+                agg_ts.append(ts_list[i])
+
+    return agg_candles, agg_ts
 
 
 def format_candles_for_chart(
@@ -446,11 +496,16 @@ async def run_spot_ingestion(
     """Stream real-time Spot klines and ticks, broadcasting to connected WebSocket clients."""
     import websockets
 
-    ws_url = get_combined_stream_url(symbols, timeframe)
+    stream_urls = [
+        get_combined_stream_url(symbols, timeframe),
+        f"wss://stream.binance.us:9443/stream?streams={'/'.join(f'{s.strip().lower()}@kline_{timeframe}' for s in symbols)}",
+    ]
+    url_idx = 0
     backoff = 3
 
     while True:
         try:
+            ws_url = stream_urls[url_idx % len(stream_urls)]
             async with websockets.connect(ws_url, ping_interval=20, ping_timeout=20) as ws:
                 backoff = 3
                 app.state.is_spot_connected = True
@@ -467,13 +522,17 @@ async def run_spot_ingestion(
                     curr_c = float(kline.get("c") or 0.0)
                     if curr_c > 0.0:
                         app.state.latest_prices[symbol] = curr_c
-                        # Broadcast tick
-                        await app.state.connection_manager.broadcast({
-                            "type": "tick",
-                            "symbol": symbol,
-                            "price": curr_c,
-                            "timestamp": int(time.time()),
-                        })
+                        # Broadcast throttled tick to protect client bandwidth (max 2 updates/sec per symbol)
+                        now_t = time.time()
+                        last_t = app.state.last_tick_broadcast.get(symbol, 0.0)
+                        if (now_t - last_t) >= 0.5:
+                            app.state.last_tick_broadcast[symbol] = now_t
+                            await app.state.connection_manager.broadcast({
+                                "type": "tick",
+                                "symbol": symbol,
+                                "price": curr_c,
+                                "timestamp": int(now_t),
+                            })
 
                         # Sub-second intra-candle exit monitoring (TP1, TP2, BE, SL)
                         trader = app.state.traders.get(symbol)
@@ -484,7 +543,7 @@ async def run_spot_ingestion(
                                     "type": "trade_closed",
                                     "symbol": symbol,
                                     "trade": closed_snapshot,
-                                })
+                                    })
 
                     # Process closed candle
                     if kline.get("x") is True:
@@ -510,6 +569,8 @@ async def run_spot_ingestion(
             break
         except Exception as e:
             app.state.is_spot_connected = False
+            if "451" in str(e) or (hasattr(e, "status_code") and getattr(e, "status_code", 0) == 451):
+                url_idx += 1
             await asyncio.sleep(backoff)
             backoff = min(backoff * 2, 60)
 
@@ -586,6 +647,50 @@ async def run_futures_ingestion(
             backoff = min(backoff * 2, 60)
 
 
+async def run_order_book_stream(app: FastAPI) -> None:
+    """Stream real-time @depth20 (1s update rate) for the active UI symbol with automatic focus switching."""
+    import websockets
+
+    ws_hosts = ["stream.binance.com:9443", "stream.binance.us:9443"]
+    host_idx = 0
+    backoff = 3
+    while True:
+        try:
+            if getattr(app.state, "is_telemetry_paused", False):
+                await asyncio.sleep(1.0)
+                continue
+
+            current_sym = getattr(app.state, "active_depth_symbol", "BTCUSDT").lower()
+            current_host = ws_hosts[host_idx % len(ws_hosts)]
+            ws_url = f"wss://{current_host}/ws/{current_sym}@depth20"
+            active_at_connect = current_sym
+
+            async with websockets.connect(ws_url, ping_interval=20, ping_timeout=20, compression="deflate") as ws:
+                backoff = 3
+                async for message in ws:
+                    if getattr(app.state, "is_telemetry_paused", False):
+                        break
+                    if getattr(app.state, "active_depth_symbol", "BTCUSDT").lower() != active_at_connect:
+                        break
+
+                    payload = json.loads(message)
+                    snapshot = app.state.order_book_engine.process_depth_payload(
+                        getattr(app.state, "active_depth_symbol", "BTCUSDT"),
+                        payload,
+                    )
+                    await app.state.connection_manager.broadcast({
+                        "type": "order_book_depth",
+                        "depth": snapshot.to_dict(),
+                    })
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            if "451" in str(e) or (hasattr(e, "status_code") and getattr(e, "status_code", 0) == 451):
+                host_idx += 1
+            await asyncio.sleep(backoff)
+            backoff = min(backoff * 2, 60)
+
+
 def create_app(
     enable_ingestion: Optional[bool] = None,
     db_path: str = "data/signals_audit.db",
@@ -611,6 +716,10 @@ def create_app(
             db_path=db_path,
         )
         app.state.micro_mgr = FuturesMicrostructureManager(symbols=active_symbols)
+        app.state.order_book_engine = OrderBookEngine()
+        app.state.active_depth_symbol = active_symbols[0]
+        app.state.is_telemetry_paused = False
+        app.state.last_tick_broadcast = {}
         app.state.traders = {
             sym: PaperTrader(
                 symbol=sym,
@@ -623,6 +732,8 @@ def create_app(
                 require_market_structure=True,
                 require_fibonacci_ote=True,
                 enable_order_blocks=True,
+                enable_collinearity_cap=True,
+                order_book_engine=app.state.order_book_engine,
             )
             for sym in active_symbols
         }
@@ -636,7 +747,15 @@ def create_app(
         if enable_ingestion:
             try:
                 # Parallel REST Warmup
-                await warmup_all_traders(app.state.traders, active_symbols, timeframe)
+                await warmup_all_traders(
+                    app.state.traders,
+                    active_symbols,
+                    timeframe,
+                    timestamps_dict=app.state.candle_timestamps,
+                )
+                for sym, trader in app.state.traders.items():
+                    if trader.candles:
+                        app.state.latest_prices[sym] = float(trader.candles[-1][3])
             except Exception as e:
                 print(f"[Server Warmup Error] {e}")
 
@@ -650,7 +769,8 @@ def create_app(
             # Launch ingestion tasks
             t_spot = asyncio.create_task(run_spot_ingestion(app, active_symbols, timeframe))
             t_htf = asyncio.create_task(poll_htf_candles(app.state.traders, active_symbols))
-            background_tasks.extend([t_spot, t_htf])
+            t_ob = asyncio.create_task(run_order_book_stream(app))
+            background_tasks.extend([t_spot, t_htf, t_ob])
 
             if app.state.micro_mgr.is_online:
                 t_fut = asyncio.create_task(run_futures_ingestion(app, app.state.micro_mgr))
@@ -750,15 +870,30 @@ def create_app(
             raise HTTPException(status_code=404, detail=f"Symbol '{sym}' not found in active universe.")
 
         trader = app.state.traders[sym]
-        candles_list = list(trader.candles)[-limit:]
-        timestamps = app.state.candle_timestamps.get(sym, [])[-limit:]
+        candles_list = list(trader.candles)
+        timestamps = list(app.state.candle_timestamps.get(sym, []))
+
+        # Check if timeframe aggregation is required
+        trader_tf = getattr(trader, "timeframe", "15m")
+        req_sec = timeframe_to_seconds(timeframe)
+        base_sec = timeframe_to_seconds(trader_tf)
+        factor = max(1, req_sec // base_sec) if base_sec > 0 else 1
+
+        if factor > 1 and len(candles_list) >= factor:
+            display_candles, display_ts = aggregate_candles(candles_list, factor, timestamps=timestamps)
+        else:
+            display_candles = normalize_candles_5tuple(candles_list)
+            display_ts = timestamps
+
+        active_candles = display_candles[-limit:] if len(display_candles) > limit else display_candles
+        active_ts = display_ts[-limit:] if (display_ts and len(display_ts) > limit) else display_ts
 
         formatted_candles = format_candles_for_chart(
-            candles_list,
-            timestamps=timestamps,
+            active_candles,
+            timestamps=active_ts,
             timeframe=timeframe,
         )
-        indicators = compute_indicators(candles_list)
+        indicators = compute_indicators(active_candles)
 
         return {
             "symbol": sym,
@@ -872,32 +1007,142 @@ def create_app(
 
             curr_price = app.state.latest_prices.get(sym, float(candles_list[-1][3]))
             adx_val = indicators.get("adx_14") or 20.0
+            trend = indicators["trend"]
+            htf_trend = trader.get_htf_trend() or "NEUTRAL"
+            pricing_zone = indicators.get("pricing_zone") or "EQUILIBRIUM"
 
-            # Compute priority score
+            # Compute priority score: Directional confluence model
             score = 50.0
-            if indicators.get("has_bullish_fvg") or indicators.get("has_bearish_fvg"):
-                score += 20.0
-            if adx_val >= 25.0:
+
+            # 1. Macro Trend Alignment (+15 for matching HTF and LTF)
+            if trend == htf_trend and trend in ("BULLISH", "BEARISH"):
                 score += 15.0
+            elif trend != "NEUTRAL" and htf_trend != "NEUTRAL" and trend != htf_trend:
+                score -= 10.0  # Counter-trend conflict penalty
+
+            # 2. Smart Money Zone Retest / FVG Confluence (+15 if direction matches)
+            if trend == "BULLISH" and indicators.get("has_bullish_fvg"):
+                score += 15.0
+            elif trend == "BEARISH" and indicators.get("has_bearish_fvg"):
+                score += 15.0
+            elif indicators.get("has_bullish_fvg") or indicators.get("has_bearish_fvg"):
+                score += 5.0
+
+            # 3. Discount / Premium Confluence (+10 for buying discount / selling premium)
+            if trend == "BULLISH" and pricing_zone in ("DISCOUNT", "DEEP_DISCOUNT"):
+                score += 10.0
+            elif trend == "BEARISH" and pricing_zone in ("PREMIUM", "DEEP_PREMIUM"):
+                score += 10.0
+
+            # 4. Volatility & Volume Expansion
+            if adx_val >= 25.0:
+                score += 10.0
+            elif indicators.get("is_chop", False) or adx_val < 20.0:
+                score -= 10.0
+
             if vol_surge >= 1.5:
                 score += 10.0
-            if indicators.get("has_bullish_divergence") or indicators.get("has_bearish_divergence"):
-                score += 15.0
+
+            # 5. Momentum Divergence (+10 for trend-aligned divergence)
+            if trend in ("BULLISH", "NEUTRAL") and indicators.get("has_bullish_divergence"):
+                score += 10.0
+            if trend in ("BEARISH", "NEUTRAL") and indicators.get("has_bearish_divergence"):
+                score += 10.0
+
+            clamped_score = max(5.0, min(100.0, score))
+
+            # Categorize primary structural inflection pattern
+            inflection_pattern = "EQUILIBRIUM"
+            baseline_info = {
+                "pattern": "Multi-TF Confluence",
+                "win_rate": 45.0,
+                "profit_factor": 0.90,
+                "sample_trades": 2500,
+                "status": "SELECTIVE (Requires discretionary discretion)",
+            }
+
+            if trend == "BULLISH" and indicators.get("has_bullish_fvg"):
+                inflection_pattern = "SMC Bullish FVG Retest"
+                baseline_info = {
+                    "pattern": "FVG Retest",
+                    "win_rate": 46.0,
+                    "profit_factor": 0.92,
+                    "sample_trades": 2946,
+                    "status": "NEUTRAL BASELINE (Order flow confirmation required)",
+                }
+            elif trend == "BEARISH" and indicators.get("has_bearish_fvg"):
+                inflection_pattern = "SMC Bearish FVG Retest"
+                baseline_info = {
+                    "pattern": "FVG Retest",
+                    "win_rate": 46.0,
+                    "profit_factor": 0.92,
+                    "sample_trades": 2946,
+                    "status": "NEUTRAL BASELINE (Order flow confirmation required)",
+                }
+            elif indicators.get("has_bullish_divergence") or indicators.get("has_bearish_divergence"):
+                inflection_pattern = "Momentum RSI Divergence"
+                baseline_info = {
+                    "pattern": "RSI Divergence",
+                    "win_rate": 48.0,
+                    "profit_factor": 0.95,
+                    "sample_trades": 1800,
+                    "status": "REVERSAL SETUP (Check volume absorption)",
+                }
+            elif trend == htf_trend and trend in ("BULLISH", "BEARISH"):
+                inflection_pattern = f"Macro {trend.title()} Pullback"
+                baseline_info = {
+                    "pattern": "Trend Pullback",
+                    "win_rate": 49.4,
+                    "profit_factor": 0.88,
+                    "sample_trades": 2522,
+                    "status": "NEUTRAL BASELINE (Wait for confirmed bounce)",
+                }
 
             opportunities.append({
                 "symbol": sym,
                 "current_price": curr_price,
-                "trend": indicators["trend"],
-                "htf_trend": trader.get_htf_trend() or "NEUTRAL",
+                "trend": trend,
+                "htf_trend": htf_trend,
                 "adx_14": adx_val,
                 "volume_surge": vol_surge,
-                "confluence_score": round(score, 1),
+                "confluence_score": round(clamped_score, 1),
                 "is_chop": indicators.get("is_chop", False),
+                "inflection_pattern": inflection_pattern,
+                "historical_baseline": baseline_info,
                 "trade_setup": trade_setup,
             })
 
         opportunities.sort(key=lambda x: -x["confluence_score"])
         return opportunities
+
+    @app.get("/api/trade/bracket")
+    async def get_trade_bracket(
+        symbol: str = Query("BTCUSDT", description="Market symbol"),
+        side: str = Query("LONG", description="Position side: LONG or SHORT"),
+        entry_price: float = Query(..., description="Nominal entry price"),
+        stop_loss: float = Query(..., description="Stop loss invalidation level"),
+    ):
+        """Calculate mathematically verified Single Exit Authority bracket geometry."""
+        from engine.exits import calculate_bracket_geometry
+        bracket = calculate_bracket_geometry(
+            side=side,
+            entry_price=entry_price,
+            stop_loss=stop_loss,
+        )
+        return {
+            "symbol": symbol.upper(),
+            **bracket,
+        }
+
+    @app.get("/api/market/depth")
+    async def get_market_depth(
+        symbol: str = Query("BTCUSDT", description="Market symbol for order book depth"),
+    ):
+        """Return latest 20-level order book depth and Order Book Imbalance (OBI)."""
+        sym = symbol.upper()
+        latest_p = app.state.latest_prices.get(sym, 50000.0)
+        snapshot = app.state.order_book_engine.get_snapshot(sym, fallback_price=latest_p)
+        return snapshot.to_dict()
 
     # WebSocket Hub
     @app.websocket("/ws")
@@ -915,6 +1160,22 @@ def create_app(
                             "type": "pong",
                             "timestamp": int(time.time()),
                         })
+                    elif action == "focus_symbol":
+                        target_sym = str(payload.get("symbol", "")).upper()
+                        if target_sym in app.state.traders:
+                            app.state.active_depth_symbol = target_sym
+                            cached_snap = app.state.order_book_engine.get_snapshot(
+                                target_sym,
+                                fallback_price=app.state.latest_prices.get(target_sym, 50000.0),
+                            )
+                            await websocket.send_json({
+                                "type": "order_book_depth",
+                                "depth": cached_snap.to_dict(),
+                            })
+                    elif action == "pause_telemetry":
+                        app.state.is_telemetry_paused = True
+                    elif action == "resume_telemetry":
+                        app.state.is_telemetry_paused = False
                 except Exception:
                     pass
         except WebSocketDisconnect:

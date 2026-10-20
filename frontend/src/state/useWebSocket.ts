@@ -113,5 +113,21 @@ export function useWebSocket({
     }
   }, []);
 
+  // Sleep mode: pause high-frequency telemetry when browser tab is hidden to save ISP data
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        sendMessage({ action: 'pause_telemetry' });
+      } else {
+        sendMessage({ action: 'resume_telemetry' });
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [sendMessage]);
+
   return { isConnected, latencyMs, reconnectCount: reconnectCountRef.current, sendMessage };
 }

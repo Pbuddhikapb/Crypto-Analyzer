@@ -100,6 +100,10 @@ export function App() {
           }
           break;
 
+        case 'order_book_depth':
+          window.dispatchEvent(new CustomEvent('crypto-order-book-depth', { detail: msg.depth }));
+          break;
+
         case 'trade_opened':
         case 'trade_closed':
           fetchPortfolioSummary().then(setPortfolio).catch(() => {});
@@ -109,9 +113,16 @@ export function App() {
     [activeSymbol]
   );
 
-  const { isConnected, latencyMs } = useWebSocket({
+  const { isConnected, latencyMs, sendMessage } = useWebSocket({
     onMessage: handleWebSocketMessage,
   });
+
+  // Focus active symbol on backend for targeted low-bandwidth L2 depth streaming
+  useEffect(() => {
+    if (sendMessage) {
+      sendMessage({ action: 'focus_symbol', symbol: activeSymbol });
+    }
+  }, [activeSymbol, sendMessage]);
 
   // Initial Load & Symbol/Timeframe Changes
   useEffect(() => {

@@ -318,47 +318,74 @@ export const TradingChart: React.FC<TradingChartProps> = ({
 
         fvgPriceLinesRef.current.push(topPl, botPl);
 
-        if (box.ce) {
+        if (box.ce && (!indicators.trade_setup || Math.abs(indicators.trade_setup.limit_entry - box.ce) > 0.0001)) {
           const cePl = candleSeriesRef.current.createPriceLine({
             price: box.ce,
             color: '#f59e0b',
-            lineWidth: 2,
+            lineWidth: 1,
             lineStyle: LineStyle.Dashed,
-            title: `LIMIT ENTRY (50% CE)`,
+            title: `FVG 50% CE`,
             axisLabelVisible: true,
           });
           fvgPriceLinesRef.current.push(cePl);
         }
       });
 
-      // Render Optimal Trade Setup Targets if available
+      // Render Single Exit Authority Synthetic OCO Bracket Targets
       const setup = indicators.trade_setup;
       if (setup && candleSeriesRef.current) {
+        // 1. Limit Entry
+        const entryPl = candleSeriesRef.current.createPriceLine({
+          price: setup.limit_entry,
+          color: setup.side === 'LONG' ? '#38bdf8' : '#fb923c',
+          lineWidth: 2,
+          lineStyle: LineStyle.Solid,
+          title: `LIMIT ENTRY (${setup.side})`,
+          axisLabelVisible: true,
+        });
+
+        // 2. Structural Stop Loss (-1.0R)
         const slPl = candleSeriesRef.current.createPriceLine({
           price: setup.stop_loss,
           color: '#ef4444',
           lineWidth: 2,
           lineStyle: LineStyle.Solid,
-          title: `STOP LOSS (${setup.risk_pct.toFixed(2)}%)`,
+          title: `STOP LOSS (-1.0R | -${setup.risk_pct.toFixed(2)}%)`,
           axisLabelVisible: true,
         });
+
+        // 3. TP1 (+0.75R / 50% Partial Scale-out)
         const tp1Pl = candleSeriesRef.current.createPriceLine({
           price: setup.tp1,
           color: '#10b981',
+          lineWidth: 2,
+          lineStyle: LineStyle.Dashed,
+          title: `TP1 (+${setup.tp1_r ?? 0.75}R / 50% SCALE)`,
+          axisLabelVisible: true,
+        });
+
+        // 4. Breakeven Armed Trigger (+0.85R Excursion)
+        const beTriggerPrice = setup.be_trigger ?? (setup.side === 'LONG' ? setup.limit_entry + (0.85 * setup.risk_dist) : setup.limit_entry - (0.85 * setup.risk_dist));
+        const bePl = candleSeriesRef.current.createPriceLine({
+          price: beTriggerPrice,
+          color: '#06b6d4',
           lineWidth: 1,
           lineStyle: LineStyle.Dotted,
-          title: `TP1 (1.5R)`,
+          title: `BE TRIGGER (+${setup.be_trigger_r ?? 0.85}R ARMED)`,
           axisLabelVisible: true,
         });
+
+        // 5. TP2 (+1.33R Final Runner)
         const tp2Pl = candleSeriesRef.current.createPriceLine({
           price: setup.tp2,
-          color: '#10b981',
+          color: '#00e676',
           lineWidth: 2,
           lineStyle: LineStyle.Solid,
-          title: `TP2 (${setup.rr_ratio}R)`,
+          title: `TP2 RUNNER (+${setup.tp2_r ?? setup.rr_ratio}R FINAL)`,
           axisLabelVisible: true,
         });
-        fvgPriceLinesRef.current.push(slPl, tp1Pl, tp2Pl);
+
+        fvgPriceLinesRef.current.push(entryPl, slPl, tp1Pl, bePl, tp2Pl);
       }
 
       // Render Fibonacci OTE and Equilibrium Levels if available

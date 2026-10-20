@@ -323,6 +323,33 @@ def fetch_1m_candles_for_window(
         return cursor.fetchall()
 
 
+def _calculate_backtest_returns(
+    entry: float,
+    exit_price: float,
+    side: str,
+    risk_dist: float,
+    tp1_hit: bool,
+    tp1_price: Optional[float],
+    hold_minutes: int = 1,
+) -> Tuple[float, float]:
+    """Compute true dynamic gross return % and net R-multiple from real fill prices with funding cost and fee drag."""
+    fee_pct = 0.15
+    periods_8h = max(0, hold_minutes // 480)
+    funding_cost_pct = periods_8h * 0.01
+
+    if tp1_hit and tp1_price is not None:
+        r1 = ((tp1_price - entry) / risk_dist) if side == "LONG" else ((entry - tp1_price) / risk_dist)
+        r2 = ((exit_price - entry) / risk_dist) if side == "LONG" else ((entry - exit_price) / risk_dist)
+        combined_gross_r = (0.5 * r1) + (0.5 * r2)
+        gross_ret_pct = ((combined_gross_r * risk_dist) / entry) * 100.0
+    else:
+        gross_ret_pct = ((exit_price - entry) / entry) * 100.0 if side == "LONG" else ((entry - exit_price) / entry) * 100.0
+
+    net_ret_pct = gross_ret_pct - fee_pct - funding_cost_pct
+    r_mult = ((net_ret_pct / 100.0) * entry) / risk_dist if risk_dist > 0 else 0.0
+    return round(net_ret_pct, 4), round(r_mult, 4)
+
+
 def replay_trade_1m(
     symbol: str,
     active_trade: Dict[str, Any],
@@ -367,9 +394,15 @@ def replay_trade_1m(
                 exit_price = take_profit
 
             if exit_reason is not None and exit_price is not None:
-                gross_ret = ((exit_price - entry_price) / entry_price) * 100.0 if side == "LONG" else ((entry_price - exit_price) / entry_price) * 100.0
-                net_ret = gross_ret - 0.15
-                r_mult = ((net_ret / 100.0) * entry_price) / risk_dist if risk_dist > 0.0 else 0.0
+                net_ret, r_mult = _calculate_backtest_returns(
+                    entry=entry_price,
+                    exit_price=exit_price,
+                    side=side,
+                    risk_dist=risk_dist,
+                    tp1_hit=False,
+                    tp1_price=None,
+                    hold_minutes=minute_idx + 1,
+                )
                 m_dt_str = datetime.fromtimestamp(m_ts / 1000, tz=timezone.utc).strftime("%Y-%m-%d %H:%M")
                 hold_minutes = minute_idx + 1
                 return {
@@ -390,9 +423,15 @@ def replay_trade_1m(
                     breakeven_set = True
                     stop_loss = breakeven_sl
                     if (side == "LONG" and m_close <= breakeven_sl) or (side == "SHORT" and m_close >= breakeven_sl):
-                        gross_ret = ((breakeven_sl - entry_price) / entry_price) * 100.0 if side == "LONG" else ((entry_price - breakeven_sl) / entry_price) * 100.0
-                        net_ret = gross_ret - 0.15
-                        r_mult = ((net_ret / 100.0) * entry_price) / risk_dist if risk_dist > 0.0 else 0.0
+                        net_ret, r_mult = _calculate_backtest_returns(
+                            entry=entry_price,
+                            exit_price=breakeven_sl,
+                            side=side,
+                            risk_dist=risk_dist,
+                            tp1_hit=False,
+                            tp1_price=None,
+                            hold_minutes=minute_idx + 1,
+                        )
                         m_dt_str = datetime.fromtimestamp(m_ts / 1000, tz=timezone.utc).strftime("%Y-%m-%d %H:%M")
                         return {
                             "exit_time": m_dt_str,
@@ -451,56 +490,66 @@ def replay_trade_1m(
         if stop_loss_hit and take_profit_hit:
             # Conservative prioritization: stop loss triggered
             exit_price = min(m_open, sl_at_min_start) if side == "LONG" else max(m_open, sl_at_min_start)
-            if not tp1_hit:
-                gross_ret = ((exit_price - entry_price) / entry_price) * 100.0 if side == "LONG" else ((entry_price - exit_price) / entry_price) * 100.0
-                net_ret = gross_ret - 0.15
-                r_mult = ((net_ret / 100.0) * entry_price) / risk_dist if risk_dist > 0.0 else 0.0
-                exit_reason = "STOP_LOSS"
-            elif be_armed:
-                r_mult = 0.375
-                net_ret = (((r_mult * risk_dist) / entry_price) * 100.0) - 0.15
+            if be_armed:
                 exit_reason = "BREAKEVEN"
-            else:
-                r_mult = -0.125
-                net_ret = (((r_mult * risk_dist) / entry_price) * 100.0) - 0.15
+            elif tp1_hit:
                 exit_reason = "PARTIAL_LOSS"
+            else:
+                exit_reason = "STOP_LOSS"
+            net_ret, r_mult = _calculate_backtest_returns(
+                entry=entry_price,
+                exit_price=exit_price,
+                side=side,
+                risk_dist=risk_dist,
+                tp1_hit=tp1_hit,
+                tp1_price=tp1_price,
+                hold_minutes=hold_minutes,
+            )
 
         elif take_profit_hit:
             exit_price = take_profit
             exit_reason = "TAKE_PROFIT"
-            if tp1_hit:
-                # 50% banked at +0.75R, 50% banked at +1.33R -> Combined +1.04R
-                r_mult = 1.04
-                net_ret = (((r_mult * risk_dist) / entry_price) * 100.0) - 0.15
-            else:
-                gross_ret = ((take_profit - entry_price) / entry_price) * 100.0 if side == "LONG" else ((entry_price - take_profit) / entry_price) * 100.0
-                net_ret = gross_ret - 0.15
-                r_mult = ((net_ret / 100.0) * entry_price) / risk_dist if risk_dist > 0.0 else 0.0
+            net_ret, r_mult = _calculate_backtest_returns(
+                entry=entry_price,
+                exit_price=exit_price,
+                side=side,
+                risk_dist=risk_dist,
+                tp1_hit=tp1_hit,
+                tp1_price=tp1_price,
+                hold_minutes=hold_minutes,
+            )
 
         elif stop_loss_hit:
             exit_price = min(m_open, current_sl) if side == "LONG" else max(m_open, current_sl)
-            if not tp1_hit:
-                gross_ret = ((exit_price - entry_price) / entry_price) * 100.0 if side == "LONG" else ((entry_price - exit_price) / entry_price) * 100.0
-                net_ret = gross_ret - 0.15
-                r_mult = ((net_ret / 100.0) * entry_price) / risk_dist if risk_dist > 0.0 else 0.0
-                exit_reason = "STOP_LOSS"
-            elif be_armed:
-                exit_price = breakeven_sl
-                r_mult = 0.375
-                net_ret = (((r_mult * risk_dist) / entry_price) * 100.0) - 0.15
+            if be_armed:
                 exit_reason = "BREAKEVEN"
-            else:
-                r_mult = -0.125
-                net_ret = (((r_mult * risk_dist) / entry_price) * 100.0) - 0.15
+            elif tp1_hit:
                 exit_reason = "PARTIAL_LOSS"
+            else:
+                exit_reason = "STOP_LOSS"
+            net_ret, r_mult = _calculate_backtest_returns(
+                entry=entry_price,
+                exit_price=exit_price,
+                side=side,
+                risk_dist=risk_dist,
+                tp1_hit=tp1_hit,
+                tp1_price=tp1_price,
+                hold_minutes=hold_minutes,
+            )
 
         elif not tp1_hit and hold_minutes >= 180 and close_r < -0.15:
             # Step E: Kinetic Stagnancy Exit Lifecycle Management (180m = 12 bars on 15m)
             exit_price = m_close
             exit_reason = "STAGNANCY_SCRATCH" if close_r >= -0.25 else "TIME_STOP_UNDERWATER"
-            gross_ret = ((exit_price - entry_price) / entry_price) * 100.0 if side == "LONG" else ((entry_price - exit_price) / entry_price) * 100.0
-            net_ret = gross_ret - 0.15
-            r_mult = ((net_ret / 100.0) * entry_price) / risk_dist if risk_dist > 0.0 else 0.0
+            net_ret, r_mult = _calculate_backtest_returns(
+                entry=entry_price,
+                exit_price=exit_price,
+                side=side,
+                risk_dist=risk_dist,
+                tp1_hit=False,
+                tp1_price=None,
+                hold_minutes=hold_minutes,
+            )
 
         if exit_reason is not None and exit_price is not None:
             m_dt_str = datetime.fromtimestamp(m_ts / 1000, tz=timezone.utc).strftime("%Y-%m-%d %H:%M")

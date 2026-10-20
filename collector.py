@@ -16,6 +16,7 @@ from vault import AsyncVaultWriter, MarketDataVault
 
 DEFAULT_COLLECTOR_SYMBOLS = [
     "BTCUSDT",
+    "ETHUSDT",
     "SOLUSDT",
     "XRPUSDT",
     "BNBUSDT",

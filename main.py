@@ -4,7 +4,7 @@ import json
 import os
 import sys
 import time
-from typing import Dict, List, Optional, Sequence
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import aiohttp
 import numpy as np
@@ -30,10 +30,15 @@ from trader import PaperTrader
 
 DEFAULT_MONITORED_SYMBOLS = [
     "BTCUSDT",
+    "ETHUSDT",
     "SOLUSDT",
     "XRPUSDT",
     "BNBUSDT",
+    "DOGEUSDT",
+    "ADAUSDT",
+    "AVAXUSDT",
     "SUIUSDT",
+    "LINKUSDT",
 ]
 TOP_10_SYMBOLS = DEFAULT_MONITORED_SYMBOLS
 
@@ -84,45 +89,24 @@ async def warmup_symbol(
     symbol: str,
     timeframe: str,
     trader: PaperTrader,
+    timestamps_list: Optional[List[int]] = None,
 ) -> None:
     """Fetch initial 250 klines for a single symbol and pre-seed trader buffers."""
-    url = f"https://api.binance.com/api/v3/klines?symbol={symbol.upper()}&interval={timeframe}&limit=250"
-    for attempt in range(1, 4):
-        try:
-            async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    # Load first 249 closed candles
-                    for k in data[:249]:
-                        candle_tuple = (
-                            float(k[1]),
-                            float(k[2]),
-                            float(k[3]),
-                            float(k[4]),
-                            float(k[5]),
-                        )
-                        trader.load_historical_candle(candle_tuple)
-                    break
-                elif response.status == 429:
-                    print(f"[WARMUP RATE LIMIT] 429 for {symbol}. Waiting 2s before retry...")
-                    await asyncio.sleep(2.0)
-                else:
-                    print(f"[WARMUP WARNING] HTTP {response.status} for {symbol} (attempt {attempt}/3)")
-                    await asyncio.sleep(1.0)
-        except Exception as e:
-            if attempt == 3:
-                raise RuntimeError(f"Failed to warm up {symbol} after 3 attempts: {e}")
-            await asyncio.sleep(1.0)
-
-    # If trader has HTF trend filter enabled, also prime 4h macro candles
-    if getattr(trader, "htf_trend_filter", False):
-        htf_url = f"https://api.binance.com/api/v3/klines?symbol={symbol.upper()}&interval=4h&limit=250"
+    endpoints = [
+        f"https://api.binance.com/api/v3/klines?symbol={symbol.upper()}&interval={timeframe}&limit=250",
+        f"https://api.binance.us/api/v3/klines?symbol={symbol.upper()}&interval={timeframe}&limit=250",
+    ]
+    loaded = False
+    for url in endpoints:
+        if loaded:
+            break
         for attempt in range(1, 4):
             try:
-                async with session.get(htf_url, timeout=aiohttp.ClientTimeout(total=10)) as response:
+                async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as response:
                     if response.status == 200:
-                        htf_data = await response.json()
-                        for k in htf_data[:249]:
+                        data = await response.json()
+                        # Load first 249 closed candles
+                        for k in data[:249]:
                             candle_tuple = (
                                 float(k[1]),
                                 float(k[2]),
@@ -130,20 +114,67 @@ async def warmup_symbol(
                                 float(k[4]),
                                 float(k[5]),
                             )
-                            trader.load_historical_htf_candle(candle_tuple)
+                            trader.load_historical_candle(candle_tuple)
+                            if timestamps_list is not None:
+                                raw_t = int(k[0])
+                                timestamps_list.append(raw_t // 1000 if raw_t > 10_000_000_000 else raw_t)
+                        loaded = True
+                        break
+                    elif response.status == 451:
+                        # Geoblocked on current domain; immediately fall back to secondary endpoint
                         break
                     elif response.status == 429:
+                        print(f"[WARMUP RATE LIMIT] 429 for {symbol}. Waiting 2s before retry...")
                         await asyncio.sleep(2.0)
                     else:
+                        print(f"[WARMUP WARNING] HTTP {response.status} for {symbol} (attempt {attempt}/3)")
                         await asyncio.sleep(1.0)
-            except Exception:
+            except Exception as e:
+                if attempt == 3 and url == endpoints[-1]:
+                    raise RuntimeError(f"Failed to warm up {symbol} after 3 attempts: {e}")
                 await asyncio.sleep(1.0)
+
+    # If trader has HTF trend filter enabled, also prime 4h macro candles
+    if getattr(trader, "htf_trend_filter", False):
+        htf_endpoints = [
+            f"https://api.binance.com/api/v3/klines?symbol={symbol.upper()}&interval=4h&limit=250",
+            f"https://api.binance.us/api/v3/klines?symbol={symbol.upper()}&interval=4h&limit=250",
+        ]
+        loaded_htf = False
+        for htf_url in htf_endpoints:
+            if loaded_htf:
+                break
+            for attempt in range(1, 4):
+                try:
+                    async with session.get(htf_url, timeout=aiohttp.ClientTimeout(total=10)) as response:
+                        if response.status == 200:
+                            htf_data = await response.json()
+                            for k in htf_data[:249]:
+                                candle_tuple = (
+                                    float(k[1]),
+                                    float(k[2]),
+                                    float(k[3]),
+                                    float(k[4]),
+                                    float(k[5]),
+                                )
+                                trader.load_historical_htf_candle(candle_tuple)
+                            loaded_htf = True
+                            break
+                        elif response.status == 451:
+                            break
+                        elif response.status == 429:
+                            await asyncio.sleep(2.0)
+                        else:
+                            await asyncio.sleep(1.0)
+                except Exception:
+                    await asyncio.sleep(1.0)
 
 
 async def warmup_all_traders(
     traders: Dict[str, PaperTrader],
     symbols: List[str],
     timeframe: str,
+    timestamps_dict: Optional[Dict[str, List[int]]] = None,
 ) -> None:
     """Perform parallel REST warmup across all symbols using connection pooling."""
     print(f"\n[WARMUP] Priming 250 {timeframe} candles across {len(symbols)} coins in parallel...")
@@ -151,10 +182,27 @@ async def warmup_all_traders(
 
     connector = aiohttp.TCPConnector(limit=10)
     async with aiohttp.ClientSession(connector=connector) as session:
-        tasks = [
-            warmup_symbol(session, sym, timeframe, traders[sym])
-            for sym in symbols
-        ]
+        if timestamps_dict is not None:
+            tasks = [
+                warmup_symbol(
+                    session,
+                    sym,
+                    timeframe,
+                    traders[sym],
+                    timestamps_list=timestamps_dict.get(sym),
+                )
+                for sym in symbols
+            ]
+        else:
+            tasks = [
+                warmup_symbol(
+                    session,
+                    sym,
+                    timeframe,
+                    traders[sym],
+                )
+                for sym in symbols
+            ]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
     failed_symbols = []

@@ -229,6 +229,45 @@ def test_scanner_opportunities_endpoint(app_and_client):
     assert "confluence_score" in top
     assert "current_price" in top
     assert "trade_setup" in top
+    assert "inflection_pattern" in top
+    assert "historical_baseline" in top
+    assert "profit_factor" in top["historical_baseline"]
+    assert "win_rate" in top["historical_baseline"]
+
+
+def test_trade_bracket_endpoint(app_and_client):
+    """Verify /api/trade/bracket computes mathematically verified Single Exit Authority levels."""
+    app, client = app_and_client
+    # Test LONG bracket
+    resp = client.get("/api/trade/bracket?symbol=BTCUSDT&side=LONG&entry_price=60000&stop_loss=59000")
+    assert resp.status_code == 200
+    b_long = resp.json()
+    assert b_long["side"] == "LONG"
+    assert b_long["limit_entry"] == 60000.0
+    assert b_long["stop_loss"] == 59000.0
+    assert b_long["risk_dist"] == 1000.0
+    assert b_long["tp1"] == 60750.0  # +0.75R
+    assert b_long["tp1_r"] == 0.75
+    assert b_long["be_trigger"] == 60850.0  # +0.85R
+    assert b_long["be_trigger_r"] == 0.85
+    assert b_long["be_price"] == 60030.0  # 60000 * 1.0005
+    assert b_long["tp2"] == 61330.0  # +1.33R
+    assert b_long["tp2_r"] == 1.33
+    assert b_long["stagnancy_bars"] == 12
+
+    # Test SHORT bracket
+    resp_short = client.get("/api/trade/bracket?symbol=ETHUSDT&side=SHORT&entry_price=3000&stop_loss=3100")
+    assert resp_short.status_code == 200
+    b_short = resp_short.json()
+    assert b_short["side"] == "SHORT"
+    assert b_short["limit_entry"] == 3000.0
+    assert b_short["stop_loss"] == 3100.0
+    assert b_short["risk_dist"] == 100.0
+    assert b_short["tp1"] == 2925.0  # -0.75R
+    assert b_short["tp1_r"] == 0.75
+    assert b_short["be_trigger"] == 2915.0  # -0.85R
+    assert b_short["tp2"] == 2867.0  # -1.33R
+    assert b_short["tp2_r"] == 1.33
 
 
 def test_api_portfolio_summary_returns_extended_metrics(app_and_client):
@@ -261,3 +300,85 @@ def test_api_portfolio_summary_returns_extended_metrics(app_and_client):
     assert active["unrealized_pnl_usd"] == 100.0
     assert active["unrealized_pnl_pct"] == 2.0
     assert active["current_r_multiple"] == 1.0
+
+
+def test_market_depth_endpoint(app_and_client):
+    """Verify /api/market/depth returns 20-level order book and OBI metrics."""
+    app, client = app_and_client
+    response = client.get("/api/market/depth?symbol=BTCUSDT")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["symbol"] == "BTCUSDT"
+    assert "bids" in data
+    assert "asks" in data
+    assert "imbalance_pct" in data
+    assert "best_bid" in data
+    assert "best_ask" in data
+    assert data["best_bid"] <= data["best_ask"]
+
+
+def test_websocket_focus_and_telemetry_actions(app_and_client):
+    """Verify WebSocket handles focus_symbol, pause_telemetry, and resume_telemetry."""
+    app, client = app_and_client
+    with client.websocket_connect("/ws") as ws:
+        # Focus symbol
+        ws.send_json({"action": "focus_symbol", "symbol": "ETHUSDT"})
+        resp = ws.receive_json()
+        assert resp["type"] == "order_book_depth"
+        assert resp["depth"]["symbol"] == "ETHUSDT"
+        assert app.state.active_depth_symbol == "ETHUSDT"
+
+        # Pause telemetry (sleep mode)
+        ws.send_json({"action": "pause_telemetry"})
+        time.sleep(0.05)
+        assert app.state.is_telemetry_paused is True
+
+        # Resume telemetry
+        ws.send_json({"action": "resume_telemetry"})
+        time.sleep(0.05)
+        assert app.state.is_telemetry_paused is False
+
+
+def test_market_candles_timeframe_aggregation(app_and_client):
+    """Verify that requesting a higher timeframe aggregates lower timeframe candles into proper OHLCV bars."""
+    app, client = app_and_client
+    trader = app.state.traders["BTCUSDT"]
+    trader.timeframe = "15m"
+
+    # Feed 8 15-minute candles (should become 2 1-hour candles)
+    base_t = 1700000000
+    for i in range(8):
+        c = (
+            50000.0 + i * 10,       # open
+            50050.0 + i * 10,       # high
+            49950.0 + i * 10,       # low
+            50020.0 + i * 10,       # close
+            10.0,                   # vol
+        )
+        trader.load_historical_candle(c)
+        if "BTCUSDT" not in app.state.candle_timestamps:
+            app.state.candle_timestamps["BTCUSDT"] = []
+        app.state.candle_timestamps["BTCUSDT"].append(base_t + i * 900)
+
+    response = client.get("/api/market/candles?symbol=BTCUSDT&timeframe=1h")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["timeframe"] == "1h"
+    candles = data["candles"]
+    assert len(candles) == 2
+
+    # Bar 0 aggregates candles 0..3
+    assert candles[0]["open"] == 50000.0
+    assert candles[0]["high"] == 50080.0   # max of 50050, 50060, 50070, 50080
+    assert candles[0]["low"] == 49950.0    # min of 49950, 49960, 49970, 49980
+    assert candles[0]["close"] == 50050.0  # close of candle 3: 50020 + 3*10
+    assert candles[0]["volume"] == 40.0    # sum of 4 * 10.0
+    assert candles[0]["time"] == base_t
+
+    # Bar 1 aggregates candles 4..7
+    assert candles[1]["open"] == 50040.0
+    assert candles[1]["high"] == 50120.0
+    assert candles[1]["volume"] == 40.0
+    assert candles[1]["time"] == base_t + 4 * 900
+
+

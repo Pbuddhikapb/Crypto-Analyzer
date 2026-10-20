@@ -48,7 +48,7 @@ export const OpportunityRadar: React.FC<OpportunityRadarProps> = ({
       </div>
 
       <div className="text-[10px] text-slate-400">
-        Ranked by Confluence, Volume Surge, and SMC Gap Retest
+        Ranked by Confluence, Volume Surge, and SMC Inflection Signals
       </div>
 
       {/* List */}
@@ -63,6 +63,15 @@ export const OpportunityRadar: React.FC<OpportunityRadarProps> = ({
             const isSelected = opp.symbol === activeSymbol;
             const isLong = opp.trend === 'BULLISH';
             const setup = opp.trade_setup;
+            const baseline = opp.historical_baseline;
+
+            // Calibrate Confluence Score colors
+            const scoreColor =
+              opp.confluence_score >= 80
+                ? 'bg-laser-green/20 text-laser-green border-laser-green/40'
+                : opp.confluence_score >= 70
+                ? 'bg-amber-warn/20 text-amber-warn border-amber-warn/40'
+                : 'bg-slate-700/30 text-slate-400 border-slate-600/40';
 
             return (
               <div
@@ -74,6 +83,7 @@ export const OpportunityRadar: React.FC<OpportunityRadarProps> = ({
                     : 'bg-dark-card border-dark-border hover:bg-dark-card/80 hover:border-slate-600'
                 }`}
               >
+                {/* Header Row: Symbol, Trend, Confluence Badge */}
                 <div className="flex items-center justify-between">
                   <div className="flex items-center space-x-1.5">
                     <span className="font-bold text-[13px] text-slate-100">{opp.symbol}</span>
@@ -86,16 +96,37 @@ export const OpportunityRadar: React.FC<OpportunityRadarProps> = ({
                     >
                       {opp.trend}
                     </span>
+                    {opp.is_chop && (
+                      <span className="px-1 py-0.5 rounded text-[8px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                        CHOP
+                      </span>
+                    )}
                   </div>
 
-                  <div className="flex items-center space-x-1">
-                    <Zap size={11} className="text-amber-warn" />
-                    <span className="font-bold text-slate-200 text-[11px]">
-                      {opp.confluence_score}/100
-                    </span>
+                  <div className={`flex items-center space-x-1 px-1.5 py-0.5 rounded border text-[11px] font-bold ${scoreColor}`}>
+                    <Zap size={11} />
+                    <span>{opp.confluence_score}/100</span>
                   </div>
                 </div>
 
+                {/* Inflection Pattern and Phase 3 Empirical Baseline */}
+                <div className="mt-1.5 flex flex-wrap items-center gap-1">
+                  {opp.inflection_pattern && (
+                    <span className="px-1.5 py-0.5 rounded text-[9px] font-semibold bg-sky-500/15 text-sky-300 border border-sky-500/30">
+                      {opp.inflection_pattern}
+                    </span>
+                  )}
+                  {baseline && (
+                    <span
+                      className="px-1.5 py-0.5 rounded text-[9px] font-mono text-slate-400 bg-dark-bg/80 border border-dark-border"
+                      title={`${baseline.pattern}: ${baseline.sample_trades} trades. ${baseline.status}`}
+                    >
+                      Baseline: {baseline.win_rate}% WR | {baseline.profit_factor} PF
+                    </span>
+                  )}
+                </div>
+
+                {/* Metrics Grid */}
                 <div className="grid grid-cols-3 gap-1 mt-2 text-[10px] text-slate-400 pt-1.5 border-t border-dark-border/40">
                   <div>
                     <span className="block text-slate-500 text-[9px]">PRICE</span>
@@ -125,12 +156,17 @@ export const OpportunityRadar: React.FC<OpportunityRadarProps> = ({
                   </div>
                 </div>
 
+                {/* Setup Bracket Preview */}
                 {setup && (
                   <div className="mt-2 text-[10px] flex items-center justify-between bg-dark-bg/60 px-2 py-1 rounded border border-dark-border/60">
                     <span className="text-amber-warn font-semibold">
-                      Limit Entry: ${setup.limit_entry.toLocaleString(undefined, { maximumFractionDigits: 4 })}
+                      Limit: ${setup.limit_entry.toLocaleString(undefined, { maximumFractionDigits: 4 })}
                     </span>
-                    <span className="text-emerald-400 font-bold">1:{setup.rr_ratio} RR</span>
+                    <div className="flex items-center space-x-1.5">
+                      <span className="text-laser-green">TP1: +0.75R</span>
+                      <span className="text-slate-500">|</span>
+                      <span className="text-emerald-400 font-bold">1:{setup.rr_ratio} RR</span>
+                    </div>
                   </div>
                 )}
               </div>
