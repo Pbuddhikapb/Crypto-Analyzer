@@ -1909,4 +1909,52 @@ def test_order_book_favorable_permits_entry(temp_db):
     assert trade["side"] == "LONG"
 
 
+def test_funding_period_derivation_from_interval(temp_db):
+    """Verify funding periods are derived from actual candle interval (15m vs 1h)."""
+    # 15-minute timeframe: 32 bars = 8 hours (1 period)
+    trader_15m = PaperTrader(symbol="BTCUSDT", timeframe="15m", db_path=temp_db)
+    assert trader_15m.interval_minutes == 15
+
+    # 31 bars held on 15m (7h 45m) -> 0 funding periods
+    net_ret_31, _ = trader_15m._calculate_trade_returns(
+        entry=100.0, exit_price=110.0, side="LONG", risk_dist=5.0, tp1_hit=False, tp1_price=None, bars_held=31
+    )
+    # Gross 10.0% - fee 0.15% - funding 0.0% = 9.85%
+    assert net_ret_31 == 9.85
+
+    # 32 bars held on 15m (8h 00m) -> 1 funding period (0.01%)
+    net_ret_32, _ = trader_15m._calculate_trade_returns(
+        entry=100.0, exit_price=110.0, side="LONG", risk_dist=5.0, tp1_hit=False, tp1_price=None, bars_held=32
+    )
+    # Gross 10.0% - fee 0.15% - funding 0.01% = 9.84%
+    assert net_ret_32 == 9.84
+
+    # 1-hour timeframe: 8 bars = 8 hours (1 period), 32 bars = 32 hours (4 periods)
+    trader_1h = PaperTrader(symbol="BTCUSDT", timeframe="1h", db_path=temp_db)
+    assert trader_1h.interval_minutes == 60
+
+    # 7 bars held on 1h (7h) -> 0 funding periods
+    net_ret_1h_7, _ = trader_1h._calculate_trade_returns(
+        entry=100.0, exit_price=110.0, side="LONG", risk_dist=5.0, tp1_hit=False, tp1_price=None, bars_held=7
+    )
+    assert net_ret_1h_7 == 9.85
+
+    # 8 bars held on 1h (8h) -> 1 funding period
+    net_ret_1h_8, _ = trader_1h._calculate_trade_returns(
+        entry=100.0, exit_price=110.0, side="LONG", risk_dist=5.0, tp1_hit=False, tp1_price=None, bars_held=8
+    )
+    assert net_ret_1h_8 == 9.84
+
+    # 32 bars held on 1h (32h = 4 x 8h periods) -> 4 funding periods (0.04%)
+    net_ret_1h_32, _ = trader_1h._calculate_trade_returns(
+        entry=100.0, exit_price=110.0, side="LONG", risk_dist=5.0, tp1_hit=False, tp1_price=None, bars_held=32
+    )
+    # Gross 10.0% - fee 0.15% - funding 0.04% = 9.81%
+    assert net_ret_1h_32 == 9.81
+
+    # Explicit interval_minutes parameter test
+    trader_custom = PaperTrader(symbol="BTCUSDT", timeframe="custom", interval_minutes=60, db_path=temp_db)
+    assert trader_custom.interval_minutes == 60
+
+
 

@@ -44,6 +44,25 @@ DEFAULT_ASSET_SL_FLOORS: Dict[str, float] = {
 class PaperTrader:
     _initialized_dbs: set = set()
 
+    @staticmethod
+    def _parse_timeframe_to_minutes(tf: str) -> int:
+        """Parse Binance timeframe string (e.g. '15m', '1h', '4h', '1d') into interval minutes."""
+        if not tf:
+            return 15
+        tf_str = str(tf).strip().lower()
+        try:
+            if tf_str.endswith("m"):
+                return max(1, int(tf_str[:-1]))
+            elif tf_str.endswith("h"):
+                return max(1, int(tf_str[:-1]) * 60)
+            elif tf_str.endswith("d"):
+                return max(1, int(tf_str[:-1]) * 1440)
+            elif tf_str.endswith("w"):
+                return max(1, int(tf_str[:-1]) * 10080)
+            return max(1, int(tf_str))
+        except Exception:
+            return 15
+
     def __init__(
         self,
         symbol: str = "BTCUSDT",
@@ -64,9 +83,15 @@ class PaperTrader:
         enable_collinearity_cap: bool = False,
         order_book_engine: Optional[Any] = None,
         max_stagnant_bars: int = 12,
+        interval_minutes: Optional[int] = None,
     ):
         self.symbol = symbol
         self.timeframe = timeframe
+        self.interval_minutes: int = (
+            int(interval_minutes)
+            if interval_minutes is not None
+            else self._parse_timeframe_to_minutes(self.timeframe)
+        )
         self.db_path = db_path
         self.risk_manager = risk_manager
         self.micro_mgr = micro_mgr
@@ -699,10 +724,12 @@ class PaperTrader:
         tp1_hit: bool,
         tp1_price: Optional[float],
         bars_held: int = 1,
+        interval_minutes: Optional[int] = None,
     ) -> Tuple[float, float]:
         """Compute true dynamic gross return % and net R-multiple from real fill prices."""
         fee_pct = 0.15
-        periods_8h = max(0, bars_held // 32)
+        eff_interval = interval_minutes if interval_minutes is not None else getattr(self, "interval_minutes", 15)
+        periods_8h = max(0, (bars_held * eff_interval) // 480)
         funding_cost_pct = periods_8h * 0.01
 
         if tp1_hit and tp1_price is not None:
