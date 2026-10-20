@@ -1,5 +1,5 @@
 # Monte Carlo Random-Entry Baseline: The Statistical Hurdle
-**Generated:** 2026-10-20 10:37 UTC  
+**Generated:** 2026-10-20 12:42 UTC  
 **Iterations:** 1,000 Monte Carlo Passes  
 **Dataset:** 10 Major Pairs (`BTCUSDT, ETHUSDT, SOLUSDT, BNBUSDT, XRPUSDT, DOGEUSDT, ADAUSDT, AVAXUSDT, LINKUSDT, SUIUSDT`), 1-Hour Timeframe (2.8 Years, 24,528 continuous bars/coin from Binance USD-M Futures)  
 **Friction Model:** Taker Fee 0.05%, Maker Fee 0.02%, Adverse Slippage 0.03%, 8h Funding Drag 0.01%  

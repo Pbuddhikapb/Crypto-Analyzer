@@ -139,12 +139,18 @@ def simulate_portfolio_signals(
                 still_open.append(pos)
         active_open = still_open
 
-        # 2. Ruin Guard Check: reject opening new trades if account is ruined
-        if current_equity <= ruin_limit:
-            if not ruined:
+        # 2. Ruin Guard Check: reject opening new trades only in compounding mode
+        if sizing_mode == "compounding":
+            if current_equity <= ruin_limit:
+                if not ruined:
+                    ruined = True
+                    ruin_time_ms = c_ts
+                continue
+        else:
+            # In fixed_risk mode: ruin is report-only, never stops entry
+            if current_equity <= ruin_limit and not ruined:
                 ruined = True
                 ruin_time_ms = c_ts
-            continue
 
         # 3. Portfolio Concurrency Checks
         if len(active_open) >= max_open_positions:
@@ -253,6 +259,10 @@ def simulate_portfolio_signals(
             ruined=ruined,
             ruin_time_ms=ruin_time_ms,
             sizing_mode=sizing_mode,
+            cumulative_r=0.0,
+            max_drawdown_r=0.0,
+            days_evaluated=0.0,
+            pct_of_dataset_evaluated=100.0,
         )
 
     # Chronological sort for drawdown and equity path
@@ -323,6 +333,29 @@ def simulate_portfolio_signals(
     downside_dev = float(np.sqrt(np.mean(downside_diff**2)))
     sortino = float((mean_ret / downside_dev) * np.sqrt(252.0)) if downside_dev > 1e-8 else 0.0
 
+    # Cumulative net R and peak-to-trough max drawdown on net R curve
+    cum_r = 0.0
+    peak_r = 0.0
+    max_dd_r = 0.0
+    for t in completed_trades:
+        cum_r += t.net_r
+        if cum_r > peak_r:
+            peak_r = cum_r
+        else:
+            dd_r = peak_r - cum_r
+            if dd_r > max_dd_r:
+                max_dd_r = dd_r
+
+    dataset_min_ts = min(int(arr[0, 4]) for arr in candles_dict.values()) if candles_dict else 0
+    dataset_max_ts = max(int(arr[-1, 4]) for arr in candles_dict.values()) if candles_dict else 0
+    total_dataset_days = max(1.0, (dataset_max_ts - dataset_min_ts) / (86400 * 1000.0)) if dataset_max_ts > dataset_min_ts else 1.0
+
+    if sizing_mode == "compounding" and ruined and ruin_time_ms:
+        days_evaluated = round(max(1.0, (ruin_time_ms - dataset_min_ts) / (86400 * 1000.0)), 1)
+    else:
+        days_evaluated = round(total_dataset_days, 1)
+    pct_of_dataset_evaluated = min(100.0, round((days_evaluated / total_dataset_days) * 100.0, 1))
+
     return SimulationResult(
         initial_equity_usd=initial_equity_usd,
         final_equity_usd=round(current_equity, 2),
@@ -352,6 +385,10 @@ def simulate_portfolio_signals(
         ruined=ruined,
         ruin_time_ms=ruin_time_ms,
         sizing_mode=sizing_mode,
+        cumulative_r=round(cum_r, 4),
+        max_drawdown_r=round(max_dd_r, 4),
+        days_evaluated=days_evaluated,
+        pct_of_dataset_evaluated=pct_of_dataset_evaluated,
     )
 
 
@@ -525,7 +562,24 @@ def run_strategy_evidence_validation(
         )
 
     # Generate and save master report
-    generate_markdown_report(run_results, output_report_path)
+    dataset_days_val = (
+        (max(int(arr[-1, 4]) for arr in candles_dict.values()) - min(int(arr[0, 4]) for arr in candles_dict.values())) / (86400 * 1000.0)
+        if candles_dict
+        else 1022.0
+    )
+    dataset_bars_val = len(next(iter(candles_dict.values()))) if candles_dict else 24528
+    generate_markdown_report(
+        results=run_results,
+        output_path=output_report_path,
+        baseline_hurdles=evaluator.hurdles,
+        dataset_info={
+            "symbols": syms,
+            "bars_per_symbol": dataset_bars_val,
+            "days": dataset_days_val,
+        },
+        friction=fric,
+        exit_config=cfg,
+    )
     save_strategy_results_json(run_results, output_json_path, candles_dict=candles_dict)
     return run_results
 
@@ -580,9 +634,15 @@ def save_strategy_results_json(
             "sizing_mode": sim.sizing_mode,
             "ruined": sim.ruined,
             "ruin_time_ms": sim.ruin_time_ms,
+            "cumulative_r": round(sim.cumulative_r, 4),
+            "max_drawdown_r": round(sim.max_drawdown_r, 4),
+            "days_evaluated": round(sim.days_evaluated, 1),
+            "pct_of_dataset_evaluated": round(sim.pct_of_dataset_evaluated, 1),
             "sharpe_ratio": round(sim.sharpe_ratio, 2),
             "max_drawdown_pct": round(sim.max_drawdown_pct, 2),
             "net_profit_pct": round(sim.net_profit_pct, 2),
+            "start_time_ms": min_ts,
+            "end_time_ms": max_ts,
             "run_timestamp": now_iso,
             "data_date_range": date_range_str,
             "git_commit": git_hash,
@@ -605,9 +665,73 @@ def save_strategy_results_json(
     logger.info(f"Saved machine-readable strategy results to {output_json_path}")
 
 
-def generate_markdown_report(results: List[StrategyRunResult], output_path: str) -> None:
+def generate_markdown_report(
+    results: List[StrategyRunResult],
+    output_path: str,
+    baseline_hurdles: Optional[BaselineHurdles] = None,
+    dataset_info: Optional[Dict[str, Any]] = None,
+    friction: Optional[SimulationFriction] = None,
+    exit_config: Optional[ExitConfig] = None,
+) -> None:
     """Format publication-grade Strategy Validation Report."""
     now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
+    # Load baseline hurdles if not provided
+    hurdles = baseline_hurdles
+    if hurdles is None:
+        try:
+            hurdles = BaselineHurdles.load()
+        except Exception:
+            hurdles = None
+
+    mc_iterations = int(hurdles.metadata.get("iterations", 1000)) if hurdles and hurdles.metadata else 1000
+    pf_hurdle_p95 = hurdles.pf_hurdle_p95 if hurdles else 1.16
+    pf_null_mean = hurdles.pf_null_mean if hurdles else 0.93
+    wr_hurdle_p95 = hurdles.wr_hurdle_p95 if hurdles else 51.43
+    wr_null_mean = hurdles.wr_null_mean if hurdles else 46.13
+    ev_hurdle_p95 = hurdles.ev_r_hurdle_p95 if hurdles else 0.0602
+    ev_null_mean = hurdles.ev_r_null_mean if hurdles else -0.0239
+    sharpe_hurdle_p95 = hurdles.sharpe_hurdle_p95 if hurdles else 0.22
+    sharpe_null_mean = hurdles.sharpe_null_mean if hurdles else -1.35
+    dd_hurdle_p50 = hurdles.dd_hurdle_p50 if hurdles else 22.48
+    dd_hurdle_p95 = hurdles.dd_hurdle_p95 if hurdles else 36.11
+
+    fric = friction or SimulationFriction()
+    taker_fee_pct = fric.taker_fee_pct
+    maker_fee_pct = fric.maker_fee_pct
+    slippage_pct = fric.slippage_pct
+    funding_rate_pct = fric.funding_rate_8h_pct
+    funding_hours = 8
+
+    cfg = exit_config or ExitConfig()
+    tp1_scale_pct = 50.0
+    tp1_r = getattr(cfg, "tp1_r", 0.75)
+    be_arm_r = getattr(cfg, "be_arm_r", 0.85)
+    tp2_r = getattr(cfg, "tp2_r", 1.33)
+    stagnant_bars = getattr(cfg, "underwater_bars_limit", 12)
+
+    alpha_sig_level = 0.05
+    boot_resamples_n = 10000
+
+    # Dataset metadata
+    if dataset_info:
+        symbols_list = dataset_info.get("symbols", DEFAULT_SYMBOLS)
+        total_symbols = len(symbols_list)
+        dataset_days = float(dataset_info.get("days", 1022.0))
+        dataset_bars = int(dataset_info.get("bars_per_symbol", 24528))
+    elif results and results[0].per_symbol_metrics:
+        symbols_list = sorted(list(results[0].per_symbol_metrics.keys()))
+        total_symbols = len(symbols_list)
+        dataset_days = float(results[0].sim_result.days_evaluated) if results[0].sim_result.days_evaluated > 0 else 1022.0
+        dataset_bars = int(round(dataset_days * 24.0))
+    else:
+        symbols_list = DEFAULT_SYMBOLS
+        total_symbols = len(symbols_list)
+        dataset_days = 1022.0
+        dataset_bars = 24528
+
+    dataset_years = dataset_days / 365.25
+    num_strategies = len(results)
 
     # Scorecard rows
     scorecard_rows = []
@@ -623,13 +747,14 @@ def generate_markdown_report(results: List[StrategyRunResult], output_path: str)
         matched_med_str = f"{r.matched_baseline.median_expectancy_r:+.4f}R" if r.matched_baseline else "N/A"
         matched_p_str = f"`p = {ev.matched_p_value:.4f}`" if ev.matched_p_value is not None else f"`p = {ev.p_composite:.4f}`"
 
+        eval_days_str = f"{r.sim_result.days_evaluated:.0f}d ({r.sim_result.pct_of_dataset_evaluated:.1f}%)"
         row = (
             f"| **{ev.strategy_name}** | {ev.total_trades} | {ev.win_rate:.1f}% | "
             f"**{r.sim_result.profit_factor:.2f}** ({r.sim_result.gross_profit_factor:.2f}) | "
             f"**{r.sim_result.expectancy_r:+.4f}R** ({r.sim_result.gross_expectancy_r:+.4f}R) | "
+            f"{r.sim_result.max_drawdown_r:.2f}R | "
             f"{ci_str} | {matched_med_str} | {matched_p_str} | "
-            f"{ev.sharpe_ratio:.2f} | {ev.max_drawdown_pct:.1f}% | {ev.net_profit_pct:+.1f}% | "
-            f"`{r.sim_result.sizing_mode}` | {ruin_str} | {badge} |"
+            f"{eval_days_str} | `{r.sim_result.sizing_mode}` | {ruin_str} | {badge} |"
         )
         scorecard_rows.append(row)
 
@@ -661,14 +786,18 @@ def generate_markdown_report(results: List[StrategyRunResult], output_path: str)
         matched_med_str = f"{r.matched_baseline.median_expectancy_r:+.4f}R" if r.matched_baseline else "N/A"
         matched_p95_str = f"{r.matched_baseline.p95_expectancy_r:+.4f}R" if r.matched_baseline else "N/A"
         matched_p_display = f"p = {ev.matched_p_value:.4f}" if ev.matched_p_value is not None else f"p = {ev.p_composite:.4f}"
+        matched_passes_n = r.matched_baseline.iterations if r.matched_baseline else 1000
 
+        diag_list = "\n".join([f"- ℹ️ {d}" for d in ev.diagnostics]) or "- None"
         verdict_banner = (
             f"> **Statistical Verdict**: **`{ev.verdict}`**  \n"
-            f"> Matched Rank $p$-value: **`{matched_p_display}`** (Empirical rank within 1,000 matched null passes)  \n"
+            f"> Matched Rank $p$-value: **`{matched_p_display}`** (Empirical rank within {matched_passes_n:,} matched null passes)  \n"
             f"> Total Candidate Signals: `{r.total_signals_generated}` | Executed Trades: `{r.signals_executed}`  \n"
             f"> Net Profit Factor: **`{r.sim_result.profit_factor:.2f}`** (Gross: `{r.sim_result.gross_profit_factor:.2f}`)  \n"
             f"> Net Expectancy: **`{r.sim_result.expectancy_r:+.4f}R`** (Gross: `{r.sim_result.gross_expectancy_r:+.4f}R`)  \n"
-            f"> Bootstrap 95% CI (Mean Net R): **`{ci_str}`** (10,000 resamples)  \n"
+            f"> Max Drawdown (R): **`{r.sim_result.max_drawdown_r:.2f}R`** | Cumulative Net R: **`{r.sim_result.cumulative_r:+.2f}R`**  \n"
+            f"> Days Evaluated: **`{r.sim_result.days_evaluated:.0f} days ({r.sim_result.pct_of_dataset_evaluated:.1f}% of dataset)`**  \n"
+            f"> Bootstrap 95% CI (Mean Net R): **`{ci_str}`** ({boot_resamples_n:,} resamples)  \n"
             f"> Matched Baseline Median Net EV: **`{matched_med_str}`** (Matched 95th Pct Hurdle: `{matched_p95_str}`)  \n"
             f"> Sizing Mode: `{r.sim_result.sizing_mode}` | Account Ruined: `{ruin_info}`"
         )
@@ -678,12 +807,15 @@ def generate_markdown_report(results: List[StrategyRunResult], output_path: str)
 
 {verdict_banner}
 
-#### Hurdle Checklist:
+#### Alpha Validation Requirements:
 **Passed:**
 {passed_list}
 
-#### Failed / Unmet:
+**Failed / Unmet:**
 {failed_list}
+
+#### Diagnostics:
+{diag_list}
 
 #### Per-Symbol Performance:
 | Symbol | Trades | Win Rate | Net PF (Gross) | Net PnL (USD) | Net R (Gross R) |
@@ -695,36 +827,93 @@ def generate_markdown_report(results: List[StrategyRunResult], output_path: str)
 
     deep_dives_content = "\n\n".join(deep_dives)
 
+    # Dynamic conclusions generated strictly from results
+    validated_strats = [r for r in results if r.evaluation.is_validated]
+    rejected_strats = [r for r in results if not r.evaluation.is_validated]
+
+    if not validated_strats:
+        conclusions_body = (
+            "1. **Evidence-Based Discretionary Radar Filtering**:\n"
+            "   No strategy passed; no pattern in this report has validated edge. "
+            "Under rigorous institutional friction, all tested hypotheses exhibit negative net expectancy or fail "
+            "to exceed random-entry baseline distributions at the statistical significance threshold. "
+            "Consequently, the Discretionary Trading Terminal must not display unverified automated trade recommendations.\n\n"
+            "2. **Fee and Slippage Drag Reality**:\n"
+            f"   Execution friction ({taker_fee_pct:.2f}% taker fee, {slippage_pct:.2f}% slippage, "
+            f"and {funding_rate_pct:.2f}% {funding_hours}h funding drag) decisively turns gross-positive or marginal setups into net losses. "
+            "Identifying patterns that possess zero predictive edge under real market conditions prevents capital destruction from retail chart illusions.\n\n"
+            "3. **Capital Preservation Protocol**:\n"
+            "   Because no setup demonstrates a statistically validated edge against matched noise, the terminal operates in "
+            "evidence-status and risk-calculator mode only, providing trade structure and sizing analytics without directional endorsement."
+        )
+    else:
+        passed_bullets = "\n".join([
+            f"   - **{r.strategy_name}**: Net EV = `{r.sim_result.expectancy_r:+.4f}R` (Gross: `{r.sim_result.gross_expectancy_r:+.4f}R`), "
+            f"Net PF = `{r.sim_result.profit_factor:.2f}`, Bootstrap 95% CI = `[{r.bootstrap_ci[0]:+.4f}, {r.bootstrap_ci[1]:+.4f}]R`, "
+            f"Matched Rank $p$-value = `{r.evaluation.matched_p_value:.4f}`"
+            for r in validated_strats
+        ])
+        rejected_names = ", ".join([f"**{r.strategy_name}**" for r in rejected_strats]) or "None"
+        conclusions_body = (
+            f"1. **Validated Setups ({len(validated_strats)}/{num_strategies})**:\n"
+            f"   The following strategies met all alpha validation criteria ($p < {alpha_sig_level:.2f}$, positive bootstrap CI lower bound):\n"
+            f"{passed_bullets}\n\n"
+            f"2. **Unvalidated Patterns**:\n"
+            f"   The following strategies failed validation: {rejected_names}. These setups show no validated edge under institutional friction and will display warning banners.\n\n"
+            "3. **Evidence-Backed Radar Screening**:\n"
+            "   Only configurations meeting strict statistical criteria are highlighted as candidate setups on the Discretionary Radar."
+        )
+
+    # Dynamic Limitations Section
+    sample_size_bullets = "\n".join([
+        f"   - **{r.strategy_name}**: {r.signals_executed:,} executed trades "
+        f"({r.sim_result.days_evaluated:.0f} days evaluated, {r.sim_result.pct_of_dataset_evaluated:.1f}% of dataset)"
+        for r in results
+    ])
+    primary_sizing_mode = results[0].sim_result.sizing_mode if results else "fixed_risk"
+
+    limitations_section = f"""## 5. Limitations
+
+1. **Position Sizing Mode (`{primary_sizing_mode}`)**:
+   Evaluations are performed under `{primary_sizing_mode}` position sizing. In fixed-risk mode, risk is calibrated to initial equity without compounding, ensuring trade-level statistical edge is measured uniformly across the full dataset period without sample truncation from ruin guards.
+2. **Sample Size Evaluated Per Strategy**:
+{sample_size_bullets}
+3. **No Out-of-Sample Holdout**:
+   No holdout dataset has been used yet (until Prompt 7 is done). All metrics reflect in-sample backtesting across the complete historical timeline.
+4. **Gross vs. Net Metrics**:
+   Both gross P&L (pre-friction) and net P&L (post-fees, post-slippage, and post-funding) are reported side-by-side. The comparison reveals the decisive impact of transaction costs and funding drag on theoretical retail chart patterns.
+"""
+
     report_content = f"""# Strategy Validation Dossier: Evidence Before Infrastructure
 **Generated:** {now_str}  
 **Architecture Doctrine:** Claude's Option B (Discretionary Human Trading Terminal)  
-**Null Hypothesis ($H_0$):** Phase 2 1,000-pass Monte Carlo Baseline Hurdle  
-**Dataset:** 10 Major Pairs (`{', '.join(DEFAULT_SYMBOLS)}`), 2.8 Years (24,528 continuous 1h bars / coin from Binance USD-M Futures)  
+**Null Hypothesis ($H_0$):** Phase 2 {mc_iterations:,}-pass Monte Carlo Baseline Hurdle  
+**Dataset:** {total_symbols} Major Pairs (`{', '.join(symbols_list)}`), {dataset_years:.1f} Years ({dataset_bars:,} continuous 1h bars / coin from Binance USD-M Futures)  
 **Execution Authority:** Single Exit Authority (`engine/exits.py`)  
-**Institutional Friction:** Taker Fee 0.05%, Maker Fee 0.02%, Slippage 0.03%, 8h Funding Drag 0.01%  
-**Exit Mechanics:** Stepped Scaling (50% TP1 @ +0.75R, BE armed @ +0.85R excursion, TP2 @ +1.33R, 12-bar stagnancy)
+**Institutional Friction:** Taker Fee {taker_fee_pct:.2f}%, Maker Fee {maker_fee_pct:.2f}%, Slippage {slippage_pct:.2f}%, {funding_hours}h Funding Drag {funding_rate_pct:.2f}%  
+**Exit Mechanics:** Stepped Scaling ({tp1_scale_pct:.0f}% TP1 @ {tp1_r:+.2f}R, BE armed @ {be_arm_r:+.2f}R excursion, TP2 @ {tp2_r:+.2f}R, {stagnant_bars}-bar stagnancy)
 
 ---
 
 ## 1. Executive Summary & Big Picture
 
-Under Claude's doctrine (*"Evidence before infrastructure"*), no trading signal or indicator rule is permitted to enter the Discretionary Trading Terminal without empirical proof that it outperforms random noise ($p < 0.05$).
+Under Claude's doctrine (*"Evidence before infrastructure"*), no trading signal or indicator rule is permitted to enter the Discretionary Trading Terminal without empirical proof that it outperforms random noise ($p < {alpha_sig_level:.2f}$).
 
-In Phase 2, we established the empirical null hypothesis ($H_0$) across 1,000 Monte Carlo runs on Binance USD-M Futures under full institutional friction:
-* **Profit Factor Hurdle ($p_{{95}}$):** `> 1.16` (Median noise: `0.93`)
-* **Win Rate Hurdle ($p_{{95}}$):** `> 51.43%` (Median noise: `46.13%`)
-* **Expectancy Hurdle ($p_{{95}}$):** `> +0.0602R` (Median noise: `-0.0239R`)
-* **Sharpe Ratio Hurdle ($p_{{95}}$):** `> 0.22` (Median noise: `-1.35`)
-* **Max Drawdown Hurdle ($p_{{50}}$):** `< 22.48%` (Worst 5% noise: `36.11%`)
+In Phase 2, we established the empirical null hypothesis ($H_0$) across {mc_iterations:,} Monte Carlo runs on Binance USD-M Futures under full institutional friction:
+* **Profit Factor Hurdle ($p_{{95}}$):** `> {pf_hurdle_p95:.2f}` (Median noise: `{pf_null_mean:.2f}`)
+* **Win Rate Hurdle ($p_{{95}}$):** `> {wr_hurdle_p95:.2f}%` (Median noise: `{wr_null_mean:.2f}%`)
+* **Expectancy Hurdle ($p_{{95}}$):** `> {ev_hurdle_p95:+.4f}R` (Median noise: `{ev_null_mean:+.4f}R`)
+* **Sharpe Ratio Hurdle ($p_{{95}}$):** `> {sharpe_hurdle_p95:.2f}` (Median noise: `{sharpe_null_mean:.2f}`)
+* **Max Drawdown Hurdle ($p_{{50}}$):** `< {dd_hurdle_p50:.2f}%` (Worst 5% noise: `{dd_hurdle_p95:.2f}%`)
 
-Four core discretionary trading hypotheses were codified with strict zero lookahead (signal at bar $i$ close $\\rightarrow$ entry at bar $i+1$ open) and simulated across all 10 coins.
+{num_strategies} core discretionary trading hypotheses were codified with strict zero lookahead (signal at bar $i$ close $\\rightarrow$ entry at bar $i+1$ open) and simulated across all {total_symbols} coins.
 
 ---
 
 ## 2. Master Strategy Scorecard
 
-| Strategy | Trades | Win Rate | Net PF (Gross) | Net EV (Gross EV) | Bootstrap 95% CI | Matched Median EV | Matched Rank $p$-value | Sharpe | Max DD | Net Return | Sizing | Ruined? | Alpha Verdict |
-| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| Strategy | Trades | Win Rate | Net PF (Gross) | Net EV (Gross EV) | Max DD (R) | Bootstrap 95% CI | Matched Median EV | Matched Rank $p$-value | Days Evaluated | Sizing | Ruined? | Alpha Verdict |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
 {scorecard_table}
 
 ---
@@ -733,14 +922,13 @@ Four core discretionary trading hypotheses were codified with strict zero lookah
 
 {deep_dives_content}
 
-## 4. Strategic Implications for Phase 4 (Terminal UI & Radar Filter)
+## 4. Strategic Implications for Discretionary Terminal
 
-1. **Evidence-Backed Radar Screening**:
-   Only strategies and indicator configurations with proven statistical validity ($p < 0.05$) or verified positive expectancy will serve as high-conviction alerts on the Discretionary Radar in Phase 4.
-2. **Honesty Over Optimism**:
-   Strategies that failed the hurdle are documented transparently. In discretionary trading, knowing which patterns possess **zero predictive edge** under real exchange fees and slippage is just as valuable as finding profitable ones—it prevents discretionary traders from wasting capital on retail chart illusions.
-3. **Multi-Timeframe Confluence Power**:
-   When directional alignment (4h trend + 1h equilibrium + momentum recovery) is enforced, execution friction is overcome and genuine edge emerges.
+{conclusions_body}
+
+---
+
+{limitations_section}
 """
 
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
@@ -803,11 +991,13 @@ def main():
         ci_str = f"[{r.bootstrap_ci[0]:+.4f}, {r.bootstrap_ci[1]:+.4f}]R" if r.bootstrap_ci else "N/A"
         matched_med = f"{r.matched_baseline.median_expectancy_r:+.4f}R" if r.matched_baseline else "N/A"
         matched_p_val = ev.matched_p_value if ev.matched_p_value is not None else ev.p_composite
+        eval_days = f"{r.sim_result.days_evaluated:.0f}d ({r.sim_result.pct_of_dataset_evaluated:.1f}%)"
         print(
             f"[{ev.verdict}] {ev.strategy_name:<22} | Trades: {ev.total_trades:>4} | "
             f"WR: {ev.win_rate:>5.1f}% | PF: {ev.profit_factor:>4.2f} | "
-            f"EV: {ev.expectancy_r:>+7.4f}R | 95% CI: {ci_str} | Matched Med: {matched_med} | "
-            f"Matched p-val: {matched_p_val:.4f}"
+            f"EV: {ev.expectancy_r:>+7.4f}R | MaxDD(R): {r.sim_result.max_drawdown_r:>5.2f}R | "
+            f"95% CI: {ci_str} | Matched Med: {matched_med} | Matched p-val: {matched_p_val:.4f} | "
+            f"Days: {eval_days}"
         )
     print("=" * 80)
     print(f"Validation dossier saved to: {args.output}\n")

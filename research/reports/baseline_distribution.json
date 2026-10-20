@@ -1,6 +1,6 @@
 {
   "metadata": {
-    "generated_at": "2026-10-20T10:37:15.718791+00:00",
+    "generated_at": "2026-10-20T12:42:25.878171+00:00",
     "iterations": 1000,
     "dataset_hash": "e94efd0a2864f513",
     "timeframe": "1h",
@@ -130,6 +130,30 @@
       "std": 9.7794,
       "min_val": 6.69,
       "max_val": 56.5
+    },
+    "max_drawdown_r": {
+      "name": "Max Drawdown (R)",
+      "p5": 11.6707,
+      "p25": 18.3631,
+      "p50": 24.7622,
+      "p75": 32.4855,
+      "p95": 44.0371,
+      "mean": 25.9803,
+      "std": 9.9482,
+      "min_val": 7.6249,
+      "max_val": 58.7275
+    },
+    "cumulative_r": {
+      "name": "Cumulative Net R",
+      "p5": -39.4063,
+      "p25": -26.4585,
+      "p50": -18.1649,
+      "p75": -10.0076,
+      "p95": 2.9336,
+      "mean": -18.1628,
+      "std": 12.9987,
+      "min_val": -55.5243,
+      "max_val": 24.0612
     },
     "sharpe_ratio": {
       "name": "Sharpe Ratio",

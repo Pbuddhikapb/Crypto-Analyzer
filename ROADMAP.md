@@ -1,6 +1,6 @@
 # Binance Cryptocurrency Analysis Tool - Master Architectural Blueprint
 
-> **Status:** Production / Hardened Quantitative Engine  
+> **Status:** Research phase: no strategy has passed validation. Terminal displays evidence status only.  
 > **Architecture Pattern:** Institutional Market Microstructure & SMC Execution Engine
 
 ---

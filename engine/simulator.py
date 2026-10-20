@@ -112,6 +112,10 @@ class SimulationResult:
     sizing_mode: str = "fixed_risk"
     gross_profit_factor: float = 0.0
     gross_expectancy_r: float = 0.0
+    cumulative_r: float = 0.0
+    max_drawdown_r: float = 0.0
+    days_evaluated: float = 0.0
+    pct_of_dataset_evaluated: float = 100.0
 
 
 class SimulationEngine:
@@ -163,11 +167,16 @@ class SimulationEngine:
 
     def can_open_position(self, symbol: str, side: str, current_bar_idx: int) -> Tuple[bool, str]:
         """Verify whether portfolio constraints allow opening a new position."""
-        # 0. Ruin guard check: reject all new positions if account is ruined
-        if self.ruined or self.equity_usd <= self.ruin_threshold_usd:
-            if not self.ruined:
+        # 0. Ruin guard check: reject new positions only in compounding mode
+        if self.sizing_mode == "compounding":
+            if self.ruined or self.equity_usd <= self.ruin_threshold_usd:
+                if not self.ruined:
+                    self.ruined = True
+                return False, f"Account ruined (equity {self.equity_usd:.2f} <= ruin threshold {self.ruin_threshold_usd:.2f})"
+        else:
+            # In fixed_risk mode: ruin is report-only, never stops entry
+            if self.equity_usd <= self.ruin_threshold_usd and not self.ruined:
                 self.ruined = True
-            return False, f"Account ruined (equity {self.equity_usd:.2f} <= ruin threshold {self.ruin_threshold_usd:.2f})"
 
         sym = symbol.upper()
         side_upper = side.upper()
@@ -198,6 +207,12 @@ class SimulationEngine:
         Execute market entry with slippage and fee accounting.
         Returns trade_id if filled, None if rejected.
         """
+        if self.sizing_mode != "compounding" and self.equity_usd <= self.ruin_threshold_usd:
+            if not self.ruined:
+                self.ruined = True
+            if self.ruin_time_ms is None:
+                self.ruin_time_ms = signal.timestamp_ms
+
         can_open, reason = self.can_open_position(signal.symbol, signal.side, current_bar_idx)
         if not can_open:
             if self.ruined and self.ruin_time_ms is None:
@@ -432,6 +447,10 @@ class SimulationEngine:
                 ruined=self.ruined,
                 ruin_time_ms=self.ruin_time_ms,
                 sizing_mode=self.sizing_mode,
+                cumulative_r=0.0,
+                max_drawdown_r=0.0,
+                days_evaluated=0.0,
+                pct_of_dataset_evaluated=100.0,
             )
 
         wins = [t for t in trades if t.net_pnl_usd > 0]
@@ -471,6 +490,33 @@ class SimulationEngine:
         gross_win_r_mean = float(np.mean([t.realized_r for t in wins])) if wins else 0.0
         gross_loss_r_mean = float(np.mean([abs(t.realized_r) for t in losses])) if losses else 0.0
         gross_expectancy_r = (wr_frac * gross_win_r_mean) - (lr_frac * gross_loss_r_mean)
+
+        # Cumulative net R and peak-to-trough max drawdown on net R curve
+        cum_r = 0.0
+        peak_r = 0.0
+        max_dd_r = 0.0
+        for t in trades:
+            cum_r += t.net_r
+            if cum_r > peak_r:
+                peak_r = cum_r
+            else:
+                dd_r = peak_r - cum_r
+                if dd_r > max_dd_r:
+                    max_dd_r = dd_r
+
+        # Dataset days evaluated
+        if self.equity_curve:
+            start_ts = self.equity_curve[0][0]
+            end_ts = self.equity_curve[-1][0]
+            total_days = max(1.0, (end_ts - start_ts) / (86400 * 1000.0))
+            if self.sizing_mode == "compounding" and self.ruined and self.ruin_time_ms:
+                days_eval = max(1.0, (self.ruin_time_ms - start_ts) / (86400 * 1000.0))
+            else:
+                days_eval = total_days
+            pct_eval = min(100.0, round((days_eval / total_days) * 100.0, 1))
+        else:
+            days_eval = 0.0
+            pct_eval = 100.0
 
         total_fees = sum(t.fees_usd for t in trades)
         total_slippage = sum(t.slippage_usd for t in trades)
@@ -541,4 +587,8 @@ class SimulationEngine:
             ruined=self.ruined,
             ruin_time_ms=self.ruin_time_ms,
             sizing_mode=self.sizing_mode,
+            cumulative_r=round(cum_r, 4),
+            max_drawdown_r=round(max_dd_r, 4),
+            days_evaluated=round(days_eval, 1),
+            pct_of_dataset_evaluated=pct_eval,
         )

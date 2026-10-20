@@ -56,6 +56,12 @@ class BaselineHurdles:
     ret_null_mean: float
     ret_null_std: float
 
+    # Max Drawdown (R)
+    max_dd_r_p50: float = 0.0
+    max_dd_r_p95: float = 0.0
+    max_dd_r_null_mean: float = 0.0
+    max_dd_r_null_std: float = 0.0
+
     metadata: Dict[str, Any] = field(default_factory=dict)
 
     @classmethod
@@ -113,6 +119,8 @@ class BaselineHurdles:
                             f"baseline={actual_v}, strategy expected={expected_v}."
                         )
 
+        dd_r = dists.get("max_drawdown_r", {})
+
         return cls(
             pf_hurdle_p95=float(dists["profit_factor"]["p95"]),
             pf_null_mean=float(dists["profit_factor"]["mean"]),
@@ -133,6 +141,10 @@ class BaselineHurdles:
             dd_hurdle_p95=float(dists["max_drawdown_pct"]["p95"]),
             dd_null_mean=float(dists["max_drawdown_pct"]["mean"]),
             dd_null_std=float(dists["max_drawdown_pct"]["std"]),
+            max_dd_r_p50=float(dd_r.get("p50", 0.0)),
+            max_dd_r_p95=float(dd_r.get("p95", 0.0)),
+            max_dd_r_null_mean=float(dd_r.get("mean", 0.0)),
+            max_dd_r_null_std=float(dd_r.get("std", 0.0)),
             ret_hurdle_p95=float(dists["net_profit_pct"]["p95"]),
             ret_null_mean=float(dists["net_profit_pct"]["mean"]),
             ret_null_std=float(dists["net_profit_pct"]["std"]),
@@ -184,6 +196,12 @@ class StrategyEvaluation:
     p_sharpe: float
     p_composite: float
 
+    # R-metrics and evaluation span
+    max_drawdown_r: float = 0.0
+    cumulative_r: float = 0.0
+    days_evaluated: float = 0.0
+    pct_of_dataset_evaluated: float = 100.0
+
     # Matched Baseline & Bootstrap Metrics
     matched_p_value: Optional[float] = None
     bootstrap_ci: Optional[Tuple[float, float]] = None
@@ -193,6 +211,7 @@ class StrategyEvaluation:
     # Verification checks
     hurdles_passed: List[str] = field(default_factory=list)
     hurdles_failed: List[str] = field(default_factory=list)
+    diagnostics: List[str] = field(default_factory=list)
     verdict: str = "REJECTED (p >= 0.05)"
     is_validated: bool = False
 
@@ -209,6 +228,10 @@ class StrategyEvaluation:
             "sharpe_ratio": self.sharpe_ratio,
             "sortino_ratio": self.sortino_ratio,
             "max_drawdown_pct": self.max_drawdown_pct,
+            "max_drawdown_r": self.max_drawdown_r,
+            "cumulative_r": self.cumulative_r,
+            "days_evaluated": self.days_evaluated,
+            "pct_of_dataset_evaluated": self.pct_of_dataset_evaluated,
             "net_profit_pct": self.net_profit_pct,
             "p_profit_factor": self.p_profit_factor,
             "p_win_rate": self.p_win_rate,
@@ -223,6 +246,7 @@ class StrategyEvaluation:
             "is_validated": self.is_validated,
             "hurdles_passed": self.hurdles_passed,
             "hurdles_failed": self.hurdles_failed,
+            "diagnostics": self.diagnostics,
         }
 
 
@@ -274,6 +298,10 @@ class StrategyEvaluator:
                 "sortino_ratio": getattr(sim_result, "sortino_ratio", 0.0),
                 "max_drawdown_pct": getattr(sim_result, "max_drawdown_pct", 0.0),
                 "total_return_pct": getattr(sim_result, "net_profit_pct", 0.0),
+                "max_drawdown_r": getattr(sim_result, "max_drawdown_r", 0.0),
+                "cumulative_r": getattr(sim_result, "cumulative_r", 0.0),
+                "days_evaluated": getattr(sim_result, "days_evaluated", 0.0),
+                "pct_of_dataset_evaluated": getattr(sim_result, "pct_of_dataset_evaluated", 100.0),
             }
 
         total_trades = int(m.get("total_trades", 0))
@@ -285,6 +313,10 @@ class StrategyEvaluator:
         sharpe = float(m.get("sharpe_ratio", 0.0))
         sortino = float(m.get("sortino_ratio", 0.0))
         max_dd = float(m.get("max_drawdown_pct", 0.0))
+        max_dd_r = float(m.get("max_drawdown_r", 0.0))
+        cumulative_r = float(m.get("cumulative_r", 0.0))
+        days_evaluated = float(m.get("days_evaluated", 0.0))
+        pct_of_dataset_evaluated = float(m.get("pct_of_dataset_evaluated", 100.0))
         net_ret = float(m.get("total_return_pct", 0.0))
 
         # Compute individual p-values against standard baseline
@@ -292,6 +324,9 @@ class StrategyEvaluator:
         p_wr = compute_p_value(win_rate, h.wr_null_mean, h.wr_null_std, higher_is_better=True)
         p_ev = compute_p_value(expectancy_r, h.ev_r_null_mean, h.ev_r_null_std, higher_is_better=True)
         p_sharpe = compute_p_value(sharpe, h.sharpe_null_mean, h.sharpe_null_std, higher_is_better=True)
+
+        if bootstrap_ci is None and "bootstrap_ci" in m and m["bootstrap_ci"] is not None:
+            bootstrap_ci = tuple(m["bootstrap_ci"])
 
         matched_p: Optional[float] = None
         matched_med_ev: Optional[float] = None
@@ -301,63 +336,62 @@ class StrategyEvaluator:
             matched_p = float(getattr(matched_baseline, "empirical_p_value", 1.0))
             matched_med_ev = float(getattr(matched_baseline, "median_expectancy_r", 0.0))
             matched_p95_ev = float(getattr(matched_baseline, "p95_expectancy_r", 0.0))
-            # Empirical rank p-value from matched distribution governs composite significance
+            p_composite = matched_p
+        elif "matched_p_value" in m or "matched_p" in m:
+            matched_p = float(m.get("matched_p_value", m.get("matched_p", 1.0)))
+            matched_med_ev = float(m.get("matched_median_ev", 0.0)) if "matched_median_ev" in m else None
+            matched_p95_ev = float(m.get("matched_p95_ev", 0.0)) if "matched_p95_ev" in m else None
             p_composite = matched_p
         else:
             # Fallback to analytical max(p_pf, p_ev) when no matched baseline is provided
             p_composite = max(p_pf, p_ev)
 
+        # Explicit alpha decision rule:
+        # VALIDATED only if total_trades >= 100 AND mean net_r > 0 AND bootstrap 95% CI lower bound > 0 AND matched rank p < 0.05.
+        has_min_trades = total_trades >= 100
+        has_positive_ev = expectancy_r > 0.0
+        has_positive_ci = bootstrap_ci is not None and bootstrap_ci[0] > 0.0
+        has_significant_p = matched_p is not None and matched_p < 0.05
+
+        is_validated = (
+            has_min_trades
+            and has_positive_ev
+            and has_positive_ci
+            and has_significant_p
+        )
+        verdict = "VALIDATED (p < 0.05)" if is_validated else "REJECTED (p >= 0.05)"
+
         passed: List[str] = []
         failed: List[str] = []
 
-        # Check Matched Rank P-Value if available
-        if matched_p is not None:
-            if matched_p < 0.05:
-                passed.append(f"Matched Rank p-value {matched_p:.4f} < 0.05")
-            else:
-                failed.append(f"Matched Rank p-value {matched_p:.4f} >= 0.05")
-
-        # Check Profit Factor Hurdle
-        if profit_factor > h.pf_hurdle_p95:
-            passed.append(f"Profit Factor {profit_factor:.2f} > {h.pf_hurdle_p95:.2f} (p={p_pf:.4f})")
+        if has_min_trades:
+            passed.append(f"Sample size {total_trades} >= 100 trades")
         else:
-            failed.append(f"Profit Factor {profit_factor:.2f} <= {h.pf_hurdle_p95:.2f} (p={p_pf:.4f})")
+            failed.append(f"Sample size {total_trades} < 100 trades")
 
-        # Check Win Rate Hurdle
-        if win_rate > h.wr_hurdle_p95:
-            passed.append(f"Win Rate {win_rate:.2f}% > {h.wr_hurdle_p95:.2f}% (p={p_wr:.4f})")
+        if has_positive_ev:
+            passed.append(f"Mean Net Expectancy {expectancy_r:+.4f}R > 0.0R")
         else:
-            failed.append(f"Win Rate {win_rate:.2f}% <= {h.wr_hurdle_p95:.2f}% (p={p_wr:.4f})")
+            failed.append(f"Mean Net Expectancy {expectancy_r:+.4f}R <= 0.0R")
 
-        # Check Expectancy Hurdle (against matched p95 if available, else standard p95)
-        ev_target_hurdle = matched_p95_ev if matched_p95_ev is not None else h.ev_r_hurdle_p95
-        if expectancy_r > ev_target_hurdle:
-            passed.append(f"Expectancy {expectancy_r:+.4f}R > {ev_target_hurdle:+.4f}R (p={p_ev:.4f})")
+        if has_positive_ci:
+            passed.append(f"Bootstrap 95% CI lower bound {bootstrap_ci[0]:+.4f}R > 0.0R")
         else:
-            failed.append(f"Expectancy {expectancy_r:+.4f}R <= {ev_target_hurdle:+.4f}R (p={p_ev:.4f})")
+            ci_str = f"{bootstrap_ci[0]:+.4f}R" if bootstrap_ci is not None else "N/A"
+            failed.append(f"Bootstrap 95% CI lower bound {ci_str} <= 0.0R")
 
-        # Check Sharpe Hurdle
-        if sharpe > h.sharpe_hurdle_p95:
-            passed.append(f"Sharpe {sharpe:.2f} > {h.sharpe_hurdle_p95:.2f} (p={p_sharpe:.4f})")
+        if has_significant_p:
+            passed.append(f"Matched Rank p-value {matched_p:.4f} < 0.05")
         else:
-            failed.append(f"Sharpe {sharpe:.2f} <= {h.sharpe_hurdle_p95:.2f} (p={p_sharpe:.4f})")
+            p_str = f"{matched_p:.4f}" if matched_p is not None else "N/A"
+            failed.append(f"Matched Rank p-value {p_str} >= 0.05")
 
-        # Check Max Drawdown Hurdle
-        if max_dd < h.dd_hurdle_p50:
-            passed.append(f"Max DD {max_dd:.2f}% < {h.dd_hurdle_p50:.2f}%")
-        else:
-            failed.append(f"Max DD {max_dd:.2f}% >= {h.dd_hurdle_p50:.2f}%")
-
-        # Statistical Alpha Verdict
-        # Required: Total trades >= 30, p_composite < 0.05, PF > h.pf_hurdle_p95, EV > ev_target_hurdle
-        is_validated = (
-            total_trades >= 30
-            and p_composite < 0.05
-            and profit_factor > h.pf_hurdle_p95
-            and expectancy_r > ev_target_hurdle
-        )
-
-        verdict = "VALIDATED (p < 0.05)" if is_validated else "REJECTED (p >= 0.05)"
+        diagnostics: List[str] = [
+            f"Net Profit Factor: {profit_factor:.2f} (Null p95 Hurdle: {h.pf_hurdle_p95:.2f}, p={p_pf:.4f})",
+            f"Net Win Rate: {win_rate:.2f}% (Null p95 Hurdle: {h.wr_hurdle_p95:.2f}%, p={p_wr:.4f})",
+            f"Max Drawdown (R): {max_dd_r:.2f}R",
+            f"Sharpe Ratio: {sharpe:.2f} (p={p_sharpe:.4f})",
+        ]
 
         return StrategyEvaluation(
             strategy_name=strategy_name,
@@ -371,6 +405,10 @@ class StrategyEvaluator:
             sharpe_ratio=round(sharpe, 2),
             sortino_ratio=round(sortino, 2),
             max_drawdown_pct=round(max_dd, 2),
+            max_drawdown_r=round(max_dd_r, 2),
+            cumulative_r=round(cumulative_r, 4),
+            days_evaluated=round(days_evaluated, 1),
+            pct_of_dataset_evaluated=pct_of_dataset_evaluated,
             net_profit_pct=round(net_ret, 2),
             p_profit_factor=round(p_pf, 4),
             p_win_rate=round(p_wr, 4),
@@ -383,6 +421,7 @@ class StrategyEvaluator:
             matched_p95_ev=round(matched_p95_ev, 4) if matched_p95_ev is not None else None,
             hurdles_passed=passed,
             hurdles_failed=failed,
+            diagnostics=diagnostics,
             verdict=verdict,
             is_validated=is_validated,
         )

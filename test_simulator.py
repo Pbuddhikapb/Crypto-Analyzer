@@ -271,26 +271,26 @@ def test_sortino_ratio_identical_losses():
     assert summary.sortino_ratio > 0.0
 
 
-def test_ruin_guard_stops_new_positions():
-    """Deterministic losing streak forces ruin (equity <= ruin_threshold_usd) and rejects all future positions."""
+def test_compounding_mode_halts_at_ruin():
+    """Deterministic losing streak forces ruin (equity <= ruin_threshold_usd) and rejects all future positions in compounding mode."""
     sim = SimulationEngine(
         initial_equity_usd=1000.0,
-        risk_per_trade_pct=25.0,  # $250 risk per trade
+        risk_per_trade_pct=40.0,  # 40% risk per trade in compounding mode
         ruin_threshold_usd=500.0,  # Ruin threshold at $500
-        sizing_mode="fixed_risk",
+        sizing_mode="compounding",
     )
 
-    # Trade 1: loses ~$250
+    # Trade 1: loses ~30% with leverage cap, equity drops to ~$695
     sig1 = CandidateSignal("BTCUSDT", "LONG", 100.0, 90.0, timestamp_ms=1000)
     t1_id = sim.open_position(sig1, current_bar_idx=0)
     assert t1_id is not None
     # Bar crashes down to 85 (below SL 90)
     c_loss1 = (100.0, 101.0, 85.0, 88.0)
     sim.process_bar("BTCUSDT", c_loss1, timestamp_ms=2000, current_bar_idx=1)
-    assert sim.equity_usd < 760.0
+    assert sim.equity_usd < 750.0
     assert not sim.ruined
 
-    # Trade 2: loses another ~$250, pushing equity below $500 ruin threshold
+    # Trade 2: loses another ~40% of remaining equity, pushing equity below $500 ruin threshold
     sig2 = CandidateSignal("BTCUSDT", "LONG", 100.0, 90.0, timestamp_ms=3000)
     t2_id = sim.open_position(sig2, current_bar_idx=5)
     assert t2_id is not None
@@ -310,6 +310,51 @@ def test_ruin_guard_stops_new_positions():
     assert summary.ruined is True
     assert summary.ruin_time_ms == 5000
     assert summary.total_trades == 2
+
+
+test_ruin_guard_stops_new_positions = test_compounding_mode_halts_at_ruin
+
+
+def test_fixed_risk_run_evaluates_100pct_of_dataset_days_even_after_deep_drawdown():
+    """In fixed_risk mode, ruin guard never halts entries; evaluates 100% of dataset days even when cumulative R < -95."""
+    sim = SimulationEngine(
+        initial_equity_usd=10000.0,
+        risk_per_trade_pct=1.0,  # $100 risk per trade
+        ruin_threshold_usd=500.0,  # Ruin threshold at $500
+        sizing_mode="fixed_risk",
+    )
+
+    t_ms = 1704067200000  # Start 2024-01-01
+    c_loss = (100.0, 101.0, 85.0, 88.0)
+
+    # Execute 100 consecutive losing trades, each losing ~1.0R
+    for i in range(100):
+        sig = CandidateSignal("BTCUSDT", "LONG", 100.0, 90.0, timestamp_ms=t_ms)
+        t_id = sim.open_position(sig, current_bar_idx=i * 5)
+        assert t_id is not None
+        sim.process_bar("BTCUSDT", c_loss, timestamp_ms=t_ms + 3600000, current_bar_idx=i * 5 + 1)
+        t_ms += 86400000  # 1 day spacing
+
+    # After 100 losing trades, cumulative_r is around -100R (< -95R)
+    # Account equity is negative, ruined flag is set (report-only)
+    assert sim.ruined is True
+    assert sim.ruin_time_ms is not None
+
+    # Trade 101: Must still be allowed to open in fixed_risk mode!
+    sig_next = CandidateSignal("BTCUSDT", "LONG", 100.0, 90.0, timestamp_ms=t_ms)
+    can_open, reason = sim.can_open_position(sig_next.symbol, sig_next.side, current_bar_idx=505)
+    assert can_open is True
+    assert reason == "OK"
+
+    t_next_id = sim.open_position(sig_next, current_bar_idx=505)
+    assert t_next_id is not None
+    sim.process_bar("BTCUSDT", c_loss, timestamp_ms=t_ms + 3600000, current_bar_idx=506)
+
+    summary = sim.compute_summary()
+    assert summary.total_trades == 101
+    assert summary.cumulative_r < -95.0
+    assert summary.max_drawdown_r >= 95.0
+    assert summary.pct_of_dataset_evaluated == 100.0
 
 
 def test_fixed_risk_sizing_independent_of_pnl():

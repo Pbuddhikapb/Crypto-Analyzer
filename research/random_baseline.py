@@ -583,8 +583,9 @@ def run_random_baseline_iteration(
         active_open = still_open
 
         # B. Portfolio limits checks
-        if current_equity <= ruin_limit:
-            continue
+        if sizing_mode == "compounding":
+            if current_equity <= ruin_limit:
+                continue
 
         if len(active_open) >= max_open_positions:
             continue
@@ -652,6 +653,8 @@ def run_random_baseline_iteration(
             "gross_expectancy_r": 0.0,
             "avg_r": 0.0,
             "max_drawdown_pct": 0.0,
+            "max_drawdown_r": 0.0,
+            "cumulative_r": 0.0,
             "sharpe_ratio": 0.0,
             "sortino_ratio": 0.0,
             "net_profit_pct": 0.0,
@@ -715,6 +718,18 @@ def run_random_baseline_iteration(
     downside_dev = float(np.sqrt(np.mean(downside_diff**2)))
     sortino = float((mean_ret / downside_dev) * np.sqrt(252.0)) if downside_dev > 1e-8 else 0.0
 
+    cum_r = 0.0
+    peak_r = 0.0
+    max_dd_r = 0.0
+    for t in completed_trades:
+        cum_r += t.net_r
+        if cum_r > peak_r:
+            peak_r = cum_r
+        else:
+            dd_r = peak_r - cum_r
+            if dd_r > max_dd_r:
+                max_dd_r = dd_r
+
     return {
         "win_rate": round(win_rate, 2),
         "profit_factor": round(profit_factor, 2),
@@ -724,6 +739,8 @@ def run_random_baseline_iteration(
         "gross_expectancy_r": round(gross_expectancy_r, 4),
         "avg_r": round(avg_r, 4),
         "max_drawdown_pct": round(max_dd_pct, 2),
+        "max_drawdown_r": round(max_dd_r, 4),
+        "cumulative_r": round(cum_r, 4),
         "sharpe_ratio": round(sharpe, 2),
         "sortino_ratio": round(sortino, 2),
         "net_profit_pct": round(net_profit_pct, 2),
@@ -774,6 +791,8 @@ def run_monte_carlo_baseline(
         "gross_expectancy_r": [],
         "avg_r": [],
         "max_drawdown_pct": [],
+        "max_drawdown_r": [],
+        "cumulative_r": [],
         "sharpe_ratio": [],
         "sortino_ratio": [],
         "net_profit_pct": [],
@@ -898,6 +917,8 @@ def run_monte_carlo_baseline(
         "gross_expectancy_r": compute_metric_distribution("Gross Expectancy (R)", metrics_log["gross_expectancy_r"]),
         "avg_r": dist_avg_r,
         "max_drawdown_pct": dist_dd,
+        "max_drawdown_r": compute_metric_distribution("Max Drawdown (R)", metrics_log["max_drawdown_r"]),
+        "cumulative_r": compute_metric_distribution("Cumulative Net R", metrics_log["cumulative_r"]),
         "sharpe_ratio": dist_sharpe,
         "sortino_ratio": dist_sortino,
         "net_profit_pct": dist_ret,

@@ -7,7 +7,7 @@ import pandas as pd
 import pytest
 
 from engine.exits import ExitConfig
-from engine.simulator import CandidateSignal, SimulationFriction
+from engine.simulator import CandidateSignal, SimulationFriction, SimulationResult
 from research.evaluator import BaselineHurdles, StrategyEvaluation, StrategyEvaluator, compute_p_value
 from research.strategies import (
     ConfluenceThresholdStrategy,
@@ -154,6 +154,8 @@ class TestStrategyEvaluator:
             "sortino_ratio": 1.10,
             "max_drawdown_pct": 14.5,
             "total_return_pct": 22.0,
+            "bootstrap_ci": (0.02, 0.15),
+            "matched_p_value": 0.01,
         }
         res = evaluator.evaluate("AlphaStrategy", "Validated Model", mock_result)
         assert res.is_validated is True
@@ -179,6 +181,90 @@ class TestStrategyEvaluator:
         assert res.is_validated is False
         assert res.verdict == "REJECTED (p >= 0.05)"
         assert res.p_composite >= 0.05
+
+    def test_explicit_alpha_verdict_synthetic_positive_and_negative(self):
+        """Synthetic strategy with true +0.1R edge is VALIDATED, and one with -0.1R is REJECTED."""
+        evaluator = StrategyEvaluator()
+
+        # Positive strategy (+0.10R edge, 150 trades, CI > 0, matched rank p < 0.05)
+        pos_result = {
+            "total_trades": 150,
+            "win_rate_pct": 55.0,
+            "profit_factor": 1.30,
+            "expectancy_r": 0.1000,
+            "expectancy_usd": 15.0,
+            "avg_r": 0.1000,
+            "sharpe_ratio": 1.2,
+            "sortino_ratio": 1.5,
+            "max_drawdown_pct": 10.0,
+            "total_return_pct": 30.0,
+            "bootstrap_ci": (0.035, 0.165),
+            "matched_p_value": 0.005,
+        }
+        res_pos = evaluator.evaluate("SyntheticEdge", "True +0.1R Edge", pos_result)
+        assert res_pos.is_validated is True
+        assert res_pos.verdict == "VALIDATED (p < 0.05)"
+        assert res_pos.expectancy_r == 0.1000
+        assert res_pos.bootstrap_ci[0] > 0.0
+        assert res_pos.matched_p_value < 0.05
+
+        # Negative strategy (-0.10R edge, 150 trades, CI <= 0, matched rank p >= 0.05)
+        neg_result = {
+            "total_trades": 150,
+            "win_rate_pct": 40.0,
+            "profit_factor": 0.82,
+            "expectancy_r": -0.1000,
+            "expectancy_usd": -15.0,
+            "avg_r": -0.1000,
+            "sharpe_ratio": -1.1,
+            "sortino_ratio": -1.4,
+            "max_drawdown_pct": 35.0,
+            "total_return_pct": -25.0,
+            "bootstrap_ci": (-0.165, -0.035),
+            "matched_p_value": 0.985,
+        }
+        res_neg = evaluator.evaluate("SyntheticNoise", "Negative -0.1R Drift", neg_result)
+        assert res_neg.is_validated is False
+        assert res_neg.verdict == "REJECTED (p >= 0.05)"
+        assert res_neg.expectancy_r == -0.1000
+        assert res_neg.bootstrap_ci[0] <= 0.0
+        assert res_neg.matched_p_value >= 0.05
+
+    def test_strategy_results_json_metadata_date_consistency(self):
+        """start_time_ms/end_time_ms must be derived from actual dataset range and match data_date_range."""
+        import json
+        import os
+        from datetime import datetime, timezone
+
+        json_path = "research/reports/strategy_results.json"
+        if not os.path.exists(json_path):
+            pytest.skip("strategy_results.json not generated yet")
+
+        with open(json_path, "r") as f:
+            data = json.load(f)
+
+        strategies = data.get("strategies", data)
+        assert len(strategies) >= 4, "Must contain all strategies"
+        meta = data.get("metadata", {})
+        for s_name, strat_meta in strategies.items():
+            start_ms = strat_meta.get("start_time_ms") or meta.get("start_time_ms")
+            end_ms = strat_meta.get("end_time_ms") or meta.get("end_time_ms")
+            date_range = strat_meta.get("data_date_range") or meta.get("data_date_range")
+
+            assert start_ms is not None and start_ms > 0
+            assert end_ms is not None and end_ms > start_ms
+            assert date_range is not None and " to " in date_range
+
+            start_d_str = datetime.fromtimestamp(start_ms / 1000.0, tz=timezone.utc).strftime("%Y-%m-%d")
+            end_d_str = datetime.fromtimestamp(end_ms / 1000.0, tz=timezone.utc).strftime("%Y-%m-%d")
+
+            expected_range = f"{start_d_str} to {end_d_str}"
+            assert date_range == expected_range, f"Mismatch for {s_name}: {date_range} vs {expected_range}"
+
+            if "days_evaluated" in strat_meta:
+                assert strat_meta["days_evaluated"] > 0
+            if "pct_of_dataset_evaluated" in strat_meta and strat_meta.get("sizing_mode") == "fixed_risk":
+                assert strat_meta["pct_of_dataset_evaluated"] == 100.0
 
 
 class TestPortfolioSimulatorSmoke:
@@ -229,3 +315,195 @@ class TestPortfolioSimulatorSmoke:
         assert sim_res.total_fees_usd > 0
         assert sim_res.total_slippage_usd > 0
         assert len(sim_res.equity_curve) >= 2
+
+
+class TestMarkdownReportGeneration:
+    """Verify publication-grade Strategy Validation Report formatting and dynamic narrative rules."""
+
+    @staticmethod
+    def _make_sim_result(
+        total_trades: int = 150,
+        win_rate_pct: float = 42.0,
+        profit_factor: float = 0.85,
+        gross_profit_factor: float = 0.92,
+        expectancy_r: float = -0.08,
+        gross_expectancy_r: float = -0.03,
+        max_drawdown_r: float = 15.2,
+        cumulative_r: float = -12.0,
+        days_evaluated: float = 1022.0,
+        pct_of_dataset_evaluated: float = 100.0,
+        ruined: bool = False,
+        sizing_mode: str = "fixed_risk",
+    ) -> SimulationResult:
+        return SimulationResult(
+            initial_equity_usd=10000.0,
+            final_equity_usd=9000.0,
+            net_profit_usd=-1000.0,
+            net_profit_pct=-10.0,
+            total_trades=total_trades,
+            winning_trades=int(total_trades * win_rate_pct / 100),
+            losing_trades=total_trades - int(total_trades * win_rate_pct / 100),
+            win_rate_pct=win_rate_pct,
+            gross_profit_usd=2000.0,
+            gross_loss_usd=2500.0,
+            profit_factor=profit_factor,
+            expectancy_usd=expectancy_r * 100,
+            expectancy_r=expectancy_r,
+            avg_r_multiple=expectancy_r,
+            max_drawdown_pct=18.5,
+            max_drawdown_duration_bars=50,
+            sharpe_ratio=-1.5,
+            sortino_ratio=-1.8,
+            total_fees_usd=100.0,
+            total_slippage_usd=50.0,
+            total_funding_cost_usd=10.0,
+            ruined=ruined,
+            sizing_mode=sizing_mode,
+            gross_profit_factor=gross_profit_factor,
+            gross_expectancy_r=gross_expectancy_r,
+            cumulative_r=cumulative_r,
+            max_drawdown_r=max_drawdown_r,
+            days_evaluated=days_evaluated,
+            pct_of_dataset_evaluated=pct_of_dataset_evaluated,
+        )
+
+    def test_report_all_rejected_has_no_edge_emerges_or_proven(self, tmp_path):
+        from research.evaluator import StrategyEvaluation
+        from research.strategy_runner import StrategyRunResult, generate_markdown_report
+
+        sim_res1 = self._make_sim_result(total_trades=150, win_rate_pct=42.0, expectancy_r=-0.08)
+        ev1 = StrategyEvaluation(
+            strategy_name="TrendPullback",
+            description="EMA Pullback",
+            total_trades=150,
+            win_rate=42.0,
+            profit_factor=0.85,
+            expectancy_r=-0.08,
+            expectancy_usd=-8.0,
+            avg_r=-0.08,
+            sharpe_ratio=-1.5,
+            sortino_ratio=-1.8,
+            max_drawdown_pct=18.5,
+            net_profit_pct=-10.0,
+            p_profit_factor=0.80,
+            p_win_rate=0.75,
+            p_expectancy_r=0.85,
+            p_sharpe=0.90,
+            p_composite=0.85,
+            is_validated=False,
+            verdict="REJECTED (p >= 0.05)",
+        )
+        r1 = StrategyRunResult(
+            strategy_name="TrendPullback",
+            description="EMA Pullback",
+            sim_result=sim_res1,
+            evaluation=ev1,
+            per_symbol_metrics={"BTCUSDT": {"trades": 150, "win_rate": 42.0, "profit_factor": 0.85, "net_pnl": -1000.0, "avg_r": -0.08}},
+            total_signals_generated=500,
+            signals_executed=150,
+            bootstrap_ci=(-0.14, -0.02),
+        )
+
+        out_path = str(tmp_path / "test_report.md")
+        generate_markdown_report([r1], out_path)
+
+        with open(out_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        # Rule 5 check: Must not contain "edge emerges" or "proven"
+        assert "edge emerges" not in content.lower()
+        assert "proven" not in content.lower()
+
+        # Rule 1 check: Plainly states no strategy passed
+        assert "No strategy passed; no pattern in this report has validated edge" in content
+
+        # Rule 3 check: Limitations section exists with required fields
+        assert "## 5. Limitations" in content
+        assert "fixed_risk" in content
+        assert "**TrendPullback**: 150 executed trades" in content
+        assert "Prompt 7" in content
+        assert "gross P&L" in content or "Gross vs. Net" in content
+
+    def test_report_validated_lists_only_passed_strategies(self, tmp_path):
+        from research.evaluator import StrategyEvaluation
+        from research.strategy_runner import StrategyRunResult, generate_markdown_report
+
+        sim_pass = self._make_sim_result(total_trades=200, win_rate_pct=58.0, profit_factor=1.45, expectancy_r=0.15)
+        ev_pass = StrategyEvaluation(
+            strategy_name="AlphaModel",
+            description="Alpha",
+            total_trades=200,
+            win_rate=58.0,
+            profit_factor=1.45,
+            expectancy_r=0.15,
+            expectancy_usd=15.0,
+            avg_r=0.15,
+            sharpe_ratio=1.8,
+            sortino_ratio=2.2,
+            max_drawdown_pct=8.0,
+            net_profit_pct=25.0,
+            p_profit_factor=0.001,
+            p_win_rate=0.002,
+            p_expectancy_r=0.001,
+            p_sharpe=0.005,
+            p_composite=0.001,
+            matched_p_value=0.001,
+            is_validated=True,
+            verdict="VALIDATED (p < 0.05)",
+        )
+        r_pass = StrategyRunResult(
+            strategy_name="AlphaModel",
+            description="Alpha",
+            sim_result=sim_pass,
+            evaluation=ev_pass,
+            per_symbol_metrics={"BTCUSDT": {"trades": 200, "win_rate": 58.0, "profit_factor": 1.45, "net_pnl": 2500.0, "avg_r": 0.15}},
+            total_signals_generated=800,
+            signals_executed=200,
+            bootstrap_ci=(0.08, 0.22),
+        )
+
+        sim_fail = self._make_sim_result(total_trades=110, win_rate_pct=41.0, profit_factor=0.82, expectancy_r=-0.11)
+        ev_fail = StrategyEvaluation(
+            strategy_name="BetaNoise",
+            description="Noise",
+            total_trades=110,
+            win_rate=41.0,
+            profit_factor=0.82,
+            expectancy_r=-0.11,
+            expectancy_usd=-11.0,
+            avg_r=-0.11,
+            sharpe_ratio=-1.2,
+            sortino_ratio=-1.4,
+            max_drawdown_pct=15.0,
+            net_profit_pct=-8.0,
+            p_profit_factor=0.85,
+            p_win_rate=0.80,
+            p_expectancy_r=0.90,
+            p_sharpe=0.88,
+            p_composite=0.90,
+            matched_p_value=0.92,
+            is_validated=False,
+            verdict="REJECTED (p >= 0.05)",
+        )
+        r_fail = StrategyRunResult(
+            strategy_name="BetaNoise",
+            description="Noise",
+            sim_result=sim_fail,
+            evaluation=ev_fail,
+            per_symbol_metrics={"BTCUSDT": {"trades": 110, "win_rate": 41.0, "profit_factor": 0.82, "net_pnl": -800.0, "avg_r": -0.11}},
+            total_signals_generated=400,
+            signals_executed=110,
+            bootstrap_ci=(-0.18, -0.04),
+        )
+
+        out_path = str(tmp_path / "test_report_mixed.md")
+        generate_markdown_report([r_pass, r_fail], out_path)
+
+        with open(out_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        assert "Validated Setups (1/2)" in content
+        assert "AlphaModel" in content
+        assert "BetaNoise" in content
+        assert "edge emerges" not in content.lower()
+        assert "proven" not in content.lower()

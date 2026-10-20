@@ -4,7 +4,7 @@
     "git_commit": "c04b227",
     "data_date_range": "2024-01-01 to 2026-10-18",
     "start_time_ms": 1704067200000,
-    "end_time_ms": 1729267200000
+    "end_time_ms": 1792364400000
   },
   "strategies": {
     "TrendPullback": {
