@@ -268,3 +268,114 @@ def test_sortino_ratio_identical_losses():
 
     summary = sim.compute_summary()
     assert summary.sortino_ratio > 0.0
+
+
+def test_ruin_guard_stops_new_positions():
+    """Deterministic losing streak forces ruin (equity <= ruin_threshold_usd) and rejects all future positions."""
+    sim = SimulationEngine(
+        initial_equity_usd=1000.0,
+        risk_per_trade_pct=25.0,  # $250 risk per trade
+        ruin_threshold_usd=500.0,  # Ruin threshold at $500
+        sizing_mode="fixed_risk",
+    )
+
+    # Trade 1: loses ~$250
+    sig1 = CandidateSignal("BTCUSDT", "LONG", 100.0, 90.0, timestamp_ms=1000)
+    t1_id = sim.open_position(sig1, current_bar_idx=0)
+    assert t1_id is not None
+    # Bar crashes down to 85 (below SL 90)
+    c_loss1 = (100.0, 101.0, 85.0, 88.0)
+    sim.process_bar("BTCUSDT", c_loss1, timestamp_ms=2000, current_bar_idx=1)
+    assert sim.equity_usd < 760.0
+    assert not sim.ruined
+
+    # Trade 2: loses another ~$250, pushing equity below $500 ruin threshold
+    sig2 = CandidateSignal("BTCUSDT", "LONG", 100.0, 90.0, timestamp_ms=3000)
+    t2_id = sim.open_position(sig2, current_bar_idx=5)
+    assert t2_id is not None
+    sim.process_bar("BTCUSDT", c_loss1, timestamp_ms=4000, current_bar_idx=6)
+    assert sim.equity_usd <= 500.0
+
+    # Trade 3: Must be rejected because account is ruined
+    sig3 = CandidateSignal("BTCUSDT", "LONG", 100.0, 90.0, timestamp_ms=5000)
+    can_open, reason = sim.can_open_position(sig3.symbol, sig3.side, current_bar_idx=10)
+    assert not can_open
+    assert "ruined" in reason.lower()
+
+    t3_id = sim.open_position(sig3, current_bar_idx=10)
+    assert t3_id is None
+
+    summary = sim.compute_summary()
+    assert summary.ruined is True
+    assert summary.ruin_time_ms == 5000
+    assert summary.total_trades == 2
+
+
+def test_fixed_risk_sizing_independent_of_pnl():
+    """In fixed_risk mode, position size is calculated from initial equity, invariant to PnL changes."""
+    # 1. Fixed risk engine
+    sim_fixed = SimulationEngine(
+        initial_equity_usd=10000.0,
+        risk_per_trade_pct=1.0,  # $100 risk
+        sizing_mode="fixed_risk",
+    )
+    sig1 = CandidateSignal("BTCUSDT", "LONG", 100.0, 90.0, timestamp_ms=1000)
+    t1_id = sim_fixed.open_position(sig1, 0)
+    pos1_fixed = sim_fixed.active_positions[t1_id]["notional_usd"]
+    # Close with a 1R loss (SL at 90.0)
+    c_loss = (100.0, 100.0, 85.0, 88.0)
+    sim_fixed.process_bar("BTCUSDT", c_loss, timestamp_ms=2000, current_bar_idx=1)
+    assert sim_fixed.equity_usd < 9950.0
+
+    # Trade 2 with same risk distance
+    sig2 = CandidateSignal("BTCUSDT", "LONG", 100.0, 90.0, timestamp_ms=3000)
+    t2_id = sim_fixed.open_position(sig2, 10)
+    pos2_fixed = sim_fixed.active_positions[t2_id]["notional_usd"]
+
+    # In fixed_risk, position size for trade 2 must equal trade 1
+    assert round(pos1_fixed, 2) == round(pos2_fixed, 2)
+
+    # 2. In compounding mode, position size scales down with lower equity
+    sim_comp = SimulationEngine(
+        initial_equity_usd=10000.0,
+        risk_per_trade_pct=1.0,
+        sizing_mode="compounding",
+    )
+    t1_c_id = sim_comp.open_position(sig1, 0)
+    pos1_comp = sim_comp.active_positions[t1_c_id]["notional_usd"]
+    sim_comp.process_bar("BTCUSDT", c_loss, timestamp_ms=2000, current_bar_idx=1)
+
+    t2_c_id = sim_comp.open_position(sig2, 10)
+    pos2_comp = sim_comp.active_positions[t2_c_id]["notional_usd"]
+    assert pos2_comp < pos1_comp
+
+
+def test_no_ghost_trades_below_minimum_unless_before_ruin():
+    """Ensure no executed trade in SimulationResult has position_size_usd < $10 unless opened before ruin."""
+    sim = SimulationEngine(
+        initial_equity_usd=1000.0,
+        ruin_threshold_usd=200.0,
+        risk_per_trade_pct=10.0,  # $100 risk
+        sizing_mode="fixed_risk",
+    )
+
+    for i in range(15):
+        ts = 10000 + i * 1000
+        sig = CandidateSignal("BTCUSDT", "LONG", 100.0, 90.0, timestamp_ms=ts)
+        t_id = sim.open_position(sig, current_bar_idx=i * 5)
+        if t_id:
+            # Suffer loss
+            c = (100.0, 101.0, 85.0, 88.0)
+            sim.process_bar("BTCUSDT", c, timestamp_ms=ts + 500, current_bar_idx=i * 5 + 1)
+
+    summary = sim.compute_summary()
+    assert summary.ruined is True
+    assert summary.total_trades > 0
+
+    for t in summary.trades:
+        # Every trade must either have position >= $10 or have been opened before ruin occurred
+        if summary.ruin_time_ms is not None:
+            assert t.position_size_usd >= 10.0 or t.entry_time_ms < summary.ruin_time_ms
+        else:
+            assert t.position_size_usd >= 10.0
+

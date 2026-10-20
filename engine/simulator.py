@@ -105,6 +105,9 @@ class SimulationResult:
     total_funding_cost_usd: float
     trades: List[ExecutedTrade] = field(default_factory=list)
     equity_curve: List[Tuple[int, float]] = field(default_factory=list)
+    ruined: bool = False
+    ruin_time_ms: Optional[int] = None
+    sizing_mode: str = "fixed_risk"
 
 
 class SimulationEngine:
@@ -123,6 +126,8 @@ class SimulationEngine:
         max_leverage: float = 3.0,
         friction: Optional[SimulationFriction] = None,
         exit_config: Optional[ExitConfig] = None,
+        ruin_threshold_usd: Optional[float] = None,
+        sizing_mode: str = "fixed_risk",
     ):
         self.initial_equity_usd = float(initial_equity_usd)
         self.equity_usd = float(initial_equity_usd)
@@ -133,6 +138,14 @@ class SimulationEngine:
         self.max_leverage = float(max_leverage)
         self.friction = friction or SimulationFriction()
         self.exit_config = exit_config or ExitConfig()
+        self.ruin_threshold_usd = (
+            float(ruin_threshold_usd)
+            if ruin_threshold_usd is not None
+            else (0.05 * self.initial_equity_usd)
+        )
+        self.sizing_mode = sizing_mode
+        self.ruined = False
+        self.ruin_time_ms: Optional[int] = None
 
         # Active state
         # trade_id -> dict of trade bookkeeping
@@ -146,6 +159,12 @@ class SimulationEngine:
 
     def can_open_position(self, symbol: str, side: str, current_bar_idx: int) -> Tuple[bool, str]:
         """Verify whether portfolio constraints allow opening a new position."""
+        # 0. Ruin guard check: reject all new positions if account is ruined
+        if self.ruined or self.equity_usd <= self.ruin_threshold_usd:
+            if not self.ruined:
+                self.ruined = True
+            return False, f"Account ruined (equity {self.equity_usd:.2f} <= ruin threshold {self.ruin_threshold_usd:.2f})"
+
         sym = symbol.upper()
         side_upper = side.upper()
 
@@ -177,10 +196,13 @@ class SimulationEngine:
         """
         can_open, reason = self.can_open_position(signal.symbol, signal.side, current_bar_idx)
         if not can_open:
+            if self.ruined and self.ruin_time_ms is None:
+                self.ruin_time_ms = signal.timestamp_ms
             return None
 
         # Position sizing calculation
-        risk_usd = self.equity_usd * (self.risk_per_trade_pct / 100.0)
+        sizing_equity = self.initial_equity_usd if self.sizing_mode == "fixed_risk" else self.equity_usd
+        risk_usd = sizing_equity * (self.risk_per_trade_pct / 100.0)
         risk_dist = abs(signal.entry_price - signal.stop_loss)
         if risk_dist <= 0.0:
             return None
@@ -189,7 +211,7 @@ class SimulationEngine:
         notional_usd = shares * signal.entry_price
 
         # Cap notional at max leverage
-        max_notional = self.equity_usd * self.max_leverage
+        max_notional = sizing_equity * self.max_leverage
         if notional_usd > max_notional:
             notional_usd = max_notional
             shares = notional_usd / signal.entry_price
@@ -394,6 +416,9 @@ class SimulationEngine:
                 total_funding_cost_usd=0.0,
                 trades=[],
                 equity_curve=self.equity_curve,
+                ruined=self.ruined,
+                ruin_time_ms=self.ruin_time_ms,
+                sizing_mode=self.sizing_mode,
             )
 
         wins = [t for t in trades if t.net_pnl_usd > 0]
@@ -487,4 +512,7 @@ class SimulationEngine:
             total_funding_cost_usd=round(total_funding, 2),
             trades=trades,
             equity_curve=self.equity_curve,
+            ruined=self.ruined,
+            ruin_time_ms=self.ruin_time_ms,
+            sizing_mode=self.sizing_mode,
         )

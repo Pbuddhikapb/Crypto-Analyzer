@@ -81,18 +81,24 @@ def simulate_portfolio_signals(
     max_leverage: float = 3.0,
     friction: Optional[SimulationFriction] = None,
     exit_config: Optional[ExitConfig] = None,
+    sizing_mode: str = "fixed_risk",
+    ruin_threshold_usd: Optional[float] = None,
 ) -> SimulationResult:
     """
     Simulate portfolio execution of chronological candidate signals enforcing:
     1. Max concurrency (3 total, 2 directional)
     2. Zero duplicate positions per symbol
     3. 3-bar post-exit symbol cooldown
-    4. 1% equity risk per trade, max 3x leverage
-    5. Single Exit Authority lifecycle with adverse market stop slippage and taker fees
-    6. Deferred equity credit upon trade exit
+    4. Sizing mode: fixed_risk (default) or compounding, max 3x leverage
+    5. Ruin guard: reject all new entries if equity <= ruin_threshold_usd (5% of initial equity)
+    6. Single Exit Authority lifecycle with adverse market stop slippage and taker fees
+    7. Deferred equity credit upon trade exit
     """
     fric = friction or SimulationFriction()
     cfg = exit_config or ExitConfig()
+    ruin_limit = float(ruin_threshold_usd) if ruin_threshold_usd is not None else (0.05 * initial_equity_usd)
+    ruined = False
+    ruin_time_ms: Optional[int] = None
 
     # Sort all candidates chronologically
     sorted_signals = sorted(candidates, key=lambda s: s.timestamp_ms)
@@ -123,7 +129,14 @@ def simulate_portfolio_signals(
                 still_open.append(pos)
         active_open = still_open
 
-        # 2. Portfolio Concurrency Checks
+        # 2. Ruin Guard Check: reject opening new trades if account is ruined
+        if current_equity <= ruin_limit:
+            if not ruined:
+                ruined = True
+                ruin_time_ms = c_ts
+            continue
+
+        # 3. Portfolio Concurrency Checks
         if len(active_open) >= max_open_positions:
             continue
 
@@ -158,6 +171,8 @@ def simulate_portfolio_signals(
         if not candles_forward:
             continue
 
+        equity_for_sizing = initial_equity_usd if sizing_mode == "fixed_risk" else current_equity
+
         trade = simulate_single_trade_lifecycle(
             symbol=sym,
             side=sig.side,
@@ -165,7 +180,7 @@ def simulate_portfolio_signals(
             stop_loss=sig.stop_loss,
             entry_ts_ms=c_ts,
             candles_forward=candles_forward,
-            equity_at_entry=current_equity,
+            equity_at_entry=equity_for_sizing,
             risk_per_trade_pct=risk_per_trade_pct,
             max_leverage=max_leverage,
             friction=fric,
@@ -223,6 +238,9 @@ def simulate_portfolio_signals(
             total_funding_cost_usd=0.0,
             trades=[],
             equity_curve=equity_curve,
+            ruined=ruined,
+            ruin_time_ms=ruin_time_ms,
+            sizing_mode=sizing_mode,
         )
 
     # Chronological sort for drawdown and equity path
@@ -305,6 +323,9 @@ def simulate_portfolio_signals(
         total_funding_cost_usd=round(total_funding, 2),
         trades=completed_trades,
         equity_curve=equity_curve,
+        ruined=ruined,
+        ruin_time_ms=ruin_time_ms,
+        sizing_mode=sizing_mode,
     )
 
 
@@ -342,6 +363,8 @@ def run_strategy_evidence_validation(
     symbols: Optional[List[str]] = None,
     data_dir: str = "data/candles",
     output_report_path: str = "research/reports/strategy_validation_report.md",
+    sizing_mode: str = "fixed_risk",
+    ruin_threshold_usd: Optional[float] = None,
 ) -> List[StrategyRunResult]:
     """
     Main orchestration routine running all 4 hypotheses against the Phase 2 Monte Carlo hurdle.
@@ -395,11 +418,13 @@ def run_strategy_evidence_validation(
         logger.info(f"  Total signals for {s_name}: {len(all_candidates)} across {len(syms)} pairs ({t_gen:.2f}s)")
 
         # Run sequential multi-symbol portfolio simulation
-        logger.info(f"  Simulating institutional portfolio execution for {s_name}...")
+        logger.info(f"  Simulating institutional portfolio execution for {s_name} (sizing: {sizing_mode})...")
         sim_res = simulate_portfolio_signals(
             candidates=all_candidates,
             candles_dict=candles_dict,
             bar_index_map=bar_index_map,
+            sizing_mode=sizing_mode,
+            ruin_threshold_usd=ruin_threshold_usd,
         )
 
         evaluation = evaluator.evaluate(s_name, s_desc, sim_res)
@@ -439,10 +464,16 @@ def generate_markdown_report(results: List[StrategyRunResult], output_path: str)
     for r in results:
         ev = r.evaluation
         badge = "🟢 **VALIDATED**" if ev.is_validated else "🔴 **REJECTED**"
+        ruin_str = (
+            f"⚠️ Ruined ({datetime.fromtimestamp(r.sim_result.ruin_time_ms / 1000, tz=timezone.utc).strftime('%Y-%m-%d')})"
+            if r.sim_result.ruined and r.sim_result.ruin_time_ms
+            else ("Ruined" if r.sim_result.ruined else "No")
+        )
         row = (
             f"| **{ev.strategy_name}** | {ev.total_trades} | {ev.win_rate:.1f}% | "
             f"{ev.profit_factor:.2f} | {ev.expectancy_r:+.4f}R | {ev.sharpe_ratio:.2f} | "
             f"{ev.sortino_ratio:.2f} | {ev.max_drawdown_pct:.1f}% | {ev.net_profit_pct:+.1f}% | "
+            f"`{r.sim_result.sizing_mode}` | {ruin_str} | "
             f"`p = {ev.p_composite:.4f}` | {badge} |"
         )
         scorecard_rows.append(row)
@@ -464,10 +495,16 @@ def generate_markdown_report(results: List[StrategyRunResult], output_path: str)
         passed_list = "\n".join([f"- ✅ {p}" for p in ev.hurdles_passed]) or "- None"
         failed_list = "\n".join([f"- ❌ {f}" for f in ev.hurdles_failed]) or "- None"
 
+        ruin_info = (
+            f"YES (at {datetime.fromtimestamp(r.sim_result.ruin_time_ms / 1000, tz=timezone.utc).strftime('%Y-%m-%d %H:%M UTC')})"
+            if r.sim_result.ruined and r.sim_result.ruin_time_ms
+            else ("YES" if r.sim_result.ruined else "NO")
+        )
         verdict_banner = (
             f"> **Statistical Verdict**: **`{ev.verdict}`**  \n"
             f"> Composite $p$-value against Phase 2 Monte Carlo Hurdle: **`p = {ev.p_composite:.4f}`**  \n"
-            f"> Total Candidate Signals: `{r.total_signals_generated}` | Executed Trades: `{r.signals_executed}`"
+            f"> Total Candidate Signals: `{r.total_signals_generated}` | Executed Trades: `{r.signals_executed}`  \n"
+            f"> Sizing Mode: `{r.sim_result.sizing_mode}` | Account Ruined: `{ruin_info}`"
         )
 
         section = f"""### Hypothesis: {ev.strategy_name}
@@ -520,8 +557,8 @@ Four core discretionary trading hypotheses were codified with strict zero lookah
 
 ## 2. Master Strategy Scorecard
 
-| Strategy | Trades | Win Rate | Profit Factor | Expectancy | Sharpe | Sortino | Max DD | Net Return | Empirical $p$-value | Alpha Verdict |
-| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| Strategy | Trades | Win Rate | Profit Factor | Expectancy | Sharpe | Sortino | Max DD | Net Return | Sizing | Ruined? | Empirical $p$-value | Alpha Verdict |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
 {scorecard_table}
 
 ---
@@ -556,11 +593,26 @@ def main():
         default="research/reports/strategy_validation_report.md",
         help="Output report markdown path",
     )
+    parser.add_argument(
+        "--sizing-mode",
+        type=str,
+        choices=["fixed_risk", "compounding"],
+        default="fixed_risk",
+        help="Position sizing mode (default: fixed_risk)",
+    )
+    parser.add_argument(
+        "--ruin-threshold",
+        type=float,
+        default=None,
+        help="Ruin threshold in USD (default: 5% of initial equity)",
+    )
     args = parser.parse_args()
 
     results = run_strategy_evidence_validation(
         data_dir=args.data_dir,
         output_report_path=args.output,
+        sizing_mode=args.sizing_mode,
+        ruin_threshold_usd=args.ruin_threshold,
     )
 
     print("\n" + "=" * 80)

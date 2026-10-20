@@ -284,6 +284,8 @@ def run_random_baseline_iteration(
     friction: Optional[SimulationFriction] = None,
     exit_config: Optional[ExitConfig] = None,
     rng: Optional[np.random.Generator] = None,
+    sizing_mode: str = "fixed_risk",
+    ruin_threshold_usd: Optional[float] = None,
 ) -> Dict[str, float]:
     """
     Run a single Monte Carlo pass with randomized entries and rigorous portfolio concurrency.
@@ -291,6 +293,7 @@ def run_random_baseline_iteration(
     fric = friction or SimulationFriction()
     cfg = exit_config or ExitConfig()
     gen = rng or np.random.default_rng(iteration_id)
+    ruin_limit = float(ruin_threshold_usd) if ruin_threshold_usd is not None else (0.05 * initial_equity_usd)
 
     # 1. Generate candidate signals across all symbols
     candidates: List[Tuple[int, str, str, float, float, int]] = []
@@ -341,6 +344,9 @@ def run_random_baseline_iteration(
         active_open = still_open
 
         # B. Portfolio limits checks
+        if current_equity <= ruin_limit:
+            continue
+
         if len(active_open) >= max_open_positions:
             continue
 
@@ -362,6 +368,8 @@ def run_random_baseline_iteration(
         sym_candles = candles_dict[sym]
         forward_slice = sym_candles[b_idx : min(b_idx + 100, len(sym_candles))]
 
+        equity_for_sizing = initial_equity_usd if sizing_mode == "fixed_risk" else current_equity
+
         trade = simulate_single_trade_lifecycle(
             symbol=sym,
             side=side,
@@ -369,7 +377,7 @@ def run_random_baseline_iteration(
             stop_loss=sl_p,
             entry_ts_ms=c_ts,
             candles_forward=forward_slice,
-            equity_at_entry=current_equity,
+            equity_at_entry=equity_for_sizing,
             risk_per_trade_pct=risk_per_trade_pct,
             max_leverage=max_leverage,
             friction=fric,
@@ -480,6 +488,8 @@ def run_monte_carlo_baseline(
     output_report_path: str = "research/reports/random_baseline_hurdle.md",
     seed: int = 42,
     trades_per_symbol: int = 25,
+    sizing_mode: str = "fixed_risk",
+    ruin_threshold_usd: Optional[float] = None,
 ) -> BaselineReport:
     """
     Run full Monte Carlo simulation across N iterations and compile distributions.
@@ -526,6 +536,8 @@ def run_monte_carlo_baseline(
             friction=friction,
             exit_config=exit_config,
             rng=iter_rng,
+            sizing_mode=sizing_mode,
+            ruin_threshold_usd=ruin_threshold_usd,
         )
         for k, v in res.items():
             metrics_log[k].append(v)
@@ -635,6 +647,8 @@ def main():
     parser.add_argument("--data-dir", type=str, default="data/candles", help="Parquet data directory")
     parser.add_argument("--output", type=str, default="research/reports/random_baseline_hurdle.md", help="Output report path")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility")
+    parser.add_argument("--sizing-mode", type=str, choices=["fixed_risk", "compounding"], default="fixed_risk", help="Sizing mode (default: fixed_risk)")
+    parser.add_argument("--ruin-threshold", type=float, default=None, help="Ruin threshold in USD (default: 5% of initial equity)")
 
     args = parser.parse_args()
     report = run_monte_carlo_baseline(
@@ -643,6 +657,8 @@ def main():
         data_dir=args.data_dir,
         output_report_path=args.output,
         seed=args.seed,
+        sizing_mode=args.sizing_mode,
+        ruin_threshold_usd=args.ruin_threshold,
     )
     print("\n" + "=" * 60)
     print("MONTE CARLO BASELINE COMPLETE")
