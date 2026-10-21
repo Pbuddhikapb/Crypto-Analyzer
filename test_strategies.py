@@ -6,16 +6,14 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from engine.exits import ExitConfig
-from engine.simulator import CandidateSignal, SimulationFriction, SimulationResult
-from research.evaluator import BaselineHurdles, StrategyEvaluation, StrategyEvaluator, compute_p_value
+from engine.simulator import CandidateSignal, SimulationResult
+from research.evaluator import StrategyEvaluator, compute_p_value
 from research.strategies import (
-    ConfluenceThresholdStrategy,
     FVGRetestStrategy,
     LiquiditySweepStrategy,
     TrendPullbackStrategy,
 )
-from research.strategy_runner import compute_per_symbol_breakdown, simulate_portfolio_signals
+from research.strategy_runner import simulate_portfolio_signals
 
 
 def make_synthetic_candles(n: int = 300, base_price: float = 100.0, trend: float = 0.05) -> pd.DataFrame:
@@ -530,4 +528,136 @@ class TestStrategyResultsDatasetHash:
             f"strategy_results.json dataset_hash ({saved_hash}) differs from loader's current hash ({current_hash}). "
             f"Regenerate research/reports/strategy_results.json to synchronize."
         )
+
+
+class TestZeroVolumeFiltering:
+    """Verify that the real runner data path includes volume and skips signals on zero-volume entry bars."""
+
+    def test_runner_candle_arrays_include_volume_and_skip_zero_volume_signal(self, caplog):
+        import logging
+        from data.loader import load_candles
+        from research.strategies import TrendPullbackStrategy
+        from engine.simulator import simulate_portfolio_signals
+
+        df_1h = load_candles("BTCUSDT", "1h").iloc[:1000].copy()
+        df_4h = load_candles("BTCUSDT", "4h").iloc[:300].copy()
+
+        strat = TrendPullbackStrategy()
+        signals = strat.generate_signals("BTCUSDT", df_1h, df_4h)
+        assert len(signals) > 0, "Expected at least one signal in candle slice"
+
+        target_sig = signals[0]
+        target_bar_idx = target_sig.metadata["bar_idx"]
+        target_ts = target_sig.timestamp_ms
+
+        # 1. Normal volume run: signal executes
+        arr_normal = df_1h[["open", "high", "low", "close", "open_time", "volume"]].to_numpy(dtype=np.float64)
+        assert arr_normal.shape[1] >= 6, "Array must include volume at column index 5"
+        assert arr_normal[target_bar_idx, 5] > 0.0
+
+        candles_normal = {"BTCUSDT": arr_normal}
+        bar_idx_normal = {"BTCUSDT": {int(arr_normal[i, 4]): i for i in range(len(arr_normal))}}
+        res_normal = simulate_portfolio_signals(
+            candidates=[target_sig],
+            candles_dict=candles_normal,
+            bar_index_map=bar_idx_normal,
+        )
+        assert res_normal.total_trades == 1
+
+        # 2. Zero volume entry bar: signal must be skipped
+        df_1h_zero = df_1h.copy()
+        df_1h_zero.loc[target_bar_idx, "volume"] = 0.0
+        arr_zero = df_1h_zero[["open", "high", "low", "close", "open_time", "volume"]].to_numpy(dtype=np.float64)
+        assert arr_zero[target_bar_idx, 5] == 0.0
+
+        candles_zero = {"BTCUSDT": arr_zero}
+        bar_idx_zero = {"BTCUSDT": {int(arr_zero[i, 4]): i for i in range(len(arr_zero))}}
+
+        with caplog.at_level(logging.WARNING):
+            res_zero = simulate_portfolio_signals(
+                candidates=[target_sig],
+                candles_dict=candles_zero,
+                bar_index_map=bar_idx_zero,
+            )
+
+        assert res_zero.total_trades == 0
+        assert any(
+            "entry bar has volume == 0" in record.message or "volume is zero" in record.message
+            for record in caplog.records
+        )
+
+    def test_real_runner_pipeline_skips_zero_volume_bar(self, tmp_path, caplog):
+        import logging
+        from unittest.mock import MagicMock, patch
+        from data.loader import load_candles
+        from research.evaluator import BaselineHurdles
+        from research.strategies import TrendPullbackStrategy
+        from research.strategy_runner import run_strategy_evidence_validation
+
+        df_1h = load_candles("BTCUSDT", "1h").iloc[:1000].copy()
+        df_4h = load_candles("BTCUSDT", "4h").iloc[:300].copy()
+
+        strat = TrendPullbackStrategy()
+        sigs = strat.generate_signals("BTCUSDT", df_1h, df_4h)
+        assert len(sigs) > 0
+        first_sig = sigs[0]
+        target_bar = first_sig.metadata["bar_idx"]
+
+        # Set entry bar volume to 0.0
+        df_1h.loc[target_bar, "volume"] = 0.0
+
+        def mock_load(sym, tf, **kwargs):
+            if tf == "1h":
+                return df_1h.copy()
+            return df_4h.copy()
+
+        mock_hurdles = BaselineHurdles(
+            pf_hurdle_p95=1.04,
+            pf_null_mean=0.84,
+            pf_null_std=0.1,
+            wr_hurdle_p95=52.0,
+            wr_null_mean=46.8,
+            wr_null_std=3.0,
+            ev_r_hurdle_p95=0.016,
+            ev_r_null_mean=-0.075,
+            ev_r_null_std=0.05,
+            sharpe_hurdle_p95=0.3,
+            sharpe_null_mean=-1.39,
+            sharpe_null_std=0.8,
+            sortino_hurdle_p95=0.4,
+            sortino_null_mean=-1.5,
+            sortino_null_std=0.8,
+            dd_hurdle_p50=25.0,
+            dd_hurdle_p95=44.0,
+            dd_null_mean=25.0,
+            dd_null_std=5.0,
+            ret_hurdle_p95=10.0,
+            ret_null_mean=-20.0,
+            ret_null_std=10.0,
+        )
+
+        with caplog.at_level(logging.WARNING):
+            with patch("research.strategy_runner.load_candles", side_effect=mock_load):
+                with patch("research.evaluator.BaselineHurdles.load", return_value=mock_hurdles):
+                    with patch("research.strategy_runner.run_matched_baseline") as mock_matched:
+                        mock_matched.return_value = MagicMock(
+                            empirical_p_value=1.0,
+                            median_expectancy_r=-0.1,
+                            p95_expectancy_r=0.0,
+                            iterations=1,
+                        )
+                        results = run_strategy_evidence_validation(
+                            symbols=["BTCUSDT"],
+                            output_report_path=str(tmp_path / "report.md"),
+                            output_json_path=str(tmp_path / "results.json"),
+                            matched_passes=1,
+                        )
+
+        trend_res = next(r for r in results if r.strategy_name == "TrendPullback")
+        executed_entry_times = {t.entry_time_ms for t in trend_res.sim_result.trades}
+
+        # Assert that the signal on the zero-volume bar was skipped
+        assert first_sig.timestamp_ms not in executed_entry_times
+        assert any("entry bar has volume == 0" in record.message for record in caplog.records)
+
 

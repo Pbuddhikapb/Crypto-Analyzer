@@ -7,6 +7,7 @@ from data.downloader import (
 )
 from data.loader import (
     DEVELOPMENT_END,
+    candles_to_array,
     clear_cache,
     compute_dataset_hash,
     get_current_dataset_hash,
@@ -15,6 +16,7 @@ from data.loader import (
 
 __all__ = [
     "DEVELOPMENT_END",
+    "candles_to_array",
     "download_candles",
     "download_universe",
     "verify_candle_integrity",

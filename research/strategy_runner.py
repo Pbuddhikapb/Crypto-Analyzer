@@ -23,7 +23,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 
-from data.loader import load_candles
+from data.loader import candles_to_array, load_candles
 from engine.exits import ExitConfig
 from engine.simulator import (
     CandidateSignal,
@@ -31,7 +31,6 @@ from engine.simulator import (
     SimulationFriction,
     SimulationResult,
     simulate_portfolio_signals,
-    simulate_single_trade_lifecycle,
 )
 from research.evaluator import BaselineHurdles, StrategyEvaluation, StrategyEvaluator
 from research.random_baseline import (
@@ -145,7 +144,7 @@ def run_strategy_evidence_validation(
         df_1h_dict[sym] = df_1
         df_4h_dict[sym] = df_4
 
-        arr = df_1[["open", "high", "low", "close", "open_time"]].to_numpy(dtype=np.float64)
+        arr = candles_to_array(df_1)
         candles_dict[sym] = arr
 
         # Fast lookup mapping: open_time_ms -> bar_idx

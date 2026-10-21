@@ -8,6 +8,7 @@ instantaneous cached in-memory retrieval for multi-pass Monte Carlo runs.
 import os
 from typing import Dict, Optional, Tuple
 
+import numpy as np
 import pandas as pd
 
 DEVELOPMENT_END = "2026-04-18"
@@ -84,6 +85,12 @@ def load_candles(
 def clear_cache():
     """Clear in-memory candle cache."""
     _CANDLE_CACHE.clear()
+
+
+def candles_to_array(df: pd.DataFrame) -> np.ndarray:
+    """Convert candle DataFrame to contiguous numpy array [open, high, low, close, open_time, volume]."""
+    return df[["open", "high", "low", "close", "open_time", "volume"]].to_numpy(dtype=np.float64)
+
 
 
 def compute_dataset_hash(candles_dict: Dict[str, pd.DataFrame | pd.Series | object]) -> str:

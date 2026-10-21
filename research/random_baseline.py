@@ -18,26 +18,20 @@ import sys
 import time
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
-import pandas as pd
 
-from data.loader import load_candles
+from data.loader import candles_to_array, load_candles
 from engine.exits import (
     ExitConfig,
-    calculate_gross_return_pct,
-    calculate_r_multiple,
-    create_trade_state,
-    evaluate_trade_exit,
 )
 from engine.simulator import (
     CandidateSignal,
     ExecutedTrade,
     SimulationFriction,
-    SimulationResult,
     simulate_portfolio_signals,
     simulate_single_trade_lifecycle,
 )
@@ -477,8 +471,8 @@ def run_monte_carlo_baseline(
     candles_dict: Dict[str, np.ndarray] = {}
     for sym in syms:
         df = load_candles(sym, timeframe, data_dir=data_dir)
-        # Store as contiguous numpy array: [open, high, low, close, open_time]
-        arr = df[["open", "high", "low", "close", "open_time"]].to_numpy(dtype=np.float64)
+        # Store as contiguous numpy array: [open, high, low, close, open_time, volume]
+        arr = candles_to_array(df)
         candles_dict[sym] = arr
 
     global _GLOBAL_CANDLES
