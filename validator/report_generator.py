@@ -94,8 +94,8 @@ def _build_run_metadata(parsed_report: dict) -> str:
     duration = meta.get("duration", parsed_report.get("duration", "N/A"))
 
     lines = [
-        f"| Field | Value |",
-        f"|-------|-------|",
+        "| Field | Value |",
+        "|-------|-------|",
         f"| **Mode** | {mode} |",
         f"| **Symbol(s)** | {symbols} |",
         f"| **Timeframe** | {timeframe} |",

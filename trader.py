@@ -907,7 +907,7 @@ class PaperTrader:
         candle_high = candle_data[1]
         candle_low = candle_data[2]
         candle_close = candle_data[3]
-        candle_vol = candle_data[4]
+        candle_vol = candle_data[4]  # noqa: F841  # Candle volume unpacked from tuple for potential volume filtering / sizing
 
         # Increment monotonic bar counter for this arriving candle
         self.bar_count += 1

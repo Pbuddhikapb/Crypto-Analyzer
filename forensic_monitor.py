@@ -334,7 +334,7 @@ class ForensicAnomalyAuditor:
                 entry = float(s["candidate_entry"])
                 sl = float(s["candidate_sl"])
                 tp1 = float(s["candidate_tp1"])
-                tp2 = float(s["candidate_tp2"])
+                tp2 = float(s["candidate_tp2"])  # noqa: F841  # Secondary take-profit unpacked from shadow record for potential runner tracking
                 risk_dist = float(s["risk_dist"])
                 bars_eval = int(s["bars_evaluated"]) + 1
 
@@ -344,7 +344,7 @@ class ForensicAnomalyAuditor:
 
                 high_p = float(candle.get("high", entry))
                 low_p = float(candle.get("low", entry))
-                close_p = float(candle.get("close", entry))
+                close_p = float(candle.get("close", entry))  # noqa: F841  # Bar close price unpacked alongside high/low for potential M2M excursion tracking
 
                 # Update excursions
                 if side == "LONG":
@@ -633,7 +633,7 @@ async def run_live_forensic_daemon(auditor: ForensicAnomalyAuditor, interval_sec
                                 sym = opp["symbol"]
                                 score = float(opp.get("confluence_score", 0.0))
                                 is_chop = opp.get("is_chop", False)
-                                trend = opp.get("trend", "NEUTRAL")
+                                trend = opp.get("trend", "NEUTRAL")  # noqa: F841  # Trend regime extracted from scanner opportunity for potential regime audit
                                 setup = opp.get("trade_setup")
 
                                 # If setup candidate exists or high score but blocked

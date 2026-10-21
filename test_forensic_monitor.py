@@ -41,7 +41,7 @@ def temp_forensic_env(tmp_path):
 
 def test_forensic_db_initialization(temp_forensic_env):
     """Verify that ForensicAnomalyAuditor initializes all tables in WAL mode."""
-    auditor = ForensicAnomalyAuditor(
+    ForensicAnomalyAuditor(
         signals_db=temp_forensic_env["signals_db"],
         vault_db=temp_forensic_env["vault_db"],
         forensic_db=temp_forensic_env["forensic_db"],

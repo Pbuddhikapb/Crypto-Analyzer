@@ -38,7 +38,7 @@ def run_scheduler(interval_hours: float = 4.0, run_mode: str = "portfolio", run_
     interval_seconds = int(interval_hours * 3600)
 
     print("=" * 80)
-    print(f"[SCHEDULER] Crypto Analyzer Validator Background Daemon")
+    print("[SCHEDULER] Crypto Analyzer Validator Background Daemon")
     print(f"[SCHEDULER] Interval: Every {interval_hours:.1f} hours ({interval_seconds} seconds)")
     print(f"[SCHEDULER] Mode: {run_mode.upper()}")
     print(f"[SCHEDULER] Email Recipient: {config.get('notification', {}).get('email', {}).get('to_address', 'None')}")
@@ -50,7 +50,7 @@ def run_scheduler(interval_hours: float = 4.0, run_mode: str = "portfolio", run_
         now_str = now_dt.strftime("%Y-%m-%d %H:%M:%S")
 
         if first_run and not run_immediately:
-            print(f"[SCHEDULER] Skipping immediate first run. Waiting for initial interval...")
+            print("[SCHEDULER] Skipping immediate first run. Waiting for initial interval...")
             first_run = False
         else:
             first_run = False

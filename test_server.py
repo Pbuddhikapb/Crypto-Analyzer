@@ -118,7 +118,6 @@ def test_market_candles_invalid_symbol(app_and_client):
 def test_portfolio_summary_endpoint(app_and_client):
     """Verify /api/portfolio/summary returns metrics and active trade details."""
     app, client = app_and_client
-    risk_mgr = app.state.risk_manager
     trader = app.state.traders["BTCUSDT"]
 
     # Simulate an active trade

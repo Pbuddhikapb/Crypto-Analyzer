@@ -670,7 +670,6 @@ def run_strategy_backtest(
     trade_logs: List[Dict[str, Any]] = []
     realized_equity = 100.0
     m2m_equity_curve: List[float] = [100.0]
-    intra_equity_curve: List[float] = [100.0]
     m2m_peak = 100.0
     max_m2m_dd = 0.0
     max_intra_dd = 0.0
@@ -1273,7 +1272,6 @@ def run_portfolio_backtest(
     portfolio_trade_logs: List[Dict[str, Any]] = []
     realized_port_equity = 100.0
     m2m_equity_curve: List[float] = [100.0]
-    intra_equity_curve: List[float] = [100.0]
     m2m_peak = 100.0
     max_m2m_dd = 0.0
     max_intra_dd = 0.0
@@ -1612,7 +1610,7 @@ def run_portfolio_backtest(
     tot_gl = abs(sum(t["net_return_pct"] for t in all_losses))
     tot_pf = (tot_gp / tot_gl) if tot_gl > 0 else (99.9 if tot_gp > 0 else 0.0)
     tot_r = sum(t["r_multiple"] for t in portfolio_trade_logs)
-    avg_r = tot_r / tot_trades if tot_trades > 0 else 0.0
+    avg_r = tot_r / tot_trades if tot_trades > 0 else 0.0  # noqa: F841  # Average trade R-multiple computed alongside total R for portfolio summary
 
     port_equity = [100.0]
     for t in portfolio_trade_logs:

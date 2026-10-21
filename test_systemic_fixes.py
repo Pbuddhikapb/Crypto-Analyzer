@@ -40,7 +40,6 @@ def test_rsi_divergence_recency_constraint():
     """Verify that a divergence older than 5 bars expires and returns False."""
     # Synthetic candles where swing low occurs 10 bars ago
     candles = []
-    price = 100.0
     for i in range(40):
         # Create a swing low at bar 15, then flat/rally
         if i == 15:

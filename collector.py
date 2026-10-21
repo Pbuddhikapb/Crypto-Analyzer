@@ -56,11 +56,11 @@ class MarketDataCollector:
 
         print("=" * 115)
         mode_str = "ISP-FRIENDLY (< 300 MB/day via REST 10s BBO)" if self.isp_friendly else "UNTHROTTLED (~6 GB/day via WebSocket BBO)"
-        print(f" [MARKET DATA COLLECTOR] INITIALIZING LIVE TELEMETRY LAKE")
+        print(" [MARKET DATA COLLECTOR] INITIALIZING LIVE TELEMETRY LAKE")
         print(f" DATABASE VAULT:       {self.db_path}")
         print(f" MONITORED UNIVERSE:   {', '.join(self.symbols)} ({len(self.symbols)} assets)")
         print(f" BANDWIDTH PROFILE:    {mode_str}")
-        print(f" CAPTURED TIERS:       Whales, Liquidations, BBO Spread, OI, Funding, Top Trader Sentiment, Net Delta")
+        print(" CAPTURED TIERS:       Whales, Liquidations, BBO Spread, OI, Funding, Top Trader Sentiment, Net Delta")
         print("=" * 115 + "\n")
 
         tasks = [

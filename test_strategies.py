@@ -548,7 +548,6 @@ class TestZeroVolumeFiltering:
 
         target_sig = signals[0]
         target_bar_idx = target_sig.metadata["bar_idx"]
-        target_ts = target_sig.timestamp_ms
 
         # 1. Normal volume run: signal executes
         arr_normal = df_1h[["open", "high", "low", "close", "open_time", "volume"]].to_numpy(dtype=np.float64)

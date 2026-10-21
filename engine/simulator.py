@@ -626,7 +626,7 @@ class SimulationEngine:
         expectancy_r = (wr_frac * win_net_r_mean) - (lr_frac * loss_net_r_mean)
 
         # Gross expectancy R from realized_r
-        gross_r_values = [t.realized_r for t in trades]
+        gross_r_values = [t.realized_r for t in trades]  # noqa: F841  # Realized gross R multiples retained as companion to net_r_values
         gross_win_r_mean = float(np.mean([t.realized_r for t in wins])) if wins else 0.0
         gross_loss_r_mean = float(np.mean([abs(t.realized_r) for t in losses])) if losses else 0.0
         gross_expectancy_r = (wr_frac * gross_win_r_mean) - (lr_frac * gross_loss_r_mean)

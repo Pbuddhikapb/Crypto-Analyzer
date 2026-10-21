@@ -88,7 +88,7 @@ def is_holdout_run_recorded(
     try:
         with open(log_path, "r", encoding="utf-8") as f:
             reader = csv.reader(f)
-            header = next(reader, None)
+            next(reader, None)  # Advance past header row
             for row in reader:
                 if len(row) >= 3:
                     strat_recorded = row[0].strip().lower()

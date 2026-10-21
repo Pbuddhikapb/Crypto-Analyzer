@@ -159,7 +159,7 @@ def run_backtest(config: dict, portfolio: bool = False, overrides: dict = None) 
     timeout = config["backtest"].get("timeout", 3600)
 
     print(f"\n{'=' * 80}")
-    print(f"[AGENT] Launching backtest...")
+    print("[AGENT] Launching backtest...")
     print(f"[AGENT] Command: {cli_str}")
     print(f"[AGENT] Timeout: {timeout}s")
     print(f"{'=' * 80}\n")
@@ -342,11 +342,11 @@ def agent_run(config: dict, portfolio: bool = False, overrides: dict = None, ski
     print(f"[AGENT] Alerts: {total_critical} critical, {total_warning} warning, {total_info} info")
     print(f"[AGENT] Report: {report_path}")
     if total_critical > 0:
-        print(f"[AGENT] 🚨 CRITICAL issues found – review the report immediately!")
+        print("[AGENT] 🚨 CRITICAL issues found – review the report immediately!")
     elif total_warning > 0:
-        print(f"[AGENT] ⚠️  Warnings detected – review the report when convenient.")
+        print("[AGENT] ⚠️  Warnings detected – review the report when convenient.")
     else:
-        print(f"[AGENT] ✅ All checks passed – engine looks healthy.")
+        print("[AGENT] ✅ All checks passed – engine looks healthy.")
     print(f"{'=' * 80}\n")
 
     return run_id

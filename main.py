@@ -254,7 +254,7 @@ class FuturesMicrostructureManager:
             try:
                 print(f"[Futures WS] Connecting to microstructure stream across {len(self.futures_symbols)} coins...")
                 async with websockets.connect(ws_url, ping_interval=20, ping_timeout=20) as ws:
-                    print(f"[Futures WS] Connected to Futures stream! Monitoring whale trades & liquidations...\n")
+                    print("[Futures WS] Connected to Futures stream! Monitoring whale trades & liquidations...\n")
                     backoff = 3
 
                     async for message in ws:
@@ -445,7 +445,7 @@ def print_multi_coin_radar(
             side = active["side"]
             entry = active["entry_price"]
             sl = active["stop_loss"]
-            tp = active["take_profit"]
+            tp = active["take_profit"]  # noqa: F841  # Take-profit target extracted alongside entry/sl for position terminal display
             unrealized_pct = ((price - entry) / entry * 100.0) if side == "LONG" else ((entry - price) / entry * 100.0)
             pos_str = f"{side} @ {format_price(entry)} ({unrealized_pct:+.2f}%) [SL: {format_price(sl)}]"
         else:

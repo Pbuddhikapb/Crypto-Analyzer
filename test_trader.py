@@ -660,7 +660,7 @@ def test_trade_entry_on_confirmed_rsi_divergence(temp_db):
 
     # Trigger bar with volume expansion
     trigger = (50400.0, 51000.0, 50300.0, 50800.0, 25000.0)
-    trade = trader.on_candle(trigger)
+    trader.on_candle(trigger)
     # Trade either opened or rejected cleanly by confluence
     assert trader.bar_count >= 200
 
@@ -1021,7 +1021,6 @@ def test_stepped_exit_tp1_then_flash_crash_fallback_partial_loss(temp_db):
     trade = trader.on_candle(trigger_candle, timestamp="2026-10-14T10:00:00")
     entry = trade["entry_price"]
     sl = trade["stop_loss"]
-    risk = entry - sl
 
     # Simulate legacy state: TP1 hit but BE not armed
     trader.active_trade["tp1_hit"] = True
@@ -1354,7 +1353,7 @@ def test_market_overextension_filter_blocks_parabolic_entry(temp_db):
 def test_climax_volume_wick_blocks_exhaustion_entry(temp_db):
     """Verify that volume climax (>3.5x avg) with >40% opposing upper wick blocks Long entry."""
     trader = PaperTrader(symbol="BTCUSDT", timeframe="15m", db_path=temp_db)
-    trigger = setup_trader_ready_for_trigger(trader)
+    setup_trader_ready_for_trigger(trader)
 
     # Modify trigger candle to have 4x avg volume and large 50% upper wick (shooting star exhaustion)
     # open 48350, high 49100, low 48260, close 48400, vol 4000 (avg is 100)
