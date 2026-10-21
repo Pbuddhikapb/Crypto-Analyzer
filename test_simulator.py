@@ -673,4 +673,72 @@ def test_session_break_on_large_gap_terminates_open_trades_and_logs(caplog):
     assert len(sim.completed_trades) == 1
 
 
+def test_research_path_skips_zero_volume_and_terminates_on_gap(caplog):
+    """
+    Verify that the research path (simulate_portfolio_signals using SimulationEngine)
+    skips signals on zero-volume bars and terminates open trades on session break gaps.
+    """
+    import logging
+    import numpy as np
+    from engine.simulator import CandidateSignal, simulate_portfolio_signals
+
+    interval_ms = 3600 * 1000  # 1 hour
+    t0 = 1700000000000
+
+    # Tiny dataset: 5 bars
+    # Bar 0: normal volume (1000)
+    # Bar 1: zero volume (0.0) -> Candidate signal 1 here must be skipped!
+    # Bar 2: normal volume (1000) -> Candidate signal 2 here must enter!
+    # Bar 3: normal volume (1000), but timestamp is t0 + 7h (gap of 5h > 1h!) -> must terminate trade with SESSION_BREAK!
+    # Bar 4: normal volume (1000)
+    bars = [
+        [100.0, 102.0, 99.0, 101.0, t0, 1000.0],
+        [101.0, 103.0, 100.0, 102.0, t0 + interval_ms, 0.0],
+        [102.0, 104.0, 101.0, 103.0, t0 + 2 * interval_ms, 1000.0],
+        [103.0, 105.0, 102.0, 104.0, t0 + 7 * interval_ms, 1000.0],
+        [104.0, 106.0, 103.0, 105.0, t0 + 8 * interval_ms, 1000.0],
+    ]
+    arr = np.array(bars, dtype=np.float64)
+    candles_dict = {"TESTUSDT": arr}
+
+    # Candidate 1: on zero volume bar (Bar 1)
+    sig_zero_vol = CandidateSignal(
+        symbol="TESTUSDT",
+        side="LONG",
+        entry_price=101.0,
+        stop_loss=95.0,
+        timestamp_ms=t0 + interval_ms,
+    )
+    # Candidate 2: on normal volume bar (Bar 2)
+    sig_valid = CandidateSignal(
+        symbol="TESTUSDT",
+        side="LONG",
+        entry_price=102.0,
+        stop_loss=95.0,
+        timestamp_ms=t0 + 2 * interval_ms,
+    )
+
+    with caplog.at_level(logging.WARNING):
+        res = simulate_portfolio_signals(
+            candidates=[sig_zero_vol, sig_valid],
+            candles_dict=candles_dict,
+            initial_equity_usd=10000.0,
+            bar_interval_ms=interval_ms,
+        )
+
+    # Candidate 1 was skipped due to zero volume
+    assert "volume == 0" in caplog.text or "volume is zero" in caplog.text
+
+    # Only 1 trade was executed (Candidate 2)
+    assert res.total_trades == 1
+    executed_trade = res.trades[0]
+    assert executed_trade.entry_time_ms == t0 + 2 * interval_ms
+
+    # Trade was terminated on SESSION_BREAK at Bar 3 (due to 5h gap)
+    assert "Session break detected for TESTUSDT" in caplog.text
+    assert executed_trade.exit_reason == "SESSION_BREAK"
+    assert executed_trade.exit_time_ms == t0 + 7 * interval_ms
+
+
+
 

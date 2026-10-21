@@ -34,9 +34,12 @@ from engine.exits import (
     evaluate_trade_exit,
 )
 from engine.simulator import (
+    CandidateSignal,
     ExecutedTrade,
     SimulationFriction,
     SimulationResult,
+    simulate_portfolio_signals,
+    simulate_single_trade_lifecycle,
 )
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -312,7 +315,10 @@ def run_matched_baseline(
     master_rng = np.random.default_rng(seed)
     null_ev_dist: List[float] = []
 
-    for _ in range(iterations):
+    step = max(50, iterations // 10)
+    for it in range(iterations):
+        if (it + 1) % step == 0 or it == 0 or (it + 1) == iterations:
+            logger.info(f"    Matched pass {it + 1}/{iterations} ({(it + 1) / iterations * 100:.0f}%)")
         iter_seed = int(master_rng.integers(0, 100000000))
         iter_rng = np.random.default_rng(iter_seed)
         pass_ev, _ = _simulate_single_matched_pass(
@@ -354,159 +360,6 @@ def run_matched_baseline(
     )
 
 
-def simulate_single_trade_lifecycle(
-    symbol: str,
-    side: str,
-    nominal_entry: float,
-    stop_loss: float,
-    entry_ts_ms: int,
-    candles_forward: List[Tuple[float, float, float, float, int]],  # (open, high, low, close, ts_ms)
-    equity_at_entry: float,
-    risk_per_trade_pct: float,
-    max_leverage: float,
-    friction: SimulationFriction,
-    exit_config: ExitConfig,
-) -> Optional[ExecutedTrade]:
-    """
-    Simulate an individual trade forward from entry to exit through the Single Exit Authority
-    with exact friction, slippage, and funding rate modeling.
-    """
-    risk_usd = equity_at_entry * (risk_per_trade_pct / 100.0)
-    risk_dist = abs(nominal_entry - stop_loss)
-    if risk_dist <= 0.0 or len(candles_forward) == 0:
-        return None
-
-    shares = risk_usd / risk_dist
-    notional_usd = shares * nominal_entry
-    max_notional = equity_at_entry * max_leverage
-    if notional_usd > max_notional:
-        notional_usd = max_notional
-        shares = notional_usd / nominal_entry
-
-    slip_rate = friction.slippage_pct / 100.0
-    if side == "LONG":
-        entry_fill = nominal_entry * (1.0 + slip_rate)
-    else:
-        entry_fill = nominal_entry * (1.0 - slip_rate)
-
-    entry_fee_usd = notional_usd * (friction.taker_fee_pct / 100.0)
-    entry_slippage_usd = notional_usd * slip_rate
-
-    state = create_trade_state(
-        trade_id=f"{symbol}_{entry_ts_ms}",
-        symbol=symbol,
-        side=side,
-        entry_price=entry_fill,
-        initial_sl=stop_loss,
-        config=exit_config,
-        entry_time_ms=entry_ts_ms,
-    )
-
-    tp1_realized_usd = 0.0
-    tp1_fees_usd = 0.0
-    tp1_r = 0.0
-    tp1_ts_ms: Optional[int] = None
-    exit_trade: Optional[ExecutedTrade] = None
-
-    for c_idx in range(len(candles_forward)):
-        c_row = candles_forward[c_idx]
-        c_open = float(c_row[0])
-        c_high = float(c_row[1])
-        c_low = float(c_row[2])
-        c_close = float(c_row[3])
-        c_ts = int(c_row[4])
-        c_tuple = (c_open, c_high, c_low, c_close)
-
-        decision = evaluate_trade_exit(state, c_tuple, exit_config)
-
-        if decision.action == "PARTIAL_TP1":
-            tp1_notional = notional_usd * 0.5
-            tp1_fee = tp1_notional * (friction.maker_fee_pct / 100.0)
-            gross_tp1_pnl = tp1_notional * (decision.gross_return_pct / 100.0)
-            tp1_realized_usd = gross_tp1_pnl
-            tp1_fees_usd = tp1_fee
-            tp1_r = decision.realized_r
-            tp1_ts_ms = c_ts
-
-        elif decision.action == "FULL_EXIT":
-            exit_price = decision.exit_price or c_close
-            remaining_notional = notional_usd * decision.closed_pct
-
-            # All full exits other than TP2 limit order are adverse market stops
-            is_stop_type = decision.exit_reason != "TAKE_PROFIT_2"
-            if is_stop_type:
-                if side == "LONG":
-                    exit_fill = exit_price * (1.0 - slip_rate)
-                else:
-                    exit_fill = exit_price * (1.0 + slip_rate)
-                exit_fee = remaining_notional * (friction.taker_fee_pct / 100.0)
-                exit_slippage = remaining_notional * slip_rate
-            else:
-                exit_fill = exit_price
-                exit_fee = remaining_notional * (friction.maker_fee_pct / 100.0)
-                exit_slippage = 0.0
-
-            total_slippage = entry_slippage_usd + exit_slippage
-            total_fees = entry_fee_usd + tp1_fees_usd + exit_fee
-
-            # 8h funding drag (accounting for 50% scale-out if TP1 was hit)
-            entry_period = entry_ts_ms // 28800000
-            exit_period = c_ts // 28800000
-            rate = friction.funding_rate_8h_pct / 100.0
-            if tp1_ts_ms is not None:
-                tp1_period = tp1_ts_ms // 28800000
-                periods_before = max(0, min(tp1_period, exit_period) - entry_period)
-                periods_after = max(0, exit_period - max(tp1_period, entry_period))
-                funding_cost_usd = (notional_usd * rate * periods_before) + (notional_usd * 0.5 * rate * periods_after)
-            else:
-                periods_8h = max(0, exit_period - entry_period)
-                funding_cost_usd = notional_usd * rate * periods_8h
-
-            exit_gross_ret = calculate_gross_return_pct(side, entry_fill, exit_fill)
-            remaining_gross_pnl = remaining_notional * (exit_gross_ret / 100.0)
-            total_gross_pnl = tp1_realized_usd + remaining_gross_pnl
-
-            # Gross PnL already incorporates entry & exit slippage via fill prices.
-            # Slippage is tracked for friction attribution, not double-deducted from net_pnl.
-            net_pnl = total_gross_pnl - total_fees - funding_cost_usd
-            net_return_pct = (net_pnl / notional_usd) * 100.0
-
-            if tp1_realized_usd != 0.0:
-                exit_r = calculate_r_multiple(side, entry_fill, exit_fill, state.risk_dist)
-                combined_r = (0.5 * tp1_r) + (0.5 * exit_r)
-            else:
-                combined_r = calculate_r_multiple(side, entry_fill, exit_fill, state.risk_dist)
-
-            net_r = (net_pnl / risk_usd) if risk_usd > 0 else 0.0
-
-            exit_trade = ExecutedTrade(
-                trade_id=state.trade_id,
-                symbol=symbol,
-                side=side,
-                entry_time_ms=entry_ts_ms,
-                exit_time_ms=c_ts,
-                entry_price=nominal_entry,
-                entry_fill_price=entry_fill,
-                exit_price=exit_price,
-                exit_fill_price=exit_fill,
-                exit_reason=decision.exit_reason or "UNKNOWN",
-                position_size_usd=notional_usd,
-                gross_pnl_usd=round(total_gross_pnl, 2),
-                fees_usd=round(total_fees, 2),
-                slippage_usd=round(total_slippage, 2),
-                funding_cost_usd=round(funding_cost_usd, 2),
-                net_pnl_usd=round(net_pnl, 2),
-                net_return_pct=round(net_return_pct, 4),
-                realized_r=round(combined_r, 4),
-                bars_held=state.bars_held,
-                mfe_r=round(state.highest_r, 4),
-                mae_r=round(state.lowest_r, 4),
-                initial_risk_usd=round(risk_usd, 2),
-                net_r=round(net_r, 4),
-            )
-            break
-
-    return exit_trade
 
 
 def run_random_baseline_iteration(
@@ -527,16 +380,14 @@ def run_random_baseline_iteration(
     ruin_threshold_usd: Optional[float] = None,
 ) -> Dict[str, float]:
     """
-    Run a single Monte Carlo pass with randomized entries and rigorous portfolio concurrency.
+    Run a single Monte Carlo pass with randomized entries and rigorous portfolio concurrency
+    delegating directly to simulate_portfolio_signals in engine/simulator.py.
     """
     fric = friction or SimulationFriction()
     cfg = exit_config or ExitConfig()
     gen = rng or np.random.default_rng(iteration_id)
-    ruin_limit = float(ruin_threshold_usd) if ruin_threshold_usd is not None else (0.05 * initial_equity_usd)
 
-    # 1. Generate candidate signals across all symbols
-    candidates: List[Tuple[int, str, str, float, float, int]] = []
-    # (entry_ts_ms, symbol, side, entry_price, sl_price, bar_idx)
+    candidate_signals: List[CandidateSignal] = []
 
     for sym, arr in candles_dict.items():
         total_bars = len(arr)
@@ -552,199 +403,54 @@ def run_random_baseline_iteration(
         chosen_bars = gen.choice(np.arange(10, max_entry_bar), size=sample_size, replace=False)
 
         for b_idx in chosen_bars:
-            c_open = arr[b_idx, 0]
+            c_open = float(arr[b_idx, 0])
             c_ts = int(arr[b_idx, 4])
-            # Fair 50/50 direction choice
             side = "LONG" if gen.random() < 0.5 else "SHORT"
             sl_dist = c_open * (stop_loss_pct / 100.0)
             sl_price = (c_open - sl_dist) if side == "LONG" else (c_open + sl_dist)
+            vol = float(arr[b_idx, 5]) if arr.shape[1] > 5 else 1.0
 
-            candidates.append((c_ts, sym, side, c_open, sl_price, b_idx))
-
-    # Sort all candidates chronologically
-    candidates.sort(key=lambda x: x[0])
-
-    # 2. Sequential portfolio simulation
-    current_equity = initial_equity_usd
-    completed_trades: List[ExecutedTrade] = []
-    # Active tracking: list of dicts: {"symbol", "side", "exit_ts_ms", "net_pnl_usd"}
-    active_open: List[Dict[str, Any]] = []
-    # symbol -> last_closed_bar_idx
-    cooldowns: Dict[str, int] = {}
-
-    for c_ts, sym, side, entry_p, sl_p, b_idx in candidates:
-        # A. Clean up positions that already exited at or before candidate entry time, realizing PnL
-        still_open = []
-        for pos in active_open:
-            if pos["exit_ts_ms"] <= c_ts:
-                current_equity += pos["net_pnl_usd"]
-            else:
-                still_open.append(pos)
-        active_open = still_open
-
-        # B. Portfolio limits checks
-        if sizing_mode == "compounding":
-            if current_equity <= ruin_limit:
-                continue
-
-        if len(active_open) >= max_open_positions:
-            continue
-
-        # Duplicate symbol
-        if any(pos["symbol"] == sym for pos in active_open):
-            continue
-
-        # Directional limit
-        dir_count = sum(1 for pos in active_open if pos["side"] == side)
-        if dir_count >= max_directional_positions:
-            continue
-
-        # Symbol cooldown check
-        last_closed = cooldowns.get(sym, -999)
-        if (b_idx - last_closed) < symbol_cooldown_bars:
-            continue
-
-        # C. Replay trade forward using direct numpy slice
-        sym_candles = candles_dict[sym]
-        forward_slice = sym_candles[b_idx : min(b_idx + 100, len(sym_candles))]
-
-        equity_for_sizing = initial_equity_usd if sizing_mode == "fixed_risk" else current_equity
-
-        trade = simulate_single_trade_lifecycle(
-            symbol=sym,
-            side=side,
-            nominal_entry=entry_p,
-            stop_loss=sl_p,
-            entry_ts_ms=c_ts,
-            candles_forward=forward_slice,
-            equity_at_entry=equity_for_sizing,
-            risk_per_trade_pct=risk_per_trade_pct,
-            max_leverage=max_leverage,
-            friction=fric,
-            exit_config=cfg,
-        )
-
-        if trade is not None:
-            completed_trades.append(trade)
-            active_open.append(
-                {
-                    "symbol": sym,
-                    "side": side,
-                    "exit_ts_ms": trade.exit_time_ms,
-                    "net_pnl_usd": trade.net_pnl_usd,
-                }
+            candidate_signals.append(
+                CandidateSignal(
+                    symbol=sym,
+                    side=side,
+                    entry_price=c_open,
+                    stop_loss=sl_price,
+                    timestamp_ms=c_ts,
+                    volume=vol,
+                )
             )
-            cooldowns[sym] = b_idx + trade.bars_held
 
-    # Realize any remaining open positions that closed after the last candidate
-    for pos in active_open:
-        current_equity += pos["net_pnl_usd"]
-    active_open.clear()
-
-    # 3. Calculate metrics for this iteration
-    total_trades = len(completed_trades)
-    if total_trades == 0:
-        return {
-            "win_rate": 0.0,
-            "profit_factor": 0.0,
-            "gross_profit_factor": 0.0,
-            "expectancy_usd": 0.0,
-            "expectancy_r": 0.0,
-            "gross_expectancy_r": 0.0,
-            "avg_r": 0.0,
-            "max_drawdown_pct": 0.0,
-            "max_drawdown_r": 0.0,
-            "cumulative_r": 0.0,
-            "sharpe_ratio": 0.0,
-            "sortino_ratio": 0.0,
-            "net_profit_pct": 0.0,
-            "total_trades": 0.0,
-        }
-
-    wins = [t for t in completed_trades if t.net_pnl_usd > 0]
-    losses = [t for t in completed_trades if t.net_pnl_usd <= 0]
-    win_rate = (len(wins) / total_trades) * 100.0
-
-    net_profit = sum(t.net_pnl_usd for t in wins)
-    net_loss = abs(sum(t.net_pnl_usd for t in losses))
-    profit_factor = (net_profit / net_loss) if net_loss > 0 else (999.0 if net_profit > 0 else 0.0)
-
-    gross_profit = sum(t.gross_pnl_usd for t in completed_trades if t.gross_pnl_usd > 0)
-    gross_loss = abs(sum(t.gross_pnl_usd for t in completed_trades if t.gross_pnl_usd <= 0))
-    gross_profit_factor = (gross_profit / gross_loss) if gross_loss > 0 else (999.0 if gross_profit > 0 else 0.0)
-
-    avg_win_usd = (sum(t.net_pnl_usd for t in wins) / len(wins)) if wins else 0.0
-    avg_loss_usd = (abs(sum(t.net_pnl_usd for t in losses)) / len(losses)) if losses else 0.0
-    wr_frac = win_rate / 100.0
-    lr_frac = 1.0 - wr_frac
-    expectancy_usd = (wr_frac * avg_win_usd) - (lr_frac * avg_loss_usd)
-
-    # Net expectancy R from net_r
-    net_r_values = [t.net_r for t in completed_trades]
-    avg_r = float(np.mean(net_r_values)) if net_r_values else 0.0
-    win_net_r_mean = float(np.mean([t.net_r for t in wins])) if wins else 0.0
-    loss_net_r_mean = float(np.mean([abs(t.net_r) for t in losses])) if losses else 0.0
-    expectancy_r = (wr_frac * win_net_r_mean) - (lr_frac * loss_net_r_mean)
-
-    # Gross expectancy R from realized_r
-    gross_r_values = [t.realized_r for t in completed_trades]
-    gross_win_r_mean = float(np.mean([t.realized_r for t in wins])) if wins else 0.0
-    gross_loss_r_mean = float(np.mean([abs(t.realized_r) for t in losses])) if losses else 0.0
-    gross_expectancy_r = (wr_frac * gross_win_r_mean) - (lr_frac * gross_loss_r_mean)
-
-    # Drawdown from chronological trade PnL sequence
-    completed_trades.sort(key=lambda t: t.exit_time_ms)
-    eq_peak = initial_equity_usd
-    cur_eq = initial_equity_usd
-    max_dd_pct = 0.0
-    for t in completed_trades:
-        cur_eq += t.net_pnl_usd
-        if cur_eq > eq_peak:
-            eq_peak = cur_eq
-        else:
-            dd = ((eq_peak - cur_eq) / eq_peak) * 100.0
-            if dd > max_dd_pct:
-                max_dd_pct = dd
-
-    net_profit_pct = ((cur_eq - initial_equity_usd) / initial_equity_usd) * 100.0
-
-    returns = np.array([t.net_return_pct for t in completed_trades])
-    std_ret = np.std(returns)
-    mean_ret = np.mean(returns)
-    sharpe = float((mean_ret / std_ret) * np.sqrt(252.0)) if std_ret > 1e-8 else 0.0
-
-    # Downside semi-deviation with target return T = 0 (Sortino & van der Meer, 1991)
-    downside_diff = np.minimum(0.0, returns)
-    downside_dev = float(np.sqrt(np.mean(downside_diff**2)))
-    sortino = float((mean_ret / downside_dev) * np.sqrt(252.0)) if downside_dev > 1e-8 else 0.0
-
-    cum_r = 0.0
-    peak_r = 0.0
-    max_dd_r = 0.0
-    for t in completed_trades:
-        cum_r += t.net_r
-        if cum_r > peak_r:
-            peak_r = cum_r
-        else:
-            dd_r = peak_r - cum_r
-            if dd_r > max_dd_r:
-                max_dd_r = dd_r
+    sim_res = simulate_portfolio_signals(
+        candidates=candidate_signals,
+        candles_dict=candles_dict,
+        initial_equity_usd=initial_equity_usd,
+        risk_per_trade_pct=risk_per_trade_pct,
+        max_open_positions=max_open_positions,
+        max_directional_positions=max_directional_positions,
+        symbol_cooldown_bars=symbol_cooldown_bars,
+        max_leverage=max_leverage,
+        friction=fric,
+        exit_config=cfg,
+        sizing_mode=sizing_mode,
+        ruin_threshold_usd=ruin_threshold_usd,
+    )
 
     return {
-        "win_rate": round(win_rate, 2),
-        "profit_factor": round(profit_factor, 2),
-        "gross_profit_factor": round(gross_profit_factor, 2),
-        "expectancy_usd": round(expectancy_usd, 2),
-        "expectancy_r": round(expectancy_r, 4),
-        "gross_expectancy_r": round(gross_expectancy_r, 4),
-        "avg_r": round(avg_r, 4),
-        "max_drawdown_pct": round(max_dd_pct, 2),
-        "max_drawdown_r": round(max_dd_r, 4),
-        "cumulative_r": round(cum_r, 4),
-        "sharpe_ratio": round(sharpe, 2),
-        "sortino_ratio": round(sortino, 2),
-        "net_profit_pct": round(net_profit_pct, 2),
-        "total_trades": float(total_trades),
+        "win_rate": sim_res.win_rate_pct,
+        "profit_factor": sim_res.profit_factor,
+        "gross_profit_factor": sim_res.gross_profit_factor,
+        "expectancy_usd": sim_res.expectancy_usd,
+        "expectancy_r": sim_res.expectancy_r,
+        "gross_expectancy_r": sim_res.gross_expectancy_r,
+        "avg_r": sim_res.avg_r_multiple,
+        "max_drawdown_pct": sim_res.max_drawdown_pct,
+        "max_drawdown_r": sim_res.max_drawdown_r,
+        "cumulative_r": sim_res.cumulative_r,
+        "sharpe_ratio": sim_res.sharpe_ratio,
+        "sortino_ratio": sim_res.sortino_ratio,
+        "net_profit_pct": sim_res.net_profit_pct,
+        "total_trades": float(sim_res.total_trades),
     }
 
 
@@ -931,9 +637,17 @@ def run_monte_carlo_baseline(
     start_date = datetime.fromtimestamp(min_ts / 1000.0, tz=timezone.utc).isoformat() if min_ts > 0 else ""
     end_date = datetime.fromtimestamp(max_ts / 1000.0, tz=timezone.utc).isoformat() if max_ts > 0 else ""
 
+    try:
+        import subprocess
+
+        git_hash = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+    except Exception:
+        git_hash = "unknown"
+
     metadata = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "iterations": iterations,
+        "git_commit": git_hash,
         "dataset_hash": dataset_hash,
         "timeframe": timeframe,
         "symbols": list(candles_dict.keys()),
@@ -969,7 +683,14 @@ def run_monte_carlo_baseline(
 
 def main():
     parser = argparse.ArgumentParser(description="Run Monte Carlo Random-Entry Baseline.")
-    parser.add_argument("--iterations", type=int, default=1000, help="Number of Monte Carlo iterations (default: 1000)")
+    parser.add_argument(
+        "--passes",
+        "--iterations",
+        dest="iterations",
+        type=int,
+        default=1000,
+        help="Number of Monte Carlo passes (default: 1000, use 200 in tests/dev)",
+    )
     parser.add_argument("--timeframe", type=str, default="1h", help="Timeframe (default: 1h)")
     parser.add_argument("--data-dir", type=str, default="data/candles", help="Parquet data directory")
     parser.add_argument("--output", type=str, default="research/reports/random_baseline_hurdle.md", help="Output report path")

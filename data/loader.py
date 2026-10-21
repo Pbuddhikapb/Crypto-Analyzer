@@ -84,3 +84,50 @@ def load_candles(
 def clear_cache():
     """Clear in-memory candle cache."""
     _CANDLE_CACHE.clear()
+
+
+def compute_dataset_hash(candles_dict: Dict[str, pd.DataFrame | pd.Series | object]) -> str:
+    """Deterministic hash of dataset symbols, lengths, and boundary timestamps."""
+    import hashlib
+    import numpy as np
+
+    tokens = []
+    for s in sorted(candles_dict.keys()):
+        arr = candles_dict[s]
+        if hasattr(arr, "to_numpy"):
+            arr = arr[["open", "high", "low", "close", "open_time"]].to_numpy(dtype=np.float64)
+        n = len(arr)
+        t_first = int(arr[0, 4]) if n > 0 else 0
+        t_last = int(arr[-1, 4]) if n > 0 else 0
+        tokens.append(f"{s}:{n}:{t_first}:{t_last}")
+    raw = "|".join(tokens)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+
+
+def get_current_dataset_hash(
+    symbols: Optional[list] = None,
+    timeframe: str = "1h",
+    data_dir: str = "data/candles",
+    allow_holdout: bool = False,
+) -> str:
+    """Load default development dataset and compute its deterministic hash."""
+    import numpy as np
+
+    syms = symbols or [
+        "BTCUSDT",
+        "ETHUSDT",
+        "SOLUSDT",
+        "BNBUSDT",
+        "XRPUSDT",
+        "DOGEUSDT",
+        "ADAUSDT",
+        "AVAXUSDT",
+        "LINKUSDT",
+        "SUIUSDT",
+    ]
+    candles_dict = {}
+    for sym in syms:
+        df = load_candles(sym, timeframe, data_dir=data_dir, allow_holdout=allow_holdout)
+        candles_dict[sym] = df[["open", "high", "low", "close", "open_time"]].to_numpy(dtype=np.float64)
+    return compute_dataset_hash(candles_dict)
+

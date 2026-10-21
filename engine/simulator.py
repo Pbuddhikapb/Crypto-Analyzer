@@ -317,6 +317,7 @@ class SimulationEngine:
 
         # Deduct entry fee immediately from cash equity
         self.equity_usd -= entry_fee_usd
+        self.last_bar_timestamp_ms[signal.symbol.upper()] = signal.timestamp_ms
         return trade_id
 
     def process_bar(
@@ -735,3 +736,261 @@ class SimulationEngine:
             days_evaluated=round(days_eval, 1),
             pct_of_dataset_evaluated=pct_eval,
         )
+
+
+def simulate_single_trade_lifecycle(
+    symbol: str,
+    side: str,
+    nominal_entry: float,
+    stop_loss: float,
+    entry_ts_ms: int,
+    candles_forward: List[Tuple[float, ...]],
+    equity_at_entry: float,
+    risk_per_trade_pct: float,
+    max_leverage: float,
+    friction: SimulationFriction,
+    exit_config: ExitConfig,
+    bar_interval_ms: Optional[int] = None,
+    entry_volume: Optional[float] = None,
+) -> Optional[ExecutedTrade]:
+    """
+    Simulate an individual trade forward from entry to exit through the Single Exit Authority
+    using SimulationEngine with exact friction, slippage, funding rate, zero-volume skipping,
+    and session-break gap termination.
+    """
+    if entry_volume is not None and entry_volume == 0.0:
+        return None
+
+    engine = SimulationEngine(
+        initial_equity_usd=equity_at_entry,
+        risk_per_trade_pct=risk_per_trade_pct,
+        max_leverage=max_leverage,
+        friction=friction,
+        exit_config=exit_config,
+        bar_interval_ms=bar_interval_ms,
+        sizing_mode="fixed_risk",
+    )
+
+    sig = CandidateSignal(
+        symbol=symbol,
+        side=side,
+        entry_price=nominal_entry,
+        stop_loss=stop_loss,
+        timestamp_ms=entry_ts_ms,
+        volume=entry_volume,
+    )
+
+    trade_id = engine.open_position(sig, current_bar_idx=0, entry_volume=entry_volume)
+    if trade_id is None:
+        return None
+
+    for idx, c in enumerate(candles_forward):
+        c_open = float(c[0])
+        c_high = float(c[1])
+        c_low = float(c[2])
+        c_close = float(c[3])
+        c_ts = int(c[4]) if len(c) > 4 else entry_ts_ms + (idx + 1) * (bar_interval_ms or 3600000)
+
+        closed = engine.process_bar(
+            symbol=symbol,
+            candle=(c_open, c_high, c_low, c_close),
+            timestamp_ms=c_ts,
+            current_bar_idx=idx + 1,
+            bar_interval_ms=bar_interval_ms,
+        )
+        if closed:
+            return closed[0]
+
+    return None
+
+
+def simulate_portfolio_signals(
+    candidates: List[CandidateSignal],
+    candles_dict: Dict[str, np.ndarray],
+    bar_index_map: Optional[Dict[str, Dict[int, int]]] = None,
+    initial_equity_usd: float = 10000.0,
+    risk_per_trade_pct: float = 1.0,
+    max_open_positions: int = 3,
+    max_directional_positions: int = 2,
+    symbol_cooldown_bars: int = 3,
+    max_leverage: float = 3.0,
+    friction: Optional[SimulationFriction] = None,
+    exit_config: Optional[ExitConfig] = None,
+    sizing_mode: str = "fixed_risk",
+    ruin_threshold_usd: Optional[float] = None,
+    bar_interval_ms: Optional[int] = None,
+) -> SimulationResult:
+    """
+    Simulate portfolio execution of candidate signals using SimulationEngine, enforcing:
+    1. Zero-volume bar skipping on entry bar
+    2. Concurrency constraints (max_open_positions, max_directional_positions, zero duplicate symbols)
+    3. Post-exit symbol cooldown
+    4. Sizing mode: fixed_risk (default) or compounding, max leverage
+    5. Ruin guard: reject new entries in compounding mode; report-only in fixed_risk mode
+    6. Single Exit Authority lifecycle with slippage, taker/maker fees, and 8h funding drag
+    7. Session-break gap detection: terminating open trades when gap > bar_interval_ms
+    8. Complete performance metrics via SimulationEngine.compute_summary()
+    """
+    fric = friction or SimulationFriction()
+    cfg = exit_config or ExitConfig()
+
+    eff_interval = bar_interval_ms
+    if eff_interval is None and candles_dict:
+        for arr in candles_dict.values():
+            if len(arr) >= 2:
+                eff_interval = int(arr[1, 4] - arr[0, 4])
+                break
+    if eff_interval is None:
+        eff_interval = 3600 * 1000
+
+    idx_maps: Dict[str, Dict[int, int]] = {}
+    if bar_index_map is not None:
+        idx_maps = bar_index_map
+    else:
+        for sym, arr in candles_dict.items():
+            idx_maps[sym] = {int(arr[idx, 4]): idx for idx in range(len(arr))}
+
+    engine = SimulationEngine(
+        initial_equity_usd=initial_equity_usd,
+        risk_per_trade_pct=risk_per_trade_pct,
+        max_open_positions=max_open_positions,
+        max_directional_positions=max_directional_positions,
+        symbol_cooldown_bars=symbol_cooldown_bars,
+        max_leverage=max_leverage,
+        friction=fric,
+        exit_config=cfg,
+        ruin_threshold_usd=ruin_threshold_usd,
+        sizing_mode=sizing_mode,
+        bar_interval_ms=eff_interval,
+    )
+
+    sorted_signals = sorted(candidates, key=lambda s: s.timestamp_ms)
+    active_open: List[Dict[str, Any]] = []
+
+    if sorted_signals:
+        engine.equity_curve.append((sorted_signals[0].timestamp_ms, engine.initial_equity_usd))
+    else:
+        engine.equity_curve.append((0, engine.initial_equity_usd))
+
+    for sig in sorted_signals:
+        sym = sig.symbol.upper()
+        c_ts = sig.timestamp_ms
+
+        # 1. Realize PnL for positions that exited at or before signal timestamp
+        still_open = []
+        for pos in active_open:
+            if pos["exit_ts_ms"] <= c_ts:
+                engine.equity_usd += pos["net_pnl_usd"]
+                if engine.equity_curve and engine.equity_curve[-1][0] == pos["exit_ts_ms"]:
+                    engine.equity_curve[-1] = (pos["exit_ts_ms"], round(engine.equity_usd, 2))
+                else:
+                    engine.equity_curve.append((pos["exit_ts_ms"], round(engine.equity_usd, 2)))
+            else:
+                still_open.append(pos)
+        active_open = still_open
+
+        # 2. Portfolio Concurrency Checks
+        if len(active_open) >= max_open_positions:
+            continue
+
+        if any(p["symbol"] == sym for p in active_open):
+            continue
+
+        dir_count = sum(1 for p in active_open if p["side"] == sig.side)
+        if dir_count >= max_directional_positions:
+            continue
+
+        arr = candles_dict.get(sym)
+        if arr is None:
+            continue
+
+        entry_bar_idx = idx_maps.get(sym, {}).get(c_ts)
+        if entry_bar_idx is None:
+            continue
+
+        # Extract entry volume
+        vol = sig.volume
+        if vol is None and arr.shape[1] > 5:
+            vol = float(arr[entry_bar_idx, 5])
+
+        # 3. Use engine's unified can_open_position (ruin guard, volume == 0, cooldown)
+        can_open, reason = engine.can_open_position(
+            symbol=sym,
+            side=sig.side,
+            current_bar_idx=entry_bar_idx,
+            entry_volume=vol,
+        )
+        if not can_open:
+            if "volume is zero" in reason.lower() or (vol is not None and vol == 0.0):
+                logger.warning(
+                    f"Skipping signal for {sig.symbol} at {c_ts}: entry bar has volume == 0"
+                )
+            if engine.ruined and engine.ruin_time_ms is None:
+                engine.ruin_time_ms = c_ts
+            continue
+
+        # 4. Slicing forward candles and executing single trade lifecycle
+        max_k = min(entry_bar_idx + 120, len(arr))
+        forward_candles = [tuple(arr[k]) for k in range(entry_bar_idx, max_k)]
+        if not forward_candles:
+            continue
+
+        sizing_equity = engine.initial_equity_usd if engine.sizing_mode == "fixed_risk" else engine.equity_usd
+        trade = simulate_single_trade_lifecycle(
+            symbol=sym,
+            side=sig.side,
+            nominal_entry=sig.entry_price,
+            stop_loss=sig.stop_loss,
+            entry_ts_ms=c_ts,
+            candles_forward=forward_candles,
+            equity_at_entry=sizing_equity,
+            risk_per_trade_pct=engine.risk_per_trade_pct,
+            max_leverage=engine.max_leverage,
+            friction=fric,
+            exit_config=cfg,
+            bar_interval_ms=eff_interval,
+            entry_volume=vol,
+        )
+
+        if trade is None:
+            continue
+
+        # Update cooldown tracker in engine
+        exit_bar_idx = idx_maps.get(sym, {}).get(trade.exit_time_ms, entry_bar_idx + trade.bars_held)
+        engine.cooldown_tracker[sym] = exit_bar_idx
+
+        active_open.append({
+            "symbol": sym,
+            "side": sig.side,
+            "exit_ts_ms": trade.exit_time_ms,
+            "net_pnl_usd": trade.net_pnl_usd,
+            "trade": trade,
+        })
+        engine.completed_trades.append(trade)
+
+    # 5. Final flush: credit remaining active positions at their exit times
+    for pos in active_open:
+        engine.equity_usd += pos["net_pnl_usd"]
+        if engine.equity_curve and engine.equity_curve[-1][0] == pos["exit_ts_ms"]:
+            engine.equity_curve[-1] = (pos["exit_ts_ms"], round(engine.equity_usd, 2))
+        else:
+            engine.equity_curve.append((pos["exit_ts_ms"], round(engine.equity_usd, 2)))
+
+    # Compute days evaluated if candles_dict has timestamps
+    summary = engine.compute_summary()
+    if candles_dict:
+        try:
+            min_ts = min(int(arr[0, 4]) for arr in candles_dict.values() if len(arr) > 0)
+            max_ts = max(int(arr[-1, 4]) for arr in candles_dict.values() if len(arr) > 0)
+            total_days = max(1.0, (max_ts - min_ts) / (86400 * 1000.0))
+            if engine.sizing_mode == "compounding" and engine.ruined and engine.ruin_time_ms:
+                days_eval = max(1.0, (engine.ruin_time_ms - min_ts) / (86400 * 1000.0))
+            else:
+                days_eval = total_days
+            summary.days_evaluated = round(days_eval, 1)
+            summary.pct_of_dataset_evaluated = min(100.0, round((days_eval / total_days) * 100.0, 1))
+        except Exception:
+            pass
+
+    return summary
+

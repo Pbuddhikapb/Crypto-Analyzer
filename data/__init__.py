@@ -5,7 +5,13 @@ from data.downloader import (
     download_universe,
     verify_candle_integrity,
 )
-from data.loader import DEVELOPMENT_END, clear_cache, load_candles
+from data.loader import (
+    DEVELOPMENT_END,
+    clear_cache,
+    compute_dataset_hash,
+    get_current_dataset_hash,
+    load_candles,
+)
 
 __all__ = [
     "DEVELOPMENT_END",
@@ -14,4 +20,6 @@ __all__ = [
     "verify_candle_integrity",
     "load_candles",
     "clear_cache",
+    "compute_dataset_hash",
+    "get_current_dataset_hash",
 ]

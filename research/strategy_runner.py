@@ -30,6 +30,8 @@ from engine.simulator import (
     ExecutedTrade,
     SimulationFriction,
     SimulationResult,
+    simulate_portfolio_signals,
+    simulate_single_trade_lifecycle,
 )
 from research.evaluator import BaselineHurdles, StrategyEvaluation, StrategyEvaluator
 from research.random_baseline import (
@@ -37,7 +39,6 @@ from research.random_baseline import (
     compute_bootstrap_ci,
     compute_dataset_hash,
     run_matched_baseline,
-    simulate_single_trade_lifecycle,
 )
 from research.strategies import (
     BaseStrategy,
@@ -79,318 +80,7 @@ class StrategyRunResult:
     bootstrap_ci: Optional[Tuple[float, float]] = None
 
 
-def simulate_portfolio_signals(
-    candidates: List[CandidateSignal],
-    candles_dict: Dict[str, np.ndarray],  # symbol -> [open, high, low, close, open_time]
-    bar_index_map: Dict[str, Dict[int, int]],  # symbol -> {open_time_ms: bar_idx}
-    initial_equity_usd: float = 10000.0,
-    risk_per_trade_pct: float = 1.0,
-    max_open_positions: int = 3,
-    max_directional_positions: int = 2,
-    symbol_cooldown_bars: int = 3,
-    max_leverage: float = 3.0,
-    friction: Optional[SimulationFriction] = None,
-    exit_config: Optional[ExitConfig] = None,
-    sizing_mode: str = "fixed_risk",
-    ruin_threshold_usd: Optional[float] = None,
-) -> SimulationResult:
-    """
-    Simulate portfolio execution of chronological candidate signals enforcing:
-    1. Max concurrency (3 total, 2 directional)
-    2. Zero duplicate positions per symbol
-    3. 3-bar post-exit symbol cooldown
-    4. Sizing mode: fixed_risk (default) or compounding, max 3x leverage
-    5. Ruin guard: reject all new entries if equity <= ruin_threshold_usd (5% of initial equity)
-    6. Single Exit Authority lifecycle with adverse market stop slippage and taker fees
-    7. Deferred equity credit upon trade exit
-    """
-    fric = friction or SimulationFriction()
-    cfg = exit_config or ExitConfig()
-    ruin_limit = float(ruin_threshold_usd) if ruin_threshold_usd is not None else (0.05 * initial_equity_usd)
-    ruined = False
-    ruin_time_ms: Optional[int] = None
-
-    # Sort all candidates chronologically
-    sorted_signals = sorted(candidates, key=lambda s: s.timestamp_ms)
-
-    current_equity = initial_equity_usd
-    completed_trades: List[ExecutedTrade] = []
-    # Active tracking list: [{"symbol", "side", "exit_ts_ms", "net_pnl_usd", "trade"}]
-    active_open: List[Dict[str, Any]] = []
-    # symbol -> last_closed_bar_idx
-    cooldowns: Dict[str, int] = {}
-    equity_curve: List[Tuple[int, float]] = [(sorted_signals[0].timestamp_ms if sorted_signals else 0, current_equity)]
-
-    for sig in sorted_signals:
-        sym = sig.symbol.upper()
-        c_ts = sig.timestamp_ms
-
-        # 1. Clean up positions that exited at or before candidate entry time
-        still_open = []
-        for pos in active_open:
-            if pos["exit_ts_ms"] <= c_ts:
-                current_equity += pos["net_pnl_usd"]
-                # Update equity curve
-                if equity_curve and equity_curve[-1][0] == pos["exit_ts_ms"]:
-                    equity_curve[-1] = (pos["exit_ts_ms"], round(current_equity, 2))
-                else:
-                    equity_curve.append((pos["exit_ts_ms"], round(current_equity, 2)))
-            else:
-                still_open.append(pos)
-        active_open = still_open
-
-        # 2. Ruin Guard Check: reject opening new trades only in compounding mode
-        if sizing_mode == "compounding":
-            if current_equity <= ruin_limit:
-                if not ruined:
-                    ruined = True
-                    ruin_time_ms = c_ts
-                continue
-        else:
-            # In fixed_risk mode: ruin is report-only, never stops entry
-            if current_equity <= ruin_limit and not ruined:
-                ruined = True
-                ruin_time_ms = c_ts
-
-        # 3. Portfolio Concurrency Checks
-        if len(active_open) >= max_open_positions:
-            continue
-
-        if any(p["symbol"] == sym for p in active_open):
-            continue
-
-        directional_count = sum(1 for p in active_open if p["side"] == sig.side)
-        if directional_count >= max_directional_positions:
-            continue
-
-        arr = candles_dict.get(sym)
-        if arr is None:
-            continue
-
-        idx_map = bar_index_map.get(sym, {})
-        entry_bar_idx = idx_map.get(c_ts)
-        if entry_bar_idx is None:
-            continue
-
-        # Cooldown check
-        last_closed_bar = cooldowns.get(sym, -999)
-        if (entry_bar_idx - last_closed_bar) < symbol_cooldown_bars:
-            continue
-
-        # 3. Simulate trade lifecycle forward (120-bar forward window is ample for exit authority)
-        max_k = min(entry_bar_idx + 120, len(arr))
-        candles_forward = [
-            (float(arr[k, 0]), float(arr[k, 1]), float(arr[k, 2]), float(arr[k, 3]), int(arr[k, 4]))
-            for k in range(entry_bar_idx, max_k)
-        ]
-
-        if not candles_forward:
-            continue
-
-        equity_for_sizing = initial_equity_usd if sizing_mode == "fixed_risk" else current_equity
-
-        trade = simulate_single_trade_lifecycle(
-            symbol=sym,
-            side=sig.side,
-            nominal_entry=sig.entry_price,
-            stop_loss=sig.stop_loss,
-            entry_ts_ms=c_ts,
-            candles_forward=candles_forward,
-            equity_at_entry=equity_for_sizing,
-            risk_per_trade_pct=risk_per_trade_pct,
-            max_leverage=max_leverage,
-            friction=fric,
-            exit_config=cfg,
-        )
-
-        if trade is None:
-            continue
-
-        # Find bar index when trade exited
-        exit_bar_idx = idx_map.get(trade.exit_time_ms, entry_bar_idx + trade.bars_held)
-        cooldowns[sym] = exit_bar_idx
-
-        active_open.append({
-            "symbol": sym,
-            "side": sig.side,
-            "exit_ts_ms": trade.exit_time_ms,
-            "net_pnl_usd": trade.net_pnl_usd,
-            "trade": trade,
-        })
-        completed_trades.append(trade)
-
-    # 4. Final flush: credit any remaining active positions at their exit times
-    for pos in active_open:
-        current_equity += pos["net_pnl_usd"]
-        if equity_curve and equity_curve[-1][0] == pos["exit_ts_ms"]:
-            equity_curve[-1] = (pos["exit_ts_ms"], round(current_equity, 2))
-        else:
-            equity_curve.append((pos["exit_ts_ms"], round(current_equity, 2)))
-
-    # 5. Compute full performance metrics
-    total_trades = len(completed_trades)
-    if total_trades == 0:
-        return SimulationResult(
-            initial_equity_usd=initial_equity_usd,
-            final_equity_usd=current_equity,
-            net_profit_usd=0.0,
-            net_profit_pct=0.0,
-            total_trades=0,
-            winning_trades=0,
-            losing_trades=0,
-            win_rate_pct=0.0,
-            gross_profit_usd=0.0,
-            gross_loss_usd=0.0,
-            profit_factor=0.0,
-            gross_profit_factor=0.0,
-            expectancy_usd=0.0,
-            expectancy_r=0.0,
-            gross_expectancy_r=0.0,
-            avg_r_multiple=0.0,
-            max_drawdown_pct=0.0,
-            max_drawdown_duration_bars=0,
-            sharpe_ratio=0.0,
-            sortino_ratio=0.0,
-            total_fees_usd=0.0,
-            total_slippage_usd=0.0,
-            total_funding_cost_usd=0.0,
-            trades=[],
-            equity_curve=equity_curve,
-            ruined=ruined,
-            ruin_time_ms=ruin_time_ms,
-            sizing_mode=sizing_mode,
-            cumulative_r=0.0,
-            max_drawdown_r=0.0,
-            days_evaluated=0.0,
-            pct_of_dataset_evaluated=100.0,
-        )
-
-    # Chronological sort for drawdown and equity path
-    completed_trades.sort(key=lambda t: t.exit_time_ms)
-
-    wins = [t for t in completed_trades if t.net_pnl_usd > 0]
-    losses = [t for t in completed_trades if t.net_pnl_usd <= 0]
-    win_count = len(wins)
-    loss_count = len(losses)
-    win_rate = (win_count / total_trades) * 100.0
-
-    # Net Profit Factor: sum(net > 0) / abs(sum(net <= 0))
-    net_profit = sum(t.net_pnl_usd for t in wins)
-    net_loss = abs(sum(t.net_pnl_usd for t in losses))
-    profit_factor = (net_profit / net_loss) if net_loss > 0 else (999.0 if net_profit > 0 else 0.0)
-
-    # Gross Profit Factor (diagnostics)
-    gross_profit = sum(t.gross_pnl_usd for t in completed_trades if t.gross_pnl_usd > 0)
-    gross_loss = abs(sum(t.gross_pnl_usd for t in completed_trades if t.gross_pnl_usd <= 0))
-    gross_profit_factor = (gross_profit / gross_loss) if gross_loss > 0 else (999.0 if gross_profit > 0 else 0.0)
-
-    net_profit_usd = current_equity - initial_equity_usd
-    net_profit_pct = (net_profit_usd / initial_equity_usd) * 100.0
-
-    avg_win_usd = (sum(t.net_pnl_usd for t in wins) / win_count) if win_count > 0 else 0.0
-    avg_loss_usd = (abs(sum(t.net_pnl_usd for t in losses)) / loss_count) if loss_count > 0 else 0.0
-    wr_frac = win_rate / 100.0
-    lr_frac = 1.0 - wr_frac
-    expectancy_usd = (wr_frac * avg_win_usd) - (lr_frac * avg_loss_usd)
-
-    # Net expectancy R from net_r
-    net_r_values = [t.net_r for t in completed_trades]
-    avg_r = float(np.mean(net_r_values)) if net_r_values else 0.0
-    win_net_r_mean = float(np.mean([t.net_r for t in wins])) if wins else 0.0
-    loss_net_r_mean = float(np.mean([abs(t.net_r) for t in losses])) if losses else 0.0
-    expectancy_r = (wr_frac * win_net_r_mean) - (lr_frac * loss_net_r_mean)
-
-    # Gross expectancy R from realized_r
-    gross_r_values = [t.realized_r for t in completed_trades]
-    gross_win_r_mean = float(np.mean([t.realized_r for t in wins])) if wins else 0.0
-    gross_loss_r_mean = float(np.mean([abs(t.realized_r) for t in losses])) if losses else 0.0
-    gross_expectancy_r = (wr_frac * gross_win_r_mean) - (lr_frac * gross_loss_r_mean)
-
-    total_fees = sum(t.fees_usd for t in completed_trades)
-    total_slippage = sum(t.slippage_usd for t in completed_trades)
-    total_funding = sum(t.funding_cost_usd for t in completed_trades)
-
-    # Max Drawdown from chronological trade PnL sequence
-    eq_peak = initial_equity_usd
-    cur_eq = initial_equity_usd
-    max_dd_pct = 0.0
-    for t in completed_trades:
-        cur_eq += t.net_pnl_usd
-        if cur_eq > eq_peak:
-            eq_peak = cur_eq
-        else:
-            dd = ((eq_peak - cur_eq) / eq_peak) * 100.0
-            if dd > max_dd_pct:
-                max_dd_pct = dd
-
-    returns = np.array([t.net_return_pct for t in completed_trades])
-    std_ret = np.std(returns)
-    mean_ret = np.mean(returns)
-    sharpe = float((mean_ret / std_ret) * np.sqrt(252.0)) if std_ret > 1e-8 else 0.0
-
-    # Sortino semi-deviation from 0
-    downside_diff = np.minimum(0.0, returns)
-    downside_dev = float(np.sqrt(np.mean(downside_diff**2)))
-    sortino = float((mean_ret / downside_dev) * np.sqrt(252.0)) if downside_dev > 1e-8 else 0.0
-
-    # Cumulative net R and peak-to-trough max drawdown on net R curve
-    cum_r = 0.0
-    peak_r = 0.0
-    max_dd_r = 0.0
-    for t in completed_trades:
-        cum_r += t.net_r
-        if cum_r > peak_r:
-            peak_r = cum_r
-        else:
-            dd_r = peak_r - cum_r
-            if dd_r > max_dd_r:
-                max_dd_r = dd_r
-
-    dataset_min_ts = min(int(arr[0, 4]) for arr in candles_dict.values()) if candles_dict else 0
-    dataset_max_ts = max(int(arr[-1, 4]) for arr in candles_dict.values()) if candles_dict else 0
-    total_dataset_days = max(1.0, (dataset_max_ts - dataset_min_ts) / (86400 * 1000.0)) if dataset_max_ts > dataset_min_ts else 1.0
-
-    if sizing_mode == "compounding" and ruined and ruin_time_ms:
-        days_evaluated = round(max(1.0, (ruin_time_ms - dataset_min_ts) / (86400 * 1000.0)), 1)
-    else:
-        days_evaluated = round(total_dataset_days, 1)
-    pct_of_dataset_evaluated = min(100.0, round((days_evaluated / total_dataset_days) * 100.0, 1))
-
-    return SimulationResult(
-        initial_equity_usd=initial_equity_usd,
-        final_equity_usd=round(current_equity, 2),
-        net_profit_usd=round(net_profit_usd, 2),
-        net_profit_pct=round(net_profit_pct, 2),
-        total_trades=total_trades,
-        winning_trades=win_count,
-        losing_trades=loss_count,
-        win_rate_pct=round(win_rate, 2),
-        gross_profit_usd=round(gross_profit, 2),
-        gross_loss_usd=round(gross_loss, 2),
-        profit_factor=round(profit_factor, 2),
-        gross_profit_factor=round(gross_profit_factor, 2),
-        expectancy_usd=round(expectancy_usd, 2),
-        expectancy_r=round(expectancy_r, 4),
-        gross_expectancy_r=round(gross_expectancy_r, 4),
-        avg_r_multiple=round(avg_r, 4),
-        max_drawdown_pct=round(max_dd_pct, 2),
-        max_drawdown_duration_bars=0,
-        sharpe_ratio=round(sharpe, 2),
-        sortino_ratio=round(sortino, 2),
-        total_fees_usd=round(total_fees, 2),
-        total_slippage_usd=round(total_slippage, 2),
-        total_funding_cost_usd=round(total_funding, 2),
-        trades=completed_trades,
-        equity_curve=equity_curve,
-        ruined=ruined,
-        ruin_time_ms=ruin_time_ms,
-        sizing_mode=sizing_mode,
-        cumulative_r=round(cum_r, 4),
-        max_drawdown_r=round(max_dd_r, 4),
-        days_evaluated=days_evaluated,
-        pct_of_dataset_evaluated=pct_of_dataset_evaluated,
-    )
-
+# simulate_portfolio_signals is imported directly from engine.simulator
 
 def compute_per_symbol_breakdown(trades: List[ExecutedTrade]) -> Dict[str, Dict[str, Any]]:
     """Compute per-symbol metrics for reporting."""
@@ -537,11 +227,16 @@ def run_strategy_evidence_validation(
         per_sym = compute_per_symbol_breakdown(sim_res.trades)
 
         matched_p_val = evaluation.matched_p_value if evaluation.matched_p_value is not None else evaluation.p_composite
+        if sim_res.sizing_mode == "fixed_risk":
+            perf_metric_str = f"MaxDD(R)={sim_res.max_drawdown_r:.2f}R, CumR={sim_res.cumulative_r:+.2f}R"
+        else:
+            perf_metric_str = f"MaxDD={sim_res.max_drawdown_pct:.1f}%, Return={sim_res.net_profit_pct:+.1f}%"
+
         logger.info(
             f"  Result for {s_name}: Trades={sim_res.total_trades}, "
             f"WR={sim_res.win_rate_pct:.1f}%, PF={sim_res.profit_factor:.2f}, "
             f"EV={sim_res.expectancy_r:+.4f}R, Sharpe={sim_res.sharpe_ratio:.2f}, "
-            f"MaxDD={sim_res.max_drawdown_pct:.1f}%, Return={sim_res.net_profit_pct:+.1f}% | "
+            f"{perf_metric_str} | "
             f"Matched Rank p-val: {matched_p_val:.4f} | "
             f"Bootstrap 95% CI: [{boot_ci[0]:+.4f}, {boot_ci[1]:+.4f}]R | "
             f"Verdict: {evaluation.verdict}"
@@ -568,6 +263,8 @@ def run_strategy_evidence_validation(
         else 1022.0
     )
     dataset_bars_val = len(next(iter(candles_dict.values()))) if candles_dict else 24528
+    dataset_hash_val = compute_dataset_hash(candles_dict) if candles_dict else "unknown"
+    git_hash_val = get_git_commit_hash()
     generate_markdown_report(
         results=run_results,
         output_path=output_report_path,
@@ -579,6 +276,8 @@ def run_strategy_evidence_validation(
         },
         friction=fric,
         exit_config=cfg,
+        dataset_hash=dataset_hash_val,
+        git_hash=git_hash_val,
     )
     save_strategy_results_json(run_results, output_json_path, candles_dict=candles_dict)
     return run_results
@@ -648,10 +347,13 @@ def save_strategy_results_json(
             "git_commit": git_hash,
         }
 
+    dataset_hash = compute_dataset_hash(candles_dict) if candles_dict else "unknown"
+
     payload = {
         "metadata": {
             "run_timestamp": now_iso,
             "git_commit": git_hash,
+            "dataset_hash": dataset_hash,
             "data_date_range": date_range_str,
             "start_time_ms": min_ts,
             "end_time_ms": max_ts,
@@ -672,6 +374,8 @@ def generate_markdown_report(
     dataset_info: Optional[Dict[str, Any]] = None,
     friction: Optional[SimulationFriction] = None,
     exit_config: Optional[ExitConfig] = None,
+    dataset_hash: Optional[str] = None,
+    git_hash: Optional[str] = None,
 ) -> None:
     """Format publication-grade Strategy Validation Report."""
     now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
@@ -884,8 +588,13 @@ def generate_markdown_report(
    Both gross P&L (pre-friction) and net P&L (post-fees, post-slippage, and post-funding) are reported side-by-side. The comparison reveals the decisive impact of transaction costs and funding drag on theoretical retail chart patterns.
 """
 
+    git_commit_hash = git_hash or get_git_commit_hash()
+    ds_hash = dataset_hash or "unknown"
+
     report_content = f"""# Strategy Validation Dossier: Evidence Before Infrastructure
 **Generated:** {now_str}  
+**Git Commit:** `{git_commit_hash}`  
+**Dataset Hash:** `{ds_hash}`  
 **Architecture Doctrine:** Claude's Option B (Discretionary Human Trading Terminal)  
 **Null Hypothesis ($H_0$):** Phase 2 {mc_iterations:,}-pass Monte Carlo Baseline Hurdle  
 **Dataset:** {total_symbols} Major Pairs (`{', '.join(symbols_list)}`), {dataset_years:.1f} Years ({dataset_bars:,} continuous 1h bars / coin from Binance USD-M Futures)  
@@ -967,10 +676,12 @@ def main():
         help="Ruin threshold in USD (default: 5%% of initial equity)",
     )
     parser.add_argument(
+        "--passes",
         "--matched-passes",
+        dest="matched_passes",
         type=int,
         default=1000,
-        help="Number of matched baseline passes (default: 1000)",
+        help="Number of matched baseline passes (default: 1000, use 200 in tests/dev)",
     )
     args = parser.parse_args()
 

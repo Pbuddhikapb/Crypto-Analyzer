@@ -507,3 +507,27 @@ class TestMarkdownReportGeneration:
         assert "BetaNoise" in content
         assert "edge emerges" not in content.lower()
         assert "proven" not in content.lower()
+
+
+class TestStrategyResultsDatasetHash:
+    """Ensure strategy_results.json is synchronized with the actual dataset."""
+
+    def test_strategy_results_dataset_hash_matches_loader(self):
+        import json
+        import os
+        from data.loader import get_current_dataset_hash
+
+        json_path = "research/reports/strategy_results.json"
+        assert os.path.exists(json_path), f"{json_path} does not exist"
+        with open(json_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        saved_hash = data.get("metadata", {}).get("dataset_hash")
+        assert saved_hash is not None, "dataset_hash missing in strategy_results.json metadata"
+
+        current_hash = get_current_dataset_hash()
+        assert saved_hash == current_hash, (
+            f"strategy_results.json dataset_hash ({saved_hash}) differs from loader's current hash ({current_hash}). "
+            f"Regenerate research/reports/strategy_results.json to synchronize."
+        )
+

@@ -15,6 +15,8 @@ from engine.simulator import (
     SimulationEngine,
     SimulationFriction,
     SimulationResult,
+    simulate_portfolio_signals,
+    simulate_single_trade_lifecycle,
 )
 
 __all__ = [
@@ -30,4 +32,6 @@ __all__ = [
     "ExecutedTrade",
     "SimulationResult",
     "SimulationEngine",
+    "simulate_portfolio_signals",
+    "simulate_single_trade_lifecycle",
 ]
