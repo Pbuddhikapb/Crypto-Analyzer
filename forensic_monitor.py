@@ -1,18 +1,14 @@
 import argparse
 import asyncio
-import json
 import os
 import sqlite3
-import sys
 import time
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 import aiohttp
-import numpy as np
 
 from indicators import format_price
-from vault import MarketDataVault
 
 
 class ForensicAnomalyAuditor:

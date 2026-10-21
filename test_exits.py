@@ -8,9 +8,6 @@ import pytest
 
 from engine.exits import (
     ExitConfig,
-    TradeState,
-    calculate_gross_return_pct,
-    calculate_r_multiple,
     create_trade_state,
     evaluate_trade_exit,
 )
@@ -253,7 +250,7 @@ def test_same_candle_multi_target_hit_short():
 
 
 def test_calculate_bracket_geometry():
-    from engine.exits import calculate_bracket_geometry, ExitConfig
+    from engine.exits import calculate_bracket_geometry
 
     # Long: Entry 100, Stop Loss 90 (risk_dist = 10, risk_pct = 10%)
     b_long = calculate_bracket_geometry("LONG", 100.0, 90.0)

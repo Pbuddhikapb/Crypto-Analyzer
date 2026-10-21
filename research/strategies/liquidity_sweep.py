@@ -17,7 +17,7 @@ import pandas as pd
 from engine.simulator import CandidateSignal
 from indicators import detect_swing_points
 from research.strategies.base import BaseStrategy, StrategyConfig
-from research.strategies.trend_pullback import compute_series_atr, compute_series_ema
+from research.strategies.trend_pullback import compute_series_ema
 
 
 class LiquiditySweepStrategy(BaseStrategy):

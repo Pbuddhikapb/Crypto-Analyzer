@@ -12,7 +12,6 @@ import numpy as np
 
 from indicators import (
     calculate_adx,
-    calculate_atr,
     calculate_ema,
     calculate_rsi,
     check_bearish_fvg_retest,

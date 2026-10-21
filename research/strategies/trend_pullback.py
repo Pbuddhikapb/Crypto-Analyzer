@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 
 from engine.simulator import CandidateSignal
-from indicators import calculate_atr, calculate_ema, calculate_rsi_series
+from indicators import calculate_rsi_series
 from research.strategies.base import BaseStrategy, StrategyConfig
 
 

@@ -1,10 +1,9 @@
 import asyncio
-import os
 import time
 import pytest
 from fastapi.testclient import TestClient
 
-from server import create_app, extract_fvg_boxes, format_candles_for_chart, compute_indicators
+from server import create_app
 
 
 @pytest.fixture

@@ -1,8 +1,7 @@
 import asyncio
 import os
 import sqlite3
-import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 
 class MarketDataVault:

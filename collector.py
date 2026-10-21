@@ -1,11 +1,8 @@
 import argparse
 import asyncio
 import json
-import os
-import signal
-import sys
 import time
-from typing import Dict, List, Optional, Sequence
+from typing import List, Optional
 import urllib.parse
 
 import aiohttp

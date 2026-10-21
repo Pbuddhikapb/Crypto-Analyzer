@@ -1,13 +1,11 @@
 import argparse
 import asyncio
 import json
-import os
 import sys
 import time
 from typing import Dict, List, Optional, Sequence, Tuple
 
 import aiohttp
-import numpy as np
 import websockets
 
 from indicators import (

@@ -1,4 +1,3 @@
-import pytest
 from indicators import (
     detect_order_blocks,
     detect_breaker_blocks,

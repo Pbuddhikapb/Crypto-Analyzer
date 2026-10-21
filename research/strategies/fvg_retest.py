@@ -14,11 +14,9 @@ import pandas as pd
 
 from engine.simulator import CandidateSignal
 from indicators import (
-    calculate_atr,
     check_bearish_fvg_retest,
     check_bullish_fvg_retest,
     check_fvg_rejection_confirmation,
-    normalize_candles_5tuple,
 )
 from research.strategies.base import BaseStrategy, StrategyConfig
 from research.strategies.trend_pullback import compute_series_ema

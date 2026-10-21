@@ -1,7 +1,4 @@
-import asyncio
-import io
-import sys
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 import pytest
 
 from indicators import format_price

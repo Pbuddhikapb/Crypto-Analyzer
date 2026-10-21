@@ -4,7 +4,6 @@ Tests fees, adverse slippage, 8h funding rate drag, portfolio risk concurrency,
 directional constraints, symbol cooldowns, and performance metrics.
 """
 
-import pytest
 
 from engine.exits import ExitConfig
 from engine.simulator import (

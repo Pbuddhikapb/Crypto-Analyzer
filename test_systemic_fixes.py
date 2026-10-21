@@ -1,7 +1,5 @@
-import pytest
 import sqlite3
-from indicators import detect_rsi_divergences, check_bullish_fvg_retest, check_bearish_fvg_retest
-from microstructure import OpenInterestEngine
+from indicators import detect_rsi_divergences, check_bullish_fvg_retest
 from risk import PortfolioRiskManager
 from trader import PaperTrader
 

@@ -12,7 +12,6 @@ import pytest
 
 from data.loader import DEVELOPMENT_END, clear_cache, load_candles
 from research.holdout_check import (
-    get_source_file_git_hash,
     is_holdout_run_recorded,
     record_holdout_run,
     run_holdout_check,

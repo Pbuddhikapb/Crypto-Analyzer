@@ -5,10 +5,9 @@ Runs the backtest validator every N hours (default: 4 hours), validates results,
 stores telemetry in SQLite, and dispatches email reports to the user.
 """
 
-import os
 import sys
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from pathlib import Path
 
 # Ensure project root is in path

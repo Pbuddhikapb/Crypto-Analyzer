@@ -20,7 +20,6 @@ from indicators import (
     check_order_block_confluence,
     check_recent_bullish_fvg,
     check_recent_bearish_fvg,
-    detect_market_structure,
     detect_rsi_divergences,
     format_price,
 )

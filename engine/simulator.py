@@ -12,16 +12,12 @@ Simulates trading execution with realistic market frictions:
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
-import pandas as pd
 
 from engine.exits import (
     ExitConfig,
-    ExitDecision,
-    TradeState,
     calculate_gross_return_pct,
     calculate_r_multiple,
     create_trade_state,

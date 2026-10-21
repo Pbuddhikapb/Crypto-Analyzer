@@ -14,7 +14,6 @@ from engine.simulator import ExecutedTrade, SimulationFriction
 from research.evaluator import BaselineHurdles
 from research.random_baseline import (
     compute_bootstrap_ci,
-    compute_dataset_hash,
     compute_metric_distribution,
     run_matched_baseline,
     run_monte_carlo_baseline,

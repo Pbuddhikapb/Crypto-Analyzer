@@ -12,11 +12,9 @@ from microstructure import (
     SymbolNormalizer,
     WhaleTradeFilter,
     WhaleTrade,
-    get_whale_thresholds,
     fetch_historical_funding_rates,
     fetch_historical_open_interest,
     OrderBookEngine,
-    OrderBookSnapshot,
 )
 
 

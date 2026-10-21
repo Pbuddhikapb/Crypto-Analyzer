@@ -1,10 +1,8 @@
 import pytest
-import numpy as np
 from indicators import (
     calculate_ema,
     calculate_atr,
     calculate_rsi,
-    calculate_rsi_series,
     calculate_adx,
     check_recent_bullish_fvg,
     check_recent_bearish_fvg,

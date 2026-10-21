@@ -6,11 +6,9 @@ import io
 import os
 import shutil
 import tempfile
-import urllib.error
 import zipfile
 from unittest.mock import MagicMock, patch
 
-import numpy as np
 import pandas as pd
 import pytest
 

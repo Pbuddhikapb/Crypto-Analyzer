@@ -12,13 +12,10 @@ Usage:
 """
 
 import argparse
-import hashlib
-import json
 import os
 import subprocess
 import sys
 import time
-from datetime import datetime, timezone
 from pathlib import Path
 
 # Ensure project root is importable
@@ -34,7 +31,7 @@ if sys.platform == "win32":
         pass
 
 from validator.output_parser import parse_backtest_output, parse_trade_rows
-from validator.db_manager import init_db, save_run, save_trades, save_config_snapshot, save_alert, get_last_n_runs
+from validator.db_manager import init_db, save_run, save_trades, save_config_snapshot, save_alert
 from validator.validation import run_all_checks, compute_config_hashes, check_config_drift
 from validator.report_generator import generate_report, save_report
 

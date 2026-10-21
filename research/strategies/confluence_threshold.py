@@ -15,8 +15,6 @@ import pandas as pd
 
 from engine.simulator import CandidateSignal
 from indicators import (
-    calculate_atr,
-    calculate_rsi_series,
     check_recent_bearish_fvg,
     check_recent_bullish_fvg,
     classify_discount_premium,

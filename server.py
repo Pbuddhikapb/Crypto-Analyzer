@@ -1,7 +1,6 @@
 import asyncio
 import json
 import os
-import sys
 import time
 from contextlib import asynccontextmanager
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -11,23 +10,12 @@ from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnec
 from fastapi.middleware.cors import CORSMiddleware
 
 from indicators import (
-    calculate_adx,
-    calculate_atr,
-    calculate_ema,
     calculate_fibonacci_levels,
     calculate_optimal_trade_setup,
-    calculate_rsi,
     check_order_block_confluence,
-    check_recent_bearish_fvg,
-    check_recent_bullish_fvg,
-    classify_discount_premium,
     compute_terminal_features,
     detect_breaker_blocks,
-    detect_market_structure,
     detect_order_blocks,
-    detect_rsi_divergences,
-    format_price,
-    get_active_dealing_range,
     normalize_candles_5tuple,
 )
 from main import (
