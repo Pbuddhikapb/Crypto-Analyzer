@@ -28,4 +28,4 @@ All agents and contributors working on this codebase must strictly adhere to the
    If a test or command fails twice, stop immediately and ask the user before trying again.
 
 8. **Linux VM & Long-Running Commands**:
-   This project runs on a Linux VM. Use bash and python3. Run any command expected to take more than 2 minutes with nohup or inside tmux, write output to logs/<name>.log, and tell me the command to check its progress.
+   This project runs on a Linux VM. Use bash and python3. Run any command expected to take more than 2 minutes with nohup or tmux, log to logs/<name>.log, and tell me how to check progress.

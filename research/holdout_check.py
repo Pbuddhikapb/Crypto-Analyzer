@@ -22,13 +22,13 @@ import numpy as np
 import pandas as pd
 
 from data.loader import DEVELOPMENT_END, load_candles
-from engine.simulator import CandidateSignal, SimulationResult
+from engine.simulator import CandidateSignal, SimulationResult, simulate_portfolio_signals
 from research.strategies.base import BaseStrategy
 from research.strategies.confluence_threshold import ConfluenceThresholdStrategy
 from research.strategies.fvg_retest import FVGRetestStrategy
 from research.strategies.liquidity_sweep import LiquiditySweepStrategy
 from research.strategies.trend_pullback import TrendPullbackStrategy
-from research.strategy_runner import DEFAULT_SYMBOLS, simulate_portfolio_signals
+from research.strategy_runner import DEFAULT_SYMBOLS
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("holdout_check")
