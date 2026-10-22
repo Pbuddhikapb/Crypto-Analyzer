@@ -1,6 +1,6 @@
 # Strategy Validation Dossier: Evidence Before Infrastructure
-**Generated:** 2026-10-22 03:08 UTC  
-**Git Commit:** `a94feccbf9f1df1edd8c8736ead052fe193f56a5+dirty`  
+**Generated:** 2026-10-22 06:14 UTC  
+**Git Commit:** `7c5fc36c62321e300e8e1942d46535d6a25837bb+dirty`  
 **Dataset Hash:** `61d0448603612d76`  
 **Architecture Doctrine:** Claude's Option B (Discretionary Human Trading Terminal)  
 **Null Hypothesis ($H_0$):** Phase 2 1,000-pass Monte Carlo Baseline Hurdle  
@@ -8,7 +8,7 @@
 * **Per-Symbol 1h Bar Counts:** BTCUSDT: 46,393, ETHUSDT: 46,393, SOLUSDT: 46,273, BNBUSDT: 46,393, XRPUSDT: 46,273, DOGEUSDT: 46,393, ADAUSDT: 46,393, AVAXUSDT: 46,393, LINKUSDT: 46,393, SUIUSDT: 25,929  
 * **Data Continuity & Coverage Notes:**
   - **SUIUSDT starts later:** SUI USD-M Perpetual contract was listed on Binance on 2023-05-03 16:00 UTC (25,929 bars vs 46,393 bars full period).
-  - **Coins with maintenance gaps (SOLUSDT, XRPUSDT):** 120 bars missing due to Binance historical downtime (73h: 2022-02-25 23:00 to 2022-03-01 00:00 UTC, and 49h: 2022-03-31 23:00 to 2022-04-03 00:00 UTC).
+  - **Coins with maintenance gaps (SOLUSDT, XRPUSDT):** 120 bars missing in downloaded archive, cause unverified (73h: 2022-02-25 23:00 to 2022-03-01 00:00 UTC, and 49h: 2022-03-31 23:00 to 2022-04-03 00:00 UTC).
 **Execution Authority:** Single Exit Authority (`engine/exits.py`)  
 **Institutional Friction:** Taker Fee 0.05%, Maker Fee 0.02%, Slippage 0.03%, 8h Funding Drag 0.01%  
 **Exit Mechanics:** Stepped Scaling (50% TP1 @ +0.75R, BE armed @ +0.85R excursion, TP2 @ +1.33R, 12-bar stagnancy)
@@ -32,14 +32,14 @@ In Phase 2, we established the empirical null hypothesis ($H_0$) across 1,000 Mo
 
 ## 2. Master Strategy Scorecard
 
-| Strategy | Trades | Win Rate | Net PF (Gross) | Net EV (Gross EV) | Max DD (R) | Bootstrap 95% CI | Matched Median EV | Matched Rank $p$-value | Days Evaluated | Sizing | Ruined? | Alpha Verdict |
-| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| **TrendPullback** | 6625 | 49.2% | **0.78** (0.89) | **-0.1099R** (-0.0497R) | 732.51R | [-0.1323, -0.0876]R | -0.1030R | `p = 0.7373` | 1933d (100.0%) | `fixed_risk` | ⚠️ Ruined (2022-02-07) | 🔴 **REJECTED** |
-| **FVGRetest** | 7856 | 46.9% | **0.84** (0.93) | **-0.0718R** (-0.0285R) | 597.04R | [-0.0911, -0.0523]R | -0.0675R | `p = 0.6633` | 1933d (100.0%) | `fixed_risk` | ⚠️ Ruined (2022-05-24) | 🔴 **REJECTED** |
-| **ConfluenceThreshold** | 17166 | 47.0% | **0.71** (0.80) | **-0.1513R** (-0.0940R) | 2606.85R | [-0.1654, -0.1373]R | -0.0969R | `p = 1.0000` | 1933d (100.0%) | `fixed_risk` | ⚠️ Ruined (2021-03-23) | 🔴 **REJECTED** |
-| **LiquiditySweep** | 22462 | 46.9% | **0.62** (0.75) | **-0.2157R** (-0.1239R) | 4846.73R | [-0.2285, -0.2029]R | -0.1654R | `p = 1.0000` | 1933d (100.0%) | `fixed_risk` | ⚠️ Ruined (2021-01-27) | 🔴 **REJECTED** |
-| **Donchian4hN20** | 1317 | 33.7% | **0.87** (0.93) | **-0.0522R** (-0.0271R) | 93.90R | [-0.1072, +0.0066]R | -0.2189R | `p = 0.0010` | 1933d (100.0%) | `fixed_risk` | No | 🔴 **REJECTED** |
-| **Donchian4hN55** | 916 | 34.1% | **0.96** (1.02) | **-0.0153R** (+0.0078R) | 49.19R | [-0.0832, +0.0580]R | -0.2244R | `p = 0.0010` | 1933d (100.0%) | `fixed_risk` | No | 🔴 **REJECTED** |
+| Strategy | Trades | Win Rate | Net PF (Gross) | Net EV (Gross EV) | Max DD (R) | Bootstrap 95% CI | Matched Median EV | Matched Rank $p$-value | Dropped Null % | Days Evaluated | Sizing | Ruined? | Alpha Verdict |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **TrendPullback** | 6625 | 49.2% | **0.78** (0.89) | **-0.1099R** (-0.0497R) | 732.51R | [-0.1323, -0.0876]R | -0.1030R | `p = 0.7373` | 0.00% | 1933d (100.0%) | `fixed_risk` | ⚠️ Ruined (2022-02-07) | 🔴 **REJECTED** |
+| **FVGRetest** | 7856 | 46.9% | **0.84** (0.93) | **-0.0718R** (-0.0285R) | 597.04R | [-0.0911, -0.0523]R | -0.0675R | `p = 0.6633` | 0.00% | 1933d (100.0%) | `fixed_risk` | ⚠️ Ruined (2022-05-24) | 🔴 **REJECTED** |
+| **ConfluenceThreshold** | 17166 | 47.0% | **0.71** (0.80) | **-0.1513R** (-0.0940R) | 2606.85R | [-0.1654, -0.1373]R | -0.0969R | `p = 1.0000` | 0.00% | 1933d (100.0%) | `fixed_risk` | ⚠️ Ruined (2021-03-23) | 🔴 **REJECTED** |
+| **LiquiditySweep** | 22462 | 46.9% | **0.62** (0.75) | **-0.2157R** (-0.1239R) | 4846.73R | [-0.2285, -0.2029]R | -0.1654R | `p = 1.0000` | 0.00% | 1933d (100.0%) | `fixed_risk` | ⚠️ Ruined (2021-01-27) | 🔴 **REJECTED** |
+| **Donchian4hN20** | 1317 | 33.7% | **0.87** (0.93) | **-0.0522R** (-0.0271R) | 93.90R | [-0.1072, +0.0066]R | +0.0058R | `p = 0.9703` | 0.00% | 1933d (100.0%) | `fixed_risk` | No | 🔴 **REJECTED** |
+| **Donchian4hN55** | 916 | 34.1% | **0.96** (1.02) | **-0.0153R** (+0.0078R) | 49.19R | [-0.0832, +0.0580]R | +0.0074R | `p = 0.6535` | 0.00% | 1933d (100.0%) | `fixed_risk` | No | 🔴 **REJECTED** |
 
 ---
 
@@ -50,6 +50,7 @@ In Phase 2, we established the empirical null hypothesis ($H_0$) across 1,000 Mo
 
 > **Statistical Verdict**: **`REJECTED (p >= 0.05)`**  
 > Matched Rank $p$-value: **`p = 0.7373`** (Empirical rank within 1,000 matched null passes)  
+> Matched Null Dropped Trade Share: **`0.00%`**  
 > Total Candidate Signals: `33501` | Executed Trades: `6625`  
 > Net Profit Factor: **`0.78`** (Gross: `0.89`)  
 > Net Expectancy: **`-0.1099R`** (Gross: `-0.0497R`)  
@@ -100,6 +101,7 @@ In Phase 2, we established the empirical null hypothesis ($H_0$) across 1,000 Mo
 
 > **Statistical Verdict**: **`REJECTED (p >= 0.05)`**  
 > Matched Rank $p$-value: **`p = 0.6633`** (Empirical rank within 1,000 matched null passes)  
+> Matched Null Dropped Trade Share: **`0.00%`**  
 > Total Candidate Signals: `28990` | Executed Trades: `7856`  
 > Net Profit Factor: **`0.84`** (Gross: `0.93`)  
 > Net Expectancy: **`-0.0718R`** (Gross: `-0.0285R`)  
@@ -150,6 +152,7 @@ In Phase 2, we established the empirical null hypothesis ($H_0$) across 1,000 Mo
 
 > **Statistical Verdict**: **`REJECTED (p >= 0.05)`**  
 > Matched Rank $p$-value: **`p = 1.0000`** (Empirical rank within 1,000 matched null passes)  
+> Matched Null Dropped Trade Share: **`0.00%`**  
 > Total Candidate Signals: `187951` | Executed Trades: `17166`  
 > Net Profit Factor: **`0.71`** (Gross: `0.80`)  
 > Net Expectancy: **`-0.1513R`** (Gross: `-0.0940R`)  
@@ -200,6 +203,7 @@ In Phase 2, we established the empirical null hypothesis ($H_0$) across 1,000 Mo
 
 > **Statistical Verdict**: **`REJECTED (p >= 0.05)`**  
 > Matched Rank $p$-value: **`p = 1.0000`** (Empirical rank within 1,000 matched null passes)  
+> Matched Null Dropped Trade Share: **`0.00%`**  
 > Total Candidate Signals: `73577` | Executed Trades: `22462`  
 > Net Profit Factor: **`0.62`** (Gross: `0.75`)  
 > Net Expectancy: **`-0.2157R`** (Gross: `-0.1239R`)  
@@ -249,24 +253,25 @@ In Phase 2, we established the empirical null hypothesis ($H_0$) across 1,000 Mo
 **Concept:** 4h Donchian Breakout N=20 + ATR(14) 3R Trailing Stop (H1a)
 
 > **Statistical Verdict**: **`REJECTED (p >= 0.025)`**  
-> Matched Rank $p$-value: **`p = 0.0010`** (Empirical rank within 1,000 matched null passes)  
+> Matched Rank $p$-value: **`p = 0.9703`** (Empirical rank within 1,000 matched null passes)  
+> Matched Null Dropped Trade Share: **`0.00%`**  
 > Total Candidate Signals: `9755` | Executed Trades: `1317`  
 > Net Profit Factor: **`0.87`** (Gross: `0.93`)  
 > Net Expectancy: **`-0.0522R`** (Gross: `-0.0271R`)  
 > Max Drawdown (R): **`93.90R`** | Cumulative Net R: **`-68.70R`**  
 > Days Evaluated: **`1933 days (100.0% of dataset)`**  
 > Bootstrap 95% CI (Mean Net R): **`[-0.1072R, +0.0066R]`** (10,000 resamples)  
-> Matched Baseline Median Net EV: **`-0.2189R`** (Matched 95th Pct Hurdle: `-0.1655R`)  
+> Matched Baseline Median Net EV: **`+0.0058R`** (Matched 95th Pct Hurdle: `+0.0450R`)  
 > Sizing Mode: `fixed_risk` | Account Ruined: `NO`
 
 #### Alpha Validation Requirements:
 **Passed:**
 - ✅ Sample size 1317 >= 100 trades
-- ✅ Matched Rank p-value 0.0010 < 0.025
 
 **Failed / Unmet:**
 - ❌ Mean Net Expectancy -0.0522R <= 0.0R
 - ❌ Bootstrap 95% CI lower bound -0.1072R <= 0.0R
+- ❌ Matched Rank p-value 0.9703 >= 0.025
 
 #### Diagnostics:
 - ℹ️ Net Profit Factor: 0.87 (Null p95 Hurdle: 1.04, p=0.3749)
@@ -299,24 +304,25 @@ In Phase 2, we established the empirical null hypothesis ($H_0$) across 1,000 Mo
 **Concept:** 4h Donchian Breakout N=55 + ATR(14) 3R Trailing Stop (H1b)
 
 > **Statistical Verdict**: **`REJECTED (p >= 0.025)`**  
-> Matched Rank $p$-value: **`p = 0.0010`** (Empirical rank within 1,000 matched null passes)  
+> Matched Rank $p$-value: **`p = 0.6535`** (Empirical rank within 1,000 matched null passes)  
+> Matched Null Dropped Trade Share: **`0.00%`**  
 > Total Candidate Signals: `5274` | Executed Trades: `916`  
 > Net Profit Factor: **`0.96`** (Gross: `1.02`)  
 > Net Expectancy: **`-0.0153R`** (Gross: `+0.0078R`)  
 > Max Drawdown (R): **`49.19R`** | Cumulative Net R: **`-14.06R`**  
 > Days Evaluated: **`1933 days (100.0% of dataset)`**  
 > Bootstrap 95% CI (Mean Net R): **`[-0.0832R, +0.0580R]`** (10,000 resamples)  
-> Matched Baseline Median Net EV: **`-0.2244R`** (Matched 95th Pct Hurdle: `-0.1570R`)  
+> Matched Baseline Median Net EV: **`+0.0074R`** (Matched 95th Pct Hurdle: `+0.0510R`)  
 > Sizing Mode: `fixed_risk` | Account Ruined: `NO`
 
 #### Alpha Validation Requirements:
 **Passed:**
 - ✅ Sample size 916 >= 100 trades
-- ✅ Matched Rank p-value 0.0010 < 0.025
 
 **Failed / Unmet:**
 - ❌ Mean Net Expectancy -0.0153R <= 0.0R
 - ❌ Bootstrap 95% CI lower bound -0.0832R <= 0.0R
+- ❌ Matched Rank p-value 0.6535 >= 0.025
 
 #### Diagnostics:
 - ℹ️ Net Profit Factor: 0.96 (Null p95 Hurdle: 1.04, p=0.1355)

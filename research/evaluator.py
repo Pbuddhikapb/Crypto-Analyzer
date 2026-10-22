@@ -224,6 +224,8 @@ class StrategyEvaluation:
     med_holding_bars: Optional[float] = None
     trades_per_symbol: Optional[Dict[str, int]] = None
     per_year_net_r: Optional[Dict[int, float]] = None
+    dropped_trade_fraction: float = 0.0
+    p_value_at_floor: bool = False
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -260,6 +262,8 @@ class StrategyEvaluation:
             "med_holding_bars": self.med_holding_bars,
             "trades_per_symbol": self.trades_per_symbol,
             "per_year_net_r": self.per_year_net_r,
+            "dropped_trade_fraction": self.dropped_trade_fraction,
+            "p_value_at_floor": self.p_value_at_floor,
             "hurdles_passed": self.hurdles_passed,
             "hurdles_failed": self.hurdles_failed,
             "diagnostics": self.diagnostics,
@@ -348,20 +352,32 @@ class StrategyEvaluator:
         matched_p: Optional[float] = None
         matched_med_ev: Optional[float] = None
         matched_p95_ev: Optional[float] = None
+        dropped_trade_fraction: float = 0.0
+        p_value_at_floor: bool = False
+        matched_iterations: int = 1000
 
         if matched_baseline is not None:
             matched_p = float(getattr(matched_baseline, "empirical_p_value", 1.0))
             matched_med_ev = float(getattr(matched_baseline, "median_expectancy_r", 0.0))
             matched_p95_ev = float(getattr(matched_baseline, "p95_expectancy_r", 0.0))
+            dropped_trade_fraction = float(getattr(matched_baseline, "dropped_trade_fraction", 0.0))
+            matched_iterations = int(getattr(matched_baseline, "iterations", 1000))
             p_composite = matched_p
         elif "matched_p_value" in m or "matched_p" in m:
             matched_p = float(m.get("matched_p_value", m.get("matched_p", 1.0)))
             matched_med_ev = float(m.get("matched_median_ev", 0.0)) if "matched_median_ev" in m else None
             matched_p95_ev = float(m.get("matched_p95_ev", 0.0)) if "matched_p95_ev" in m else None
+            dropped_trade_fraction = float(m.get("dropped_trade_fraction", 0.0))
+            matched_iterations = int(m.get("matched_iterations", m.get("iterations", 1000)))
             p_composite = matched_p
         else:
             # Fallback to analytical max(p_pf, p_ev) when no matched baseline is provided
             p_composite = max(p_pf, p_ev)
+
+        if matched_p is not None and matched_iterations > 0:
+            floor_p = 1.0 / (matched_iterations + 1.0)
+            if abs(matched_p - floor_p) < 1e-4:
+                p_value_at_floor = True
 
         # Explicit alpha decision rule:
         # VALIDATED only if total_trades >= 100 AND mean net_r > 0 AND bootstrap 95% CI lower bound > 0 AND matched rank p < significance_level.
@@ -460,6 +476,15 @@ class StrategyEvaluator:
                 f"Sharpe Ratio: {sharpe:.2f} (p={p_sharpe:.4f})",
             ]
 
+        if dropped_trade_fraction > 0.0:
+            diagnostics.append(f"Matched Null Dropped Trade Fraction: {dropped_trade_fraction:.2%}")
+        if p_value_at_floor:
+            floor_str = f"{1.0 / (matched_iterations + 1.0):.4f}"
+            diagnostics.append(
+                f"⚠️ WARNING: Matched rank p-value ({matched_p:.4f}) equals minimum floor 1/(N+1) = {floor_str}. "
+                "Null-sanity check required: verify that the matched null distribution is unbiased."
+            )
+
         return StrategyEvaluation(
             strategy_name=strategy_name,
             description=description,
@@ -497,4 +522,6 @@ class StrategyEvaluator:
             med_holding_bars=med_holding_bars,
             trades_per_symbol=trades_per_symbol,
             per_year_net_r=per_year_net_r,
+            dropped_trade_fraction=round(dropped_trade_fraction, 6),
+            p_value_at_floor=p_value_at_floor,
         )

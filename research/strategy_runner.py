@@ -386,6 +386,8 @@ def save_strategy_results_json(
             "median_holding_bars": round(ev.med_holding_bars, 1) if getattr(ev, "med_holding_bars", None) is not None else None,
             "trades_per_symbol": getattr(ev, "trades_per_symbol", None),
             "per_year_net_r": {str(k): round(v, 2) for k, v in ev.per_year_net_r.items()} if getattr(ev, "per_year_net_r", None) else None,
+            "dropped_trade_fraction": round(getattr(ev, "dropped_trade_fraction", 0.0), 6),
+            "p_value_at_floor": getattr(ev, "p_value_at_floor", False),
         }
 
     dataset_hash = compute_dataset_hash(candles_dict) if candles_dict else "unknown"
@@ -504,6 +506,8 @@ def generate_markdown_report(
         ci_str = f"[{r.bootstrap_ci[0]:+.4f}, {r.bootstrap_ci[1]:+.4f}]R" if r.bootstrap_ci else "N/A"
         matched_med_str = f"{r.matched_baseline.median_expectancy_r:+.4f}R" if r.matched_baseline else "N/A"
         matched_p_str = f"`p = {ev.matched_p_value:.4f}`" if ev.matched_p_value is not None else f"`p = {ev.p_composite:.4f}`"
+        dropped_frac = getattr(ev, "dropped_trade_fraction", 0.0)
+        dropped_str = f"{dropped_frac:.2%}"
 
         eval_days_str = f"{r.sim_result.days_evaluated:.0f}d ({r.sim_result.pct_of_dataset_evaluated:.1f}%)"
         row = (
@@ -511,7 +515,7 @@ def generate_markdown_report(
             f"**{r.sim_result.profit_factor:.2f}** ({r.sim_result.gross_profit_factor:.2f}) | "
             f"**{r.sim_result.expectancy_r:+.4f}R** ({r.sim_result.gross_expectancy_r:+.4f}R) | "
             f"{r.sim_result.max_drawdown_r:.2f}R | "
-            f"{ci_str} | {matched_med_str} | {matched_p_str} | "
+            f"{ci_str} | {matched_med_str} | {matched_p_str} | {dropped_str} | "
             f"{eval_days_str} | `{r.sim_result.sizing_mode}` | {ruin_str} | {badge} |"
         )
         scorecard_rows.append(row)
@@ -545,11 +549,20 @@ def generate_markdown_report(
         matched_p95_str = f"{r.matched_baseline.p95_expectancy_r:+.4f}R" if r.matched_baseline else "N/A"
         matched_p_display = f"p = {ev.matched_p_value:.4f}" if ev.matched_p_value is not None else f"p = {ev.p_composite:.4f}"
         matched_passes_n = r.matched_baseline.iterations if r.matched_baseline else 1000
+        drop_pct_str = f"{getattr(ev, 'dropped_trade_fraction', 0.0):.2%}"
+        floor_warning_str = ""
+        if getattr(ev, "p_value_at_floor", False):
+            floor_p = 1.0 / (matched_passes_n + 1.0)
+            floor_warning_str = (
+                f"\n> ⚠️ **Warning: Rank p-value ({matched_p_display}) equals minimum floor 1/(N+1) = {floor_p:.4f}. "
+                "Null-sanity check required: check for survivorship or execution bias in the null distribution.**"
+            )
 
         diag_list = "\n".join([f"- ℹ️ {d}" for d in ev.diagnostics]) or "- None"
         verdict_banner = (
             f"> **Statistical Verdict**: **`{ev.verdict}`**  \n"
             f"> Matched Rank $p$-value: **`{matched_p_display}`** (Empirical rank within {matched_passes_n:,} matched null passes)  \n"
+            f"> Matched Null Dropped Trade Share: **`{drop_pct_str}`**  \n"
             f"> Total Candidate Signals: `{r.total_signals_generated}` | Executed Trades: `{r.signals_executed}`  \n"
             f"> Net Profit Factor: **`{r.sim_result.profit_factor:.2f}`** (Gross: `{r.sim_result.gross_profit_factor:.2f}`)  \n"
             f"> Net Expectancy: **`{r.sim_result.expectancy_r:+.4f}R`** (Gross: `{r.sim_result.gross_expectancy_r:+.4f}R`)  \n"
@@ -558,6 +571,7 @@ def generate_markdown_report(
             f"> Bootstrap 95% CI (Mean Net R): **`{ci_str}`** ({boot_resamples_n:,} resamples)  \n"
             f"> Matched Baseline Median Net EV: **`{matched_med_str}`** (Matched 95th Pct Hurdle: `{matched_p95_str}`)  \n"
             f"> Sizing Mode: `{r.sim_result.sizing_mode}` | Account Ruined: `{ruin_info}`"
+            f"{floor_warning_str}"
         )
 
         section = f"""### Hypothesis: {ev.strategy_name}
@@ -662,13 +676,13 @@ def generate_markdown_report(
     if gap_coins:
         gap_coins_str = ", ".join(sorted(gap_coins))
         continuity_bullets.append(
-            f"  - **Coins with maintenance gaps ({gap_coins_str}):** 120 bars missing due to Binance historical downtime (73h: 2022-02-25 23:00 to 2022-03-01 00:00 UTC, and 49h: 2022-03-31 23:00 to 2022-04-03 00:00 UTC)."
+            f"  - **Coins with maintenance gaps ({gap_coins_str}):** 120 bars missing in downloaded archive, cause unverified (73h: 2022-02-25 23:00 to 2022-03-01 00:00 UTC, and 49h: 2022-03-31 23:00 to 2022-04-03 00:00 UTC)."
         )
     elif "SOLUSDT" in symbols_list or "XRPUSDT" in symbols_list:
         gap_coins_found = [s for s in ["SOLUSDT", "XRPUSDT"] if s in symbols_list]
         gap_coins_str = ", ".join(gap_coins_found)
         continuity_bullets.append(
-            f"  - **Coins with maintenance gaps ({gap_coins_str}):** 120 bars missing due to Binance historical downtime (73h: 2022-02-25 23:00 to 2022-03-01 00:00 UTC, and 49h: 2022-03-31 23:00 to 2022-04-03 00:00 UTC)."
+            f"  - **Coins with maintenance gaps ({gap_coins_str}):** 120 bars missing in downloaded archive, cause unverified (73h: 2022-02-25 23:00 to 2022-03-01 00:00 UTC, and 49h: 2022-03-31 23:00 to 2022-04-03 00:00 UTC)."
         )
 
     continuity_section = ""
@@ -709,8 +723,8 @@ In Phase 2, we established the empirical null hypothesis ($H_0$) across {mc_iter
 
 ## 2. Master Strategy Scorecard
 
-| Strategy | Trades | Win Rate | Net PF (Gross) | Net EV (Gross EV) | Max DD (R) | Bootstrap 95% CI | Matched Median EV | Matched Rank $p$-value | Days Evaluated | Sizing | Ruined? | Alpha Verdict |
-| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| Strategy | Trades | Win Rate | Net PF (Gross) | Net EV (Gross EV) | Max DD (R) | Bootstrap 95% CI | Matched Median EV | Matched Rank $p$-value | Dropped Null % | Days Evaluated | Sizing | Ruined? | Alpha Verdict |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
 {scorecard_table}
 
 ---

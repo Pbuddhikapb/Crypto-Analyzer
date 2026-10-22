@@ -1,7 +1,7 @@
 {
   "metadata": {
-    "run_timestamp": "2026-10-22T03:08:46.549934+00:00",
-    "git_commit": "a94feccbf9f1df1edd8c8736ead052fe193f56a5+dirty",
+    "run_timestamp": "2026-10-22T06:14:20.242270+00:00",
+    "git_commit": "7c5fc36c62321e300e8e1942d46535d6a25837bb+dirty",
     "dataset_hash": "61d0448603612d76",
     "data_date_range": "2021-01-01 to 2026-04-18",
     "start_time_ms": 1609459200000,
@@ -48,9 +48,9 @@
       "net_profit_pct": -727.94,
       "start_time_ms": 1609459200000,
       "end_time_ms": 1776470400000,
-      "run_timestamp": "2026-10-22T03:08:46.549934+00:00",
+      "run_timestamp": "2026-10-22T06:14:20.242270+00:00",
       "data_date_range": "2021-01-01 to 2026-04-18",
-      "git_commit": "a94feccbf9f1df1edd8c8736ead052fe193f56a5+dirty",
+      "git_commit": "7c5fc36c62321e300e8e1942d46535d6a25837bb+dirty",
       "significance_level": 0.05,
       "median_stop_pct": 1.72,
       "cost_drag_r": 0.0602,
@@ -74,7 +74,9 @@
         "2024": -182.68,
         "2025": -139.56,
         "2026": -65.91
-      }
+      },
+      "dropped_trade_fraction": 0.0,
+      "p_value_at_floor": false
     },
     "FVGRetest": {
       "strategy_name": "FVGRetest",
@@ -103,9 +105,9 @@
       "net_profit_pct": -563.77,
       "start_time_ms": 1609459200000,
       "end_time_ms": 1776470400000,
-      "run_timestamp": "2026-10-22T03:08:46.549934+00:00",
+      "run_timestamp": "2026-10-22T06:14:20.242270+00:00",
       "data_date_range": "2021-01-01 to 2026-04-18",
-      "git_commit": "a94feccbf9f1df1edd8c8736ead052fe193f56a5+dirty",
+      "git_commit": "7c5fc36c62321e300e8e1942d46535d6a25837bb+dirty",
       "significance_level": 0.05,
       "median_stop_pct": 2.22,
       "cost_drag_r": 0.0432,
@@ -129,7 +131,9 @@
         "2024": -115.11,
         "2025": -106.31,
         "2026": -45.38
-      }
+      },
+      "dropped_trade_fraction": 0.0,
+      "p_value_at_floor": false
     },
     "ConfluenceThreshold": {
       "strategy_name": "ConfluenceThreshold",
@@ -158,9 +162,9 @@
       "net_profit_pct": -2597.26,
       "start_time_ms": 1609459200000,
       "end_time_ms": 1776470400000,
-      "run_timestamp": "2026-10-22T03:08:46.549934+00:00",
+      "run_timestamp": "2026-10-22T06:14:20.242270+00:00",
       "data_date_range": "2021-01-01 to 2026-04-18",
-      "git_commit": "a94feccbf9f1df1edd8c8736ead052fe193f56a5+dirty",
+      "git_commit": "7c5fc36c62321e300e8e1942d46535d6a25837bb+dirty",
       "significance_level": 0.05,
       "median_stop_pct": 1.82,
       "cost_drag_r": 0.0573,
@@ -184,7 +188,9 @@
         "2024": -480.77,
         "2025": -449.06,
         "2026": -200.05
-      }
+      },
+      "dropped_trade_fraction": 0.0,
+      "p_value_at_floor": false
     },
     "LiquiditySweep": {
       "strategy_name": "LiquiditySweep",
@@ -213,9 +219,9 @@
       "net_profit_pct": -4845.14,
       "start_time_ms": 1609459200000,
       "end_time_ms": 1776470400000,
-      "run_timestamp": "2026-10-22T03:08:46.549934+00:00",
+      "run_timestamp": "2026-10-22T06:14:20.242270+00:00",
       "data_date_range": "2021-01-01 to 2026-04-18",
-      "git_commit": "a94feccbf9f1df1edd8c8736ead052fe193f56a5+dirty",
+      "git_commit": "7c5fc36c62321e300e8e1942d46535d6a25837bb+dirty",
       "significance_level": 0.05,
       "median_stop_pct": 0.88,
       "cost_drag_r": 0.0919,
@@ -239,7 +245,9 @@
         "2024": -972.91,
         "2025": -920.41,
         "2026": -286.42
-      }
+      },
+      "dropped_trade_fraction": 0.0,
+      "p_value_at_floor": false
     },
     "Donchian4hN20": {
       "strategy_name": "Donchian4hN20",
@@ -254,7 +262,7 @@
         -0.1072,
         0.0066
       ],
-      "matched_p_value": 0.001,
+      "matched_p_value": 0.9703,
       "verdict": "REJECTED (p >= 0.025)",
       "sizing_mode": "fixed_risk",
       "ruined": false,
@@ -268,9 +276,9 @@
       "net_profit_pct": -68.7,
       "start_time_ms": 1609459200000,
       "end_time_ms": 1776470400000,
-      "run_timestamp": "2026-10-22T03:08:46.549934+00:00",
+      "run_timestamp": "2026-10-22T06:14:20.242270+00:00",
       "data_date_range": "2021-01-01 to 2026-04-18",
-      "git_commit": "a94feccbf9f1df1edd8c8736ead052fe193f56a5+dirty",
+      "git_commit": "7c5fc36c62321e300e8e1942d46535d6a25837bb+dirty",
       "significance_level": 0.025,
       "median_stop_pct": 7.26,
       "cost_drag_r": 0.0252,
@@ -294,7 +302,9 @@
         "2024": 2.04,
         "2025": -8.43,
         "2026": -11.52
-      }
+      },
+      "dropped_trade_fraction": 0.0,
+      "p_value_at_floor": false
     },
     "Donchian4hN55": {
       "strategy_name": "Donchian4hN55",
@@ -309,7 +319,7 @@
         -0.0832,
         0.058
       ],
-      "matched_p_value": 0.001,
+      "matched_p_value": 0.6535,
       "verdict": "REJECTED (p >= 0.025)",
       "sizing_mode": "fixed_risk",
       "ruined": false,
@@ -323,9 +333,9 @@
       "net_profit_pct": -14.06,
       "start_time_ms": 1609459200000,
       "end_time_ms": 1776470400000,
-      "run_timestamp": "2026-10-22T03:08:46.549934+00:00",
+      "run_timestamp": "2026-10-22T06:14:20.242270+00:00",
       "data_date_range": "2021-01-01 to 2026-04-18",
-      "git_commit": "a94feccbf9f1df1edd8c8736ead052fe193f56a5+dirty",
+      "git_commit": "7c5fc36c62321e300e8e1942d46535d6a25837bb+dirty",
       "significance_level": 0.025,
       "median_stop_pct": 7.52,
       "cost_drag_r": 0.0236,
@@ -349,7 +359,9 @@
         "2024": -4.29,
         "2025": -1.39,
         "2026": -5.67
-      }
+      },
+      "dropped_trade_fraction": 0.0,
+      "p_value_at_floor": false
     }
   }
 }

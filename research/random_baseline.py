@@ -134,6 +134,7 @@ class MatchedBaselineResult:
     empirical_p_value: float
     bootstrap_ci: Tuple[float, float]
     exit_mode: str = "stepped"
+    dropped_trade_fraction: float = 0.0
 
 
 def compute_dataset_hash(candles_dict: Dict[str, np.ndarray]) -> str:
@@ -216,20 +217,27 @@ def _simulate_single_matched_pass(
     initial_equity_usd: float = 10000.0,
     risk_per_trade_pct: float = 1.0,
     max_leverage: float = 3.0,
-) -> Tuple[float, int]:
-    """Simulate one matched random pass and return (mean_net_r, trades_simulated_count)."""
+) -> Tuple[float, int, int]:
+    """
+    Simulate one matched random pass and return:
+    (mean_net_r, completed_trades_count, dropped_trades_count).
+    """
     pass_net_r: List[float] = []
+    dropped_count = 0
     for sym, dist_pct in trade_profiles:
         sym_candles = candles_dict.get(sym)
-        if sym_candles is None or len(sym_candles) <= 100:
+        if sym_candles is None or len(sym_candles) < 200:
+            dropped_count += 1
             continue
-        max_idx = len(sym_candles) - 100
-        b_idx = int(rng.integers(0, max_idx))
+        # Only sample entry bars that leave at least 200 bars of data
+        max_idx = len(sym_candles) - 200
+        b_idx = int(rng.integers(0, max_idx + 1))
         side = "LONG" if rng.random() > 0.5 else "SHORT"
         entry_p = float(sym_candles[b_idx, 0])
         sl_p = entry_p * (1.0 - dist_pct) if side == "LONG" else entry_p * (1.0 + dist_pct)
         c_ts = int(sym_candles[b_idx, 4])
-        forward_slice = sym_candles[b_idx : b_idx + 100]
+        # Give random trades the full remaining forward data to the end of data
+        forward_slice = sym_candles[b_idx:]
 
         trade = simulate_single_trade_lifecycle(
             symbol=sym,
@@ -243,12 +251,15 @@ def _simulate_single_matched_pass(
             max_leverage=max_leverage,
             friction=friction,
             exit_config=exit_config,
+            close_at_end_of_data=True,
         )
         if trade is not None:
             pass_net_r.append(trade.net_r)
+        else:
+            dropped_count += 1
 
     pass_ev = float(np.mean(pass_net_r)) if pass_net_r else 0.0
-    return pass_ev, len(pass_net_r)
+    return pass_ev, len(pass_net_r), dropped_count
 
 
 def run_matched_baseline(
@@ -295,6 +306,7 @@ def run_matched_baseline(
             empirical_p_value=1.0,
             bootstrap_ci=(0.0, 0.0),
             exit_mode=cfg.exit_mode,
+            dropped_trade_fraction=0.0,
         )
 
     # Per-trade profile: (symbol, stop_dist_pct)
@@ -310,6 +322,8 @@ def run_matched_baseline(
 
     master_rng = np.random.default_rng(seed)
     null_ev_dist: List[float] = []
+    total_dropped = 0
+    total_simulated = 0
 
     step = max(50, iterations // 10)
     for it in range(iterations):
@@ -317,7 +331,7 @@ def run_matched_baseline(
             logger.info(f"    Matched pass {it + 1}/{iterations} ({(it + 1) / iterations * 100:.0f}%)")
         iter_seed = int(master_rng.integers(0, 100000000))
         iter_rng = np.random.default_rng(iter_seed)
-        pass_ev, _ = _simulate_single_matched_pass(
+        pass_ev, comp_cnt, drop_cnt = _simulate_single_matched_pass(
             trade_profiles=trade_profiles,
             candles_dict=candles_dict,
             rng=iter_rng,
@@ -328,6 +342,16 @@ def run_matched_baseline(
             max_leverage=max_leverage,
         )
         null_ev_dist.append(round(pass_ev, 4))
+        total_dropped += drop_cnt
+        total_simulated += comp_cnt
+
+    total_planned = iterations * n_trades
+    dropped_trade_fraction = total_dropped / total_planned if total_planned > 0 else 0.0
+    if dropped_trade_fraction > 0.005:
+        raise RuntimeError(
+            f"Matched baseline dropped trade fraction {dropped_trade_fraction:.4%} "
+            f"exceeds 0.5% threshold ({total_dropped}/{total_planned} trades dropped)"
+        )
 
     # Rank-based empirical p-value (exact rank within matched distribution)
     # Fraction of null passes whose net EV >= strategy net EV
@@ -354,6 +378,7 @@ def run_matched_baseline(
         empirical_p_value=round(empirical_p, 4),
         bootstrap_ci=boot_ci,
         exit_mode=cfg.exit_mode,
+        dropped_trade_fraction=round(dropped_trade_fraction, 6),
     )
 
 

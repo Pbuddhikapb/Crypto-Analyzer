@@ -284,3 +284,152 @@ def test_bootstrap_ci_coverage():
     # Empty values -> (0.0, 0.0)
     assert compute_bootstrap_ci([]) == (0.0, 0.0)
 
+
+def test_matched_baseline_trending_series_zero_dropped():
+    """Rule 5.1: In a synthetic trending series where trades last > 100 bars, matched baseline drops 0 trades."""
+    n_bars = 500
+    times = [1609459200000 + i * 3600000 for i in range(n_bars)]
+    prices = [100.0 + i * 1.0 for i in range(n_bars)]
+    candles = np.column_stack([
+        prices,
+        [p + 0.5 for p in prices],
+        [p - 0.2 for p in prices],
+        prices,
+        times,
+    ])
+    candles_dict = {"BTCUSDT": candles}
+
+    trade = _make_mock_trade("BTCUSDT", net_r=1.0, risk_usd=100.0, notional=5000.0)
+    cfg = ExitConfig(exit_mode="trailing_1r", trail_dist_r=1.0)
+
+    res = run_matched_baseline(
+        strategy_trades=[trade] * 10,
+        candles_dict=candles_dict,
+        iterations=5,
+        exit_config=cfg,
+        seed=42,
+    )
+    assert res.dropped_trade_fraction == 0.0
+    assert res.strategy_trade_count == 10
+
+
+def test_matched_baseline_driftless_random_walk_median_near_zero():
+    """Rule 5.2: Matched median for a driftless random-walk series must be within +/-0.05R of zero."""
+    rng = np.random.default_rng(42)
+    n_bars = 10000
+    steps = rng.choice([-0.1, 0.1], size=n_bars)
+    prices = 100.0 + np.cumsum(steps)
+    prices = np.clip(prices, 50.0, 200.0)
+    times = [1609459200000 + i * 3600000 for i in range(n_bars)]
+    highs = prices + 0.1
+    lows = prices - 0.1
+
+    candles = np.column_stack([
+        prices,
+        highs,
+        lows,
+        prices,
+        times,
+    ])
+    candles_dict = {"RW_COIN": candles}
+    trade = _make_mock_trade("RW_COIN", net_r=0.0, risk_usd=100.0, notional=5000.0)
+    cfg = ExitConfig(exit_mode="trailing_1r", trail_dist_r=1.0)
+    fric = SimulationFriction(taker_fee_pct=0.0, maker_fee_pct=0.0, slippage_pct=0.0, funding_rate_8h_pct=0.0)
+
+    res = run_matched_baseline(
+        strategy_trades=[trade] * 100,
+        candles_dict=candles_dict,
+        iterations=50,
+        exit_config=cfg,
+        friction=fric,
+        seed=42,
+    )
+    assert -0.05 <= res.median_expectancy_r <= 0.05, (
+        f"Expected median EV in [-0.05, +0.05]R, got {res.median_expectancy_r:+.4f}R"
+    )
+    assert res.dropped_trade_fraction <= 0.005
+
+
+def test_guardrail_p_value_at_floor_warning():
+    """Task 4: If rank p-value equals floor 1/(N+1), print warning asking for null-sanity check."""
+    from research.evaluator import StrategyEvaluator
+    from research.random_baseline import MatchedBaselineResult
+    from research.strategy_runner import StrategyRunResult, generate_markdown_report
+    from engine.simulator import SimulationResult
+
+    evaluator = StrategyEvaluator()
+    sim_res = SimulationResult(
+        initial_equity_usd=10000.0,
+        final_equity_usd=15000.0,
+        net_profit_usd=5000.0,
+        net_profit_pct=50.0,
+        total_trades=150,
+        winning_trades=100,
+        losing_trades=50,
+        win_rate_pct=66.7,
+        gross_profit_usd=6000.0,
+        gross_loss_usd=1000.0,
+        profit_factor=6.0,
+        expectancy_usd=33.3,
+        expectancy_r=1.5,
+        avg_r_multiple=1.5,
+        max_drawdown_pct=5.0,
+        max_drawdown_duration_bars=10,
+        sharpe_ratio=2.5,
+        sortino_ratio=3.0,
+        total_fees_usd=50.0,
+        total_slippage_usd=30.0,
+        total_funding_cost_usd=10.0,
+        trades=[],
+        ruined=False,
+        sizing_mode="fixed_risk",
+        gross_profit_factor=6.5,
+        gross_expectancy_r=1.6,
+        cumulative_r=150.0,
+        max_drawdown_r=5.0,
+        days_evaluated=100.0,
+        pct_of_dataset_evaluated=100.0,
+    )
+
+    matched = MatchedBaselineResult(
+        iterations=1000,
+        strategy_trade_count=150,
+        strategy_net_ev_r=1.5,
+        null_expectancy_r_distribution=[-0.05] * 1000,
+        median_expectancy_r=-0.05,
+        mean_expectancy_r=-0.05,
+        std_expectancy_r=0.02,
+        p5_expectancy_r=-0.08,
+        p95_expectancy_r=-0.01,
+        empirical_p_value=0.0010,
+        bootstrap_ci=(1.2, 1.8),
+        exit_mode="trailing_1r",
+        dropped_trade_fraction=0.0,
+    )
+
+    ev = evaluator.evaluate("TestStrat", "Test Description", sim_res, matched_baseline=matched, bootstrap_ci=(1.2, 1.8))
+    assert ev.p_value_at_floor is True
+    assert any("Null-sanity check required" in d for d in ev.diagnostics)
+
+    run_res = StrategyRunResult(
+        strategy_name="TestStrat",
+        description="Test Description",
+        sim_result=sim_res,
+        evaluation=ev,
+        per_symbol_metrics={"BTCUSDT": {"trades": 150, "win_rate": 66.7, "profit_factor": 6.0, "net_pnl": 5000.0, "avg_r": 1.5}},
+        total_signals_generated=200,
+        signals_executed=150,
+        bootstrap_ci=(1.2, 1.8),
+        matched_baseline=matched,
+    )
+
+    with tempfile.NamedTemporaryFile(suffix=".md", mode="w+", delete=False) as tf:
+        out_path = tf.name
+
+    generate_markdown_report([run_res], out_path, dataset_info={"symbols": ["BTCUSDT"], "days": 100.0, "bars_per_symbol": 2400})
+    with open(out_path, "r", encoding="utf-8") as f:
+        rep = f.read()
+
+    assert "Null-sanity check required" in rep
+    assert "equals minimum floor 1/(N+1)" in rep
+

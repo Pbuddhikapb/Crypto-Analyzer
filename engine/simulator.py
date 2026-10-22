@@ -316,6 +316,88 @@ class SimulationEngine:
         self.last_bar_timestamp_ms[signal.symbol.upper()] = signal.timestamp_ms
         return trade_id
 
+    def force_close_position(
+        self,
+        trade_id: str,
+        exit_price: float,
+        timestamp_ms: int,
+        exit_reason: str,
+        bars_held: Optional[int] = None,
+    ) -> ExecutedTrade:
+        """
+        Immediately closes an active position with adverse market slippage and taker fee.
+        Used for session break gap termination and end-of-data lifecycle flush.
+        """
+        pos = self.active_positions[trade_id]
+        state = pos["state"]
+        slip_rate = self.friction.slippage_pct / 100.0
+        if state.side == "LONG":
+            exit_fill = exit_price * (1.0 - slip_rate)
+        else:
+            exit_fill = exit_price * (1.0 + slip_rate)
+
+        remaining_notional = pos["notional_usd"] * state.size_remaining_pct
+        exit_fee = remaining_notional * (self.friction.taker_fee_pct / 100.0)
+        slip_cost = remaining_notional * slip_rate
+        pos["slippage_usd"] += slip_cost
+
+        exit_gross_return_pct = calculate_gross_return_pct(
+            state.side, pos["entry_fill_price"], exit_fill
+        )
+        remaining_gross_pnl = remaining_notional * (exit_gross_return_pct / 100.0)
+        total_gross_pnl = pos["tp1_realized_usd"] + remaining_gross_pnl
+        total_fees = pos["entry_fee_usd"] + pos["tp1_fees_usd"] + exit_fee
+        total_slippage = pos["slippage_usd"]
+        total_funding = pos["funding_cost_usd"]
+
+        net_pnl = total_gross_pnl - total_fees - total_funding
+        net_return_pct = (net_pnl / pos["notional_usd"]) * 100.0
+
+        if pos["tp1_realized_usd"] != 0.0:
+            exit_r = calculate_r_multiple(
+                state.side, pos["entry_fill_price"], exit_fill, state.risk_dist
+            )
+            combined_r = (0.5 * pos["tp1_r"]) + (0.5 * exit_r)
+        else:
+            combined_r = calculate_r_multiple(
+                state.side, pos["entry_fill_price"], exit_fill, state.risk_dist
+            )
+
+        self.equity_usd += remaining_gross_pnl - exit_fee
+        init_risk = pos.get("risk_usd", pos["notional_usd"] * 0.01)
+        net_r = (net_pnl / init_risk) if init_risk > 0 else 0.0
+
+        b_held = bars_held if bars_held is not None else state.bars_held
+
+        executed = ExecutedTrade(
+            trade_id=trade_id,
+            symbol=state.symbol,
+            side=state.side,
+            entry_time_ms=pos["entry_time_ms"],
+            exit_time_ms=timestamp_ms,
+            entry_price=pos["nominal_entry_price"],
+            entry_fill_price=pos["entry_fill_price"],
+            exit_price=exit_price,
+            exit_fill_price=exit_fill,
+            exit_reason=exit_reason,
+            position_size_usd=pos["notional_usd"],
+            gross_pnl_usd=round(total_gross_pnl, 2),
+            fees_usd=round(total_fees, 2),
+            slippage_usd=round(total_slippage, 2),
+            funding_cost_usd=round(total_funding, 2),
+            net_pnl_usd=round(net_pnl, 2),
+            net_return_pct=round(net_return_pct, 4),
+            realized_r=round(combined_r, 4),
+            bars_held=b_held,
+            mfe_r=round(state.highest_r, 4),
+            mae_r=round(state.lowest_r, 4),
+            initial_risk_usd=round(init_risk, 2),
+            net_r=round(net_r, 4),
+        )
+        del self.active_positions[trade_id]
+        self.completed_trades.append(executed)
+        return executed
+
     def process_bar(
         self,
         symbol: str,
@@ -352,77 +434,14 @@ class SimulationEngine:
                 for trade_id, pos in list(self.active_positions.items()):
                     state = pos["state"]
                     if state.symbol == sym:
-                        exit_price = candle[0]  # Terminate at gap bar open
-                        remaining_notional = pos["notional_usd"] * state.size_remaining_pct
-                        slip_rate = self.friction.slippage_pct / 100.0
-                        exit_fill = (
-                            exit_price * (1.0 - slip_rate)
-                            if state.side == "LONG"
-                            else exit_price * (1.0 + slip_rate)
-                        )
-                        exit_fee = remaining_notional * (self.friction.taker_fee_pct / 100.0)
-                        slip_cost = remaining_notional * slip_rate
-                        pos["slippage_usd"] += slip_cost
-
-                        exit_gross_return_pct = calculate_gross_return_pct(
-                            state.side, pos["entry_fill_price"], exit_fill
-                        )
-                        remaining_gross_pnl = remaining_notional * (exit_gross_return_pct / 100.0)
-                        total_gross_pnl = pos["tp1_realized_usd"] + remaining_gross_pnl
-                        total_fees = pos["entry_fee_usd"] + pos["tp1_fees_usd"] + exit_fee
-                        total_slippage = pos["slippage_usd"]
-                        total_funding = pos["funding_cost_usd"]
-
-                        net_pnl = total_gross_pnl - total_fees - total_funding
-                        net_return_pct = (net_pnl / pos["notional_usd"]) * 100.0
-
-                        if pos["tp1_realized_usd"] != 0.0:
-                            exit_r = calculate_r_multiple(
-                                state.side, pos["entry_fill_price"], exit_fill, state.risk_dist
-                            )
-                            combined_r = (0.5 * pos["tp1_r"]) + (0.5 * exit_r)
-                        else:
-                            combined_r = calculate_r_multiple(
-                                state.side, pos["entry_fill_price"], exit_fill, state.risk_dist
-                            )
-
-                        self.equity_usd += remaining_gross_pnl - exit_fee
-                        init_risk = pos.get("risk_usd", pos["notional_usd"] * 0.01)
-                        net_r = (net_pnl / init_risk) if init_risk > 0 else 0.0
-
-                        executed = ExecutedTrade(
+                        executed = self.force_close_position(
                             trade_id=trade_id,
-                            symbol=state.symbol,
-                            side=state.side,
-                            entry_time_ms=pos["entry_time_ms"],
-                            exit_time_ms=timestamp_ms,
-                            entry_price=pos["nominal_entry_price"],
-                            entry_fill_price=pos["entry_fill_price"],
-                            exit_price=exit_price,
-                            exit_fill_price=exit_fill,
+                            exit_price=candle[0],  # Terminate at gap bar open
+                            timestamp_ms=timestamp_ms,
                             exit_reason="SESSION_BREAK",
-                            position_size_usd=pos["notional_usd"],
-                            gross_pnl_usd=round(total_gross_pnl, 2),
-                            fees_usd=round(total_fees, 2),
-                            slippage_usd=round(total_slippage, 2),
-                            funding_cost_usd=round(total_funding, 2),
-                            net_pnl_usd=round(net_pnl, 2),
-                            net_return_pct=round(net_return_pct, 4),
-                            realized_r=round(combined_r, 4),
-                            bars_held=state.bars_held,
-                            mfe_r=round(state.highest_r, 4),
-                            mae_r=round(state.lowest_r, 4),
-                            initial_risk_usd=round(init_risk, 2),
-                            net_r=round(net_r, 4),
                         )
                         closed_trades.append(executed)
-                        self.completed_trades.append(executed)
-                        trades_to_remove.append(trade_id)
                         self.cooldown_tracker[sym] = current_bar_idx
-
-                for tid in trades_to_remove:
-                    if tid in self.active_positions:
-                        del self.active_positions[tid]
 
                 if closed_trades:
                     if self.equity_curve and self.equity_curve[-1][0] == timestamp_ms:
@@ -748,6 +767,7 @@ def simulate_single_trade_lifecycle(
     exit_config: ExitConfig,
     bar_interval_ms: Optional[int] = None,
     entry_volume: Optional[float] = None,
+    close_at_end_of_data: bool = False,
 ) -> Optional[ExecutedTrade]:
     """
     Simulate an individual trade forward from entry to exit through the Single Exit Authority
@@ -796,6 +816,25 @@ def simulate_single_trade_lifecycle(
         )
         if closed:
             return closed[0]
+
+    # If trade is still open at the end of forward data, close it at the last bar's close with END_OF_DATA
+    if close_at_end_of_data and engine.active_positions and len(candles_forward) > 0:
+        last_c = candles_forward[-1]
+        last_close = float(last_c[3])
+        last_ts = (
+            int(last_c[4])
+            if len(last_c) > 4
+            else entry_ts_ms + len(candles_forward) * (bar_interval_ms or 3600000)
+        )
+        open_tid = next(iter(engine.active_positions.keys()))
+        executed = engine.force_close_position(
+            trade_id=open_tid,
+            exit_price=last_close,
+            timestamp_ms=last_ts,
+            exit_reason="END_OF_DATA",
+            bars_held=len(candles_forward),
+        )
+        return executed
 
     return None
 

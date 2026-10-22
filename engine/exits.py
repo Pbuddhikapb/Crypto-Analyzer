@@ -55,7 +55,7 @@ class ExitDecision:
     """Result of candle exit evaluation."""
 
     action: str  # 'HOLD', 'PARTIAL_TP1', 'FULL_EXIT'
-    exit_reason: Optional[str]  # e.g., 'STOP_LOSS', 'GAP_STOP_LOSS', 'TAKE_PROFIT_1', 'TAKE_PROFIT_2', 'BREAKEVEN', 'TIME_STOP_UNDERWATER', 'TRAILING_STOP'
+    exit_reason: Optional[str]  # e.g., 'STOP_LOSS', 'GAP_STOP_LOSS', 'TAKE_PROFIT_1', 'TAKE_PROFIT_2', 'BREAKEVEN', 'TIME_STOP_UNDERWATER', 'TRAILING_STOP', 'SESSION_BREAK', 'END_OF_DATA'
     exit_price: Optional[float]
     closed_pct: float  # Percentage of original position closed in this decision (0.0, 0.5, 1.0)
     realized_r: float  # Net R-multiple achieved on this exit portion
