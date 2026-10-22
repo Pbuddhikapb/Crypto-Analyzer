@@ -555,3 +555,40 @@ def test_guardrail_no_binance_us_hosts():
     assert us_matches == [], (
         f"Forbidden '.us' Binance hosts found in non-legacy files: {us_matches}"
     )
+
+
+# ==============================================================================
+# 9. No Spot Binance Hosts Guardrail (stream.binance.com, api.binance.com/api/v3)
+# ==============================================================================
+def test_guardrail_no_spot_binance_endpoints():
+    """
+    Assert that neither 'stream.binance.com' nor 'api.binance.com/api/v3'
+    appear in any non-legacy production code across the repository.
+    """
+    repo_files = [
+        f for f in glob.glob("**/*", recursive=True)
+        if os.path.isfile(f)
+        and (f.endswith(".py") or f.endswith(".ts") or f.endswith(".tsx") or f.endswith(".sh"))
+        and not f.startswith("venv")
+        and not f.startswith("legacy")
+        and "/legacy/" not in f
+        and not f.startswith("test_")
+        and "/test_" not in f
+        and "node_modules" not in f
+        and ".git" not in f
+    ]
+    assert len(repo_files) > 0, "Expected non-legacy source files to verify"
+
+    spot_stream_pattern = re.compile(r"(?<!f)stream\.binance\.com")
+    spot_api_pattern = re.compile(r"api\.binance\.com/api/v3")
+
+    forbidden_matches = []
+    for filepath in repo_files:
+        with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+        if spot_stream_pattern.search(content) or spot_api_pattern.search(content):
+            forbidden_matches.append(filepath.replace("\\", "/"))
+
+    assert forbidden_matches == [], (
+        f"Forbidden spot endpoints (stream.binance.com or api.binance.com/api/v3) found in: {forbidden_matches}"
+    )

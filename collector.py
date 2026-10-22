@@ -3,7 +3,6 @@ import asyncio
 import json
 import time
 from typing import List, Optional
-import urllib.parse
 
 import aiohttp
 import websockets
@@ -144,6 +143,7 @@ class MarketDataCollector:
                                         "badge": badge,
                                         "is_buyer_maker": bool(data.get("m", False)),
                                         "trade_id": trade_id,
+                                        "source": "binance_futures_um",
                                     },
                                 )
 
@@ -169,6 +169,7 @@ class MarketDataCollector:
                                     "notional": notional,
                                     "order_type": str(o.get("o", "LIMIT")),
                                     "status": str(o.get("X", "FILLED")),
+                                    "source": "binance_futures_um",
                                 },
                             )
 
@@ -184,7 +185,7 @@ class MarketDataCollector:
     # ----------------------------------------------------
 
     async def _run_klines_and_bbo_ws(self) -> None:
-        """Stream real-time 1m/15m klines (and optional BBO bookTicker) from Binance Spot."""
+        """Stream real-time 1m/15m klines (and optional BBO bookTicker) from Binance USD-M Futures."""
         streams = []
         for s in self.symbols:
             low_s = s.lower()
@@ -193,15 +194,15 @@ class MarketDataCollector:
             streams.append(f"{low_s}@kline_1m")
             streams.append(f"{low_s}@kline_15m")
 
-        ws_url = f"wss://stream.binance.com:9443/stream?streams={'/'.join(streams)}"
+        ws_url = f"wss://fstream.binance.com/stream?streams={'/'.join(streams)}"
         backoff = 3
 
         while self._running:
             try:
                 stream_desc = "klines & bookTicker" if not self.isp_friendly else "klines (1m/15m)"
-                print(f"[Spot WS] Connecting to {stream_desc} streams...")
+                print(f"[Futures WS] Connecting to {stream_desc} streams...")
                 async with websockets.connect(ws_url, ping_interval=20, ping_timeout=20) as ws:
-                    print(f"[Spot WS] Connected successfully. Capturing {stream_desc}.\n")
+                    print(f"[Futures WS] Connected successfully. Capturing {stream_desc}.\n")
                     backoff = 3
                     async for message in ws:
                         if not self._running:
@@ -235,6 +236,7 @@ class MarketDataCollector:
                                     "spread": spread,
                                     "spread_bps": spread_bps,
                                     "book_imbalance": imbalance,
+                                    "source": "binance_futures_um",
                                 },
                             )
 
@@ -275,13 +277,14 @@ class MarketDataCollector:
                                         "taker_sell_volume": taker_sell,
                                         "net_volume_delta": net_delta,
                                         "delta_ratio": delta_ratio,
+                                        "source": "binance_futures_um",
                                     },
                                 )
 
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                print(f"[Spot WS Error] {e}. Reconnecting in {backoff}s...")
+                print(f"[Futures WS Error] {e}. Reconnecting in {backoff}s...")
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, 60)
 
@@ -291,12 +294,11 @@ class MarketDataCollector:
 
     async def _poll_bbo_rest(self) -> None:
         """Poll Order Book BBO spreads every 10 seconds via REST to conserve bandwidth."""
-        sym_json = json.dumps(self.symbols)
-        encoded_symbols = urllib.parse.quote(sym_json)
-        url = f"https://api.binance.com/api/v3/ticker/bookTicker?symbols={encoded_symbols}"
+        url = "https://fapi.binance.com/fapi/v1/ticker/bookTicker"
         connector = aiohttp.TCPConnector(limit=2)
         timeout = aiohttp.ClientTimeout(total=5)
 
+        target_symbols = set(self.symbols)
         while self._running:
             try:
                 now_ms = int(time.time() * 1000)
@@ -304,8 +306,12 @@ class MarketDataCollector:
                     async with session.get(url) as resp:
                         if resp.status == 200:
                             items = await resp.json()
+                            if isinstance(items, dict):
+                                items = [items]
                             for item in items:
                                 sym = str(item.get("symbol", "")).upper()
+                                if sym not in target_symbols:
+                                    continue
                                 bid_p = float(item.get("bidPrice", 0.0))
                                 bid_q = float(item.get("bidQty", 0.0))
                                 ask_p = float(item.get("askPrice", 0.0))
@@ -329,6 +335,7 @@ class MarketDataCollector:
                                         "spread": spread,
                                         "spread_bps": spread_bps,
                                         "book_imbalance": imbalance,
+                                        "source": "binance_futures_um",
                                     },
                                 )
             except asyncio.CancelledError:
@@ -388,6 +395,7 @@ class MarketDataCollector:
                                                     "last_funding_rate": funding_r,
                                                     "funding_apr_pct": funding_apr,
                                                     "next_funding_time_ms": next_t,
+                                                    "source": "binance_futures_um",
                                                 },
                                             )
                         except Exception:
@@ -459,6 +467,7 @@ class MarketDataCollector:
                                     "top_trader_long_short_position_ratio": pos_r,
                                     "global_long_short_account_ratio": glob_r,
                                     "taker_buy_sell_volume_ratio": taker_r,
+                                    "source": "binance_futures_um",
                                 },
                             )
                         except Exception:

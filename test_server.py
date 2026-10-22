@@ -24,18 +24,21 @@ def app_and_client(tmp_path):
 
 
 def test_health_endpoint(app_and_client):
-    """Verify /api/health returns 200 with proper diagnostic fields."""
+    """Verify /api/health returns 200 with proper diagnostic fields and status='down' when unseeded."""
     app, client = app_and_client
     response = client.get("/api/health")
     assert response.status_code == 200
     data = response.json()
-    assert data["status"] == "healthy"
+    assert data["status"] == "down"
+    assert "kline_connectivity" in data
     assert "spot_connectivity" in data
+    assert data["kline_connectivity"] == data["spot_connectivity"]
     assert "futures_connectivity" in data
     assert "futures_status_message" in data
     assert data["active_symbols_count"] == 3
     assert data["db_status"] == "connected"
     assert data["connected_ws_clients"] == 0
+    assert set(data["stale_symbols"]) == {"BTCUSDT", "ETHUSDT", "SOLUSDT"}
 
 
 def test_market_symbols_endpoint(app_and_client):
@@ -771,12 +774,54 @@ def test_health_endpoint_data_source_and_last_updates(app_and_client):
     resp = client.get("/api/health")
     assert resp.status_code == 200
     data = resp.json()
-    assert data["status"] == "healthy"
     assert data["data_source"] == "binance_futures_um"
     assert data["last_update_per_symbol"]["BTCUSDT"] == 1729597200
     assert data["last_update_per_symbol"]["ETHUSDT"] == 1729597205
     assert data["candle_interval_sec"] == 60  # timeframe="1m" in fixture
     assert data["timeframe"] == "1m"
+
+
+def test_health_endpoint_status_states(app_and_client):
+    """Verify computed status logic: down, degraded (disconnected or stale), and healthy."""
+    app, client = app_and_client
+    now_t = int(time.time())
+
+    # 1. State: DOWN (no symbol has data)
+    app.state.candle_buffers["BTCUSDT"].candles.clear()
+    app.state.candle_buffers["ETHUSDT"].candles.clear()
+    app.state.candle_buffers["SOLUSDT"].candles.clear()
+    app.state.last_update_times.clear()
+    app.state.is_kline_connected = False
+    data = client.get("/api/health").json()
+    assert data["status"] == "down"
+    assert set(data["stale_symbols"]) == {"BTCUSDT", "ETHUSDT", "SOLUSDT"}
+
+    # 2. State: DEGRADED because klines disconnected even though data exists
+    app.state.last_update_times["BTCUSDT"] = now_t
+    app.state.last_update_times["ETHUSDT"] = now_t
+    app.state.last_update_times["SOLUSDT"] = now_t
+    app.state.is_kline_connected = False
+    data = client.get("/api/health").json()
+    assert data["status"] == "degraded"
+    assert data["stale_symbols"] == []
+
+    # 3. State: DEGRADED because a symbol is stale (> 2 * 60s ago for 1m timeframe)
+    app.state.is_kline_connected = True
+    app.state.last_update_times["BTCUSDT"] = now_t
+    app.state.last_update_times["ETHUSDT"] = now_t - 150  # 150s > 120s threshold
+    app.state.last_update_times["SOLUSDT"] = now_t
+    data = client.get("/api/health").json()
+    assert data["status"] == "degraded"
+    assert data["stale_symbols"] == ["ETHUSDT"]
+
+    # 4. State: HEALTHY when klines connected and all symbols updated recently
+    app.state.last_update_times["ETHUSDT"] = now_t - 30
+    data = client.get("/api/health").json()
+    assert data["status"] == "healthy"
+    assert data["stale_symbols"] == []
+    assert data["kline_connectivity"] is True
+    assert data["spot_connectivity"] is True
+
 
 
 

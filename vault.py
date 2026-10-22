@@ -45,7 +45,8 @@ class MarketDataVault:
                     side TEXT NOT NULL,
                     badge TEXT NOT NULL,
                     is_buyer_maker INTEGER NOT NULL,
-                    trade_id INTEGER
+                    trade_id INTEGER,
+                    source TEXT DEFAULT 'binance_futures_um'
                 )
                 """
             )
@@ -69,7 +70,8 @@ class MarketDataVault:
                     quantity REAL NOT NULL,
                     notional REAL NOT NULL,
                     order_type TEXT NOT NULL,
-                    status TEXT NOT NULL
+                    status TEXT NOT NULL,
+                    source TEXT DEFAULT 'binance_futures_um'
                 )
                 """
             )
@@ -96,7 +98,8 @@ class MarketDataVault:
                     oi_regime TEXT,
                     last_funding_rate REAL NOT NULL,
                     funding_apr_pct REAL NOT NULL,
-                    next_funding_time_ms INTEGER NOT NULL
+                    next_funding_time_ms INTEGER NOT NULL,
+                    source TEXT DEFAULT 'binance_futures_um'
                 )
                 """
             )
@@ -120,7 +123,8 @@ class MarketDataVault:
                     best_ask_qty REAL NOT NULL,
                     spread REAL NOT NULL,
                     spread_bps REAL NOT NULL,
-                    book_imbalance REAL NOT NULL
+                    book_imbalance REAL NOT NULL,
+                    source TEXT DEFAULT 'binance_futures_um'
                 )
                 """
             )
@@ -141,7 +145,8 @@ class MarketDataVault:
                     top_trader_long_short_account_ratio REAL,
                     top_trader_long_short_position_ratio REAL,
                     global_long_short_account_ratio REAL,
-                    taker_buy_sell_volume_ratio REAL
+                    taker_buy_sell_volume_ratio REAL,
+                    source TEXT DEFAULT 'binance_futures_um'
                 )
                 """
             )
@@ -176,6 +181,7 @@ class MarketDataVault:
                     liq_long_notional REAL DEFAULT 0.0,
                     liq_short_notional REAL DEFAULT 0.0,
                     open_interest REAL,
+                    source TEXT DEFAULT 'binance_futures_um',
                     PRIMARY KEY (symbol, timeframe, open_time)
                 )
                 """
@@ -211,7 +217,8 @@ class MarketDataVault:
                     fvg_ce REAL,
                     confluence_score REAL,
                     action_taken TEXT,
-                    block_reason TEXT
+                    block_reason TEXT,
+                    source TEXT DEFAULT 'binance_futures_um'
                 )
                 """
             )
@@ -221,7 +228,33 @@ class MarketDataVault:
                 ON strategy_telemetry_audit (symbol, timestamp_ms ASC)
                 """
             )
+            self._migrate_db(conn)
             conn.commit()
+
+    def _migrate_db(self, conn: sqlite3.Connection) -> None:
+        """Migrate existing schema tables to include source column without rewriting existing rows."""
+        tables = [
+            "whale_trades",
+            "liquidation_events",
+            "derivatives_snapshots",
+            "order_book_bbo_snapshots",
+            "sentiment_metrics",
+            "candle_microstructure_bars",
+            "strategy_telemetry_audit",
+        ]
+        cursor = conn.cursor()
+        for table in tables:
+            cursor.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+                (table,),
+            )
+            if not cursor.fetchone():
+                continue
+            cols = [row[1] for row in cursor.execute(f"PRAGMA table_info({table})").fetchall()]
+            if "source" not in cols:
+                cursor.execute(
+                    f"ALTER TABLE {table} ADD COLUMN source TEXT DEFAULT 'binance_futures_um'"
+                )
 
     # ----------------------------------------------------
     # BATCH INSERTION METHODS
@@ -243,6 +276,7 @@ class MarketDataVault:
                 str(t.get("badge", "WHALE")).upper(),
                 1 if t.get("is_buyer_maker", False) else 0,
                 t.get("trade_id"),
+                str(t.get("source", "binance_futures_um")),
             )
             for t in trades
         ]
@@ -251,8 +285,8 @@ class MarketDataVault:
                 """
                 INSERT INTO whale_trades (
                     symbol, futures_symbol, timestamp_ms, price, quantity, notional,
-                    side, badge, is_buyer_maker, trade_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    side, badge, is_buyer_maker, trade_id, source
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 records,
             )
@@ -274,6 +308,7 @@ class MarketDataVault:
                 float(e["notional"]),
                 str(e.get("order_type", "LIMIT")).upper(),
                 str(e.get("status", "FILLED")).upper(),
+                str(e.get("source", "binance_futures_um")),
             )
             for e in events
         ]
@@ -282,8 +317,8 @@ class MarketDataVault:
                 """
                 INSERT INTO liquidation_events (
                     symbol, futures_symbol, timestamp_ms, liquidated_position, price,
-                    quantity, notional, order_type, status
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    quantity, notional, order_type, status, source
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 records,
             )
@@ -308,6 +343,7 @@ class MarketDataVault:
                 float(s["last_funding_rate"]),
                 float(s.get("funding_apr_pct", 0.0)),
                 int(s.get("next_funding_time_ms", 0)),
+                str(s.get("source", "binance_futures_um")),
             )
             for s in snapshots
         ]
@@ -317,8 +353,8 @@ class MarketDataVault:
                 INSERT INTO derivatives_snapshots (
                     symbol, timestamp_ms, mark_price, index_price, basis_spread_bps,
                     open_interest, open_interest_value, oi_delta_15m, oi_regime,
-                    last_funding_rate, funding_apr_pct, next_funding_time_ms
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    last_funding_rate, funding_apr_pct, next_funding_time_ms, source
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 records,
             )
@@ -340,6 +376,7 @@ class MarketDataVault:
                 float(s.get("spread", s["best_ask_price"] - s["best_bid_price"])),
                 float(s.get("spread_bps", 0.0)),
                 float(s.get("book_imbalance", 0.0)),
+                str(s.get("source", "binance_futures_um")),
             )
             for s in snapshots
         ]
@@ -348,8 +385,8 @@ class MarketDataVault:
                 """
                 INSERT INTO order_book_bbo_snapshots (
                     symbol, timestamp_ms, best_bid_price, best_bid_qty,
-                    best_ask_price, best_ask_qty, spread, spread_bps, book_imbalance
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    best_ask_price, best_ask_qty, spread, spread_bps, book_imbalance, source
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 records,
             )
@@ -368,6 +405,7 @@ class MarketDataVault:
                 float(m.get("top_trader_long_short_position_ratio", 1.0)),
                 float(m.get("global_long_short_account_ratio", 1.0)),
                 float(m.get("taker_buy_sell_volume_ratio", 1.0)),
+                str(m.get("source", "binance_futures_um")),
             )
             for m in metrics_list
         ]
@@ -377,8 +415,8 @@ class MarketDataVault:
                 INSERT INTO sentiment_metrics (
                     symbol, timestamp_ms, top_trader_long_short_account_ratio,
                     top_trader_long_short_position_ratio, global_long_short_account_ratio,
-                    taker_buy_sell_volume_ratio
-                ) VALUES (?, ?, ?, ?, ?, ?)
+                    taker_buy_sell_volume_ratio, source
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 records,
             )
@@ -411,6 +449,7 @@ class MarketDataVault:
                 float(b.get("liq_long_notional", 0.0)),
                 float(b.get("liq_short_notional", 0.0)),
                 b.get("open_interest"),
+                str(b.get("source", "binance_futures_um")),
             )
             for b in bars
         ]
@@ -421,8 +460,8 @@ class MarketDataVault:
                     symbol, timeframe, open_time, close_time, open, high, low, close,
                     volume, turnover, trade_count, taker_buy_volume, taker_sell_volume,
                     net_volume_delta, delta_ratio, whale_buy_notional, whale_sell_notional,
-                    liq_long_notional, liq_short_notional, open_interest
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    liq_long_notional, liq_short_notional, open_interest, source
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 records,
             )
@@ -455,6 +494,7 @@ class MarketDataVault:
                 float(a.get("confluence_score", 0.0)),
                 str(a.get("action_taken", "IDLE")),
                 a.get("block_reason"),
+                str(a.get("source", "binance_futures_um")),
             )
             for a in audits
         ]
@@ -465,8 +505,8 @@ class MarketDataVault:
                     symbol, timeframe, timestamp_ms, price, trend_4h, trend_1h, trend_15m,
                     rsi_14, adx_14, atr_14, market_structure_last_event, market_structure_event_side,
                     bars_since_ms_event, fvg_status, fvg_upper, fvg_lower, fvg_ce,
-                    confluence_score, action_taken, block_reason
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    confluence_score, action_taken, block_reason, source
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 records,
             )
@@ -595,7 +635,7 @@ class MarketDataVault:
                 SELECT open_time, close_time, open, high, low, close, volume, turnover,
                        trade_count, taker_buy_volume, taker_sell_volume, net_volume_delta,
                        delta_ratio, whale_buy_notional, whale_sell_notional,
-                       liq_long_notional, liq_short_notional, open_interest
+                       liq_long_notional, liq_short_notional, open_interest, source
                 FROM candle_microstructure_bars
                 WHERE symbol = ? AND timeframe = ? AND open_time >= ? AND open_time <= ?
                 ORDER BY open_time ASC
@@ -623,6 +663,42 @@ class MarketDataVault:
                     "liq_long_notional": float(r[15]),
                     "liq_short_notional": float(r[16]),
                     "open_interest": r[17],
+                    "source": r[18],
+                }
+                for r in rows
+            ]
+
+    def get_bbo_snapshots_window(
+        self,
+        symbol: str,
+        start_ms: int,
+        end_ms: int,
+    ) -> List[Dict[str, Any]]:
+        """Retrieve historical BBO snapshots within exact time window."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT timestamp_ms, best_bid_price, best_bid_qty,
+                       best_ask_price, best_ask_qty, spread, spread_bps, book_imbalance, source
+                FROM order_book_bbo_snapshots
+                WHERE symbol = ? AND timestamp_ms >= ? AND timestamp_ms <= ?
+                ORDER BY timestamp_ms ASC
+                """,
+                (symbol.upper(), start_ms, end_ms),
+            )
+            rows = cursor.fetchall()
+            return [
+                {
+                    "timestamp_ms": int(r[0]),
+                    "best_bid_price": float(r[1]),
+                    "best_bid_qty": float(r[2]),
+                    "best_ask_price": float(r[3]),
+                    "best_ask_qty": float(r[4]),
+                    "spread": float(r[5]),
+                    "spread_bps": float(r[6]),
+                    "book_imbalance": float(r[7]),
+                    "source": r[8],
                 }
                 for r in rows
             ]

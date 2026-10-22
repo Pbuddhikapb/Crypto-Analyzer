@@ -197,3 +197,67 @@ async def test_async_vault_writer(temp_vault_db):
     summary = vault.get_vault_summary()
     assert summary["row_counts"]["whale_trades"] == 1
     assert summary["row_counts"]["liquidation_events"] == 1
+
+
+def test_vault_schema_migration_preserves_existing_data(tmp_path):
+    """Verify that an older schema without 'source' column is migrated without rewriting or deleting rows."""
+    import sqlite3
+
+    old_db_path = str(tmp_path / "legacy_vault.db")
+    # 1. Create a database using the legacy schema lacking the 'source' column
+    with sqlite3.connect(old_db_path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE order_book_bbo_snapshots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                symbol TEXT NOT NULL,
+                timestamp_ms INTEGER NOT NULL,
+                best_bid_price REAL NOT NULL,
+                best_bid_qty REAL NOT NULL,
+                best_ask_price REAL NOT NULL,
+                best_ask_qty REAL NOT NULL,
+                spread REAL NOT NULL,
+                spread_bps REAL NOT NULL,
+                book_imbalance REAL NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO order_book_bbo_snapshots (
+                symbol, timestamp_ms, best_bid_price, best_bid_qty,
+                best_ask_price, best_ask_qty, spread, spread_bps, book_imbalance
+            ) VALUES ('BTCUSDT', 1700000000000, 60000.0, 1.5, 60001.0, 2.0, 1.0, 0.166, 0.14)
+            """
+        )
+        conn.commit()
+
+    # 2. Instantiate MarketDataVault on the existing legacy database
+    vault = MarketDataVault(db_path=old_db_path)
+
+    # 3. Verify 'source' column exists and pre-existing row has the default value intact
+    bbo_rows = vault.get_bbo_snapshots_window("BTCUSDT", 1700000000000, 1700000001000)
+    assert len(bbo_rows) == 1
+    assert bbo_rows[0]["best_bid_price"] == 60000.0
+    assert bbo_rows[0]["source"] == "binance_futures_um"
+
+    # 4. Insert new row with explicit source and verify persistence
+    vault.insert_bbo_snapshots([
+        {
+            "symbol": "BTCUSDT",
+            "timestamp_ms": 1700000005000,
+            "best_bid_price": 60010.0,
+            "best_bid_qty": 2.5,
+            "best_ask_price": 60011.0,
+            "best_ask_qty": 3.0,
+            "spread": 1.0,
+            "spread_bps": 0.166,
+            "book_imbalance": 0.1,
+            "source": "binance_futures_um",
+        }
+    ])
+    all_bbo = vault.get_bbo_snapshots_window("BTCUSDT", 1700000000000, 1700000010000)
+    assert len(all_bbo) == 2
+    assert all_bbo[1]["best_bid_price"] == 60010.0
+    assert all_bbo[1]["source"] == "binance_futures_um"
+

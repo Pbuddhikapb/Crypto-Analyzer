@@ -888,11 +888,42 @@ def create_app(
         buffers = getattr(app.state, "candle_buffers", getattr(app.state, "traders", {}))
         tf_sec = timeframe_to_seconds(timeframe)
         last_updates = getattr(app.state, "last_update_times", {})
+        kline_conn = bool(
+            getattr(app.state, "is_kline_connected", getattr(app.state, "is_spot_connected", False))
+        )
+
+        now_t = int(time.time())
+        staleness_threshold = 2 * tf_sec
+
+        # Determine symbols with data and stale symbols
+        symbols_with_data = [
+            sym
+            for sym, buf in buffers.items()
+            if (sym in last_updates and last_updates[sym] > 0)
+            or (hasattr(buf, "candles") and len(buf.candles) > 0)
+        ]
+
+        stale_symbols = sorted(
+            [
+                sym
+                for sym in buffers
+                if (sym not in last_updates)
+                or (now_t - last_updates[sym] > staleness_threshold)
+            ]
+        )
+
+        if not symbols_with_data:
+            status = "down"
+        elif not kline_conn or len(stale_symbols) > 0:
+            status = "degraded"
+        else:
+            status = "healthy"
+
         return {
-            "status": "healthy",
+            "status": status,
             "data_source": "binance_futures_um",
-            "spot_connectivity": getattr(app.state, "is_spot_connected", False),
-            "kline_connectivity": getattr(app.state, "is_kline_connected", getattr(app.state, "is_spot_connected", False)),
+            "kline_connectivity": kline_conn,
+            "spot_connectivity": kline_conn,  # Backwards compatibility alias
             "futures_connectivity": getattr(micro, "is_online", False) if micro else False,
             "futures_status_message": getattr(app.state, "futures_status_message", "Unknown"),
             "active_symbols_count": len(buffers),
@@ -900,6 +931,7 @@ def create_app(
             "connected_ws_clients": len(conn_mgr.active_connections) if conn_mgr else 0,
             "last_update_per_symbol": dict(last_updates),
             "last_update_times": dict(last_updates),
+            "stale_symbols": stale_symbols,
             "timeframe": timeframe,
             "candle_interval_sec": tf_sec,
         }

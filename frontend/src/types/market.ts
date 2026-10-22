@@ -230,12 +230,14 @@ export interface SystemHealth {
   last_update_times?: Record<string, number>;
   timeframe?: string;
   candle_interval_sec?: number;
-  spot_connectivity: boolean;
+  kline_connectivity: boolean;
+  spot_connectivity?: boolean;
   futures_connectivity: boolean;
   futures_status_message: string;
   active_symbols_count: number;
   db_status: string;
   connected_ws_clients: number;
+  stale_symbols?: string[];
 }
 
 export interface OrderBookLevel {
