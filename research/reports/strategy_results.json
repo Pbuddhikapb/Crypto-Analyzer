@@ -1,11 +1,24 @@
 {
   "metadata": {
     "run_timestamp": "2026-10-21T16:26:05.696518+00:00",
-    "git_commit": "f578398ad673303720cb28ff0802471693b72478",
+    "git_commit": "15f6c3dad2e737f9a0e4f4aae246cdd7f8ae1b79+dirty",
     "dataset_hash": "61d0448603612d76",
     "data_date_range": "2021-01-01 to 2026-04-18",
     "start_time_ms": 1609459200000,
-    "end_time_ms": 1776470400000
+    "end_time_ms": 1776470400000,
+    "bars_per_symbol": {
+      "BTCUSDT": 46393,
+      "ETHUSDT": 46393,
+      "SOLUSDT": 46273,
+      "BNBUSDT": 46393,
+      "XRPUSDT": 46273,
+      "DOGEUSDT": 46393,
+      "ADAUSDT": 46393,
+      "AVAXUSDT": 46393,
+      "LINKUSDT": 46393,
+      "SUIUSDT": 25929
+    },
+    "dataset_years": 5.29
   },
   "strategies": {
     "TrendPullback": {
@@ -37,7 +50,7 @@
       "end_time_ms": 1776470400000,
       "run_timestamp": "2026-10-21T16:26:05.696518+00:00",
       "data_date_range": "2021-01-01 to 2026-04-18",
-      "git_commit": "f578398ad673303720cb28ff0802471693b72478"
+      "git_commit": "15f6c3dad2e737f9a0e4f4aae246cdd7f8ae1b79+dirty"
     },
     "FVGRetest": {
       "strategy_name": "FVGRetest",
@@ -68,7 +81,7 @@
       "end_time_ms": 1776470400000,
       "run_timestamp": "2026-10-21T16:26:05.696518+00:00",
       "data_date_range": "2021-01-01 to 2026-04-18",
-      "git_commit": "f578398ad673303720cb28ff0802471693b72478"
+      "git_commit": "15f6c3dad2e737f9a0e4f4aae246cdd7f8ae1b79+dirty"
     },
     "ConfluenceThreshold": {
       "strategy_name": "ConfluenceThreshold",
@@ -99,7 +112,7 @@
       "end_time_ms": 1776470400000,
       "run_timestamp": "2026-10-21T16:26:05.696518+00:00",
       "data_date_range": "2021-01-01 to 2026-04-18",
-      "git_commit": "f578398ad673303720cb28ff0802471693b72478"
+      "git_commit": "15f6c3dad2e737f9a0e4f4aae246cdd7f8ae1b79+dirty"
     },
     "LiquiditySweep": {
       "strategy_name": "LiquiditySweep",
@@ -130,7 +143,7 @@
       "end_time_ms": 1776470400000,
       "run_timestamp": "2026-10-21T16:26:05.696518+00:00",
       "data_date_range": "2021-01-01 to 2026-04-18",
-      "git_commit": "f578398ad673303720cb28ff0802471693b72478"
+      "git_commit": "15f6c3dad2e737f9a0e4f4aae246cdd7f8ae1b79+dirty"
     }
   }
 }

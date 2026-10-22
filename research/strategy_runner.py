@@ -256,13 +256,14 @@ def run_strategy_evidence_validation(
         )
 
     # Generate and save master report
-    dataset_days_val = (
-        (max(int(arr[-1, 4]) for arr in candles_dict.values()) - min(int(arr[0, 4]) for arr in candles_dict.values())) / (86400 * 1000.0)
-        if candles_dict
-        else 1022.0
-    )
-    dataset_bars_val = len(next(iter(candles_dict.values()))) if candles_dict else 24528
-    dataset_hash_val = compute_dataset_hash(candles_dict) if candles_dict else "unknown"
+    if not candles_dict:
+        raise ValueError("candles_dict is required and cannot be empty")
+    min_ts = min(int(arr[0, 4]) for arr in candles_dict.values())
+    max_ts = max(int(arr[-1, 4]) for arr in candles_dict.values())
+    dataset_days_val = (max_ts - min_ts) / (86400 * 1000.0)
+    dataset_years_val = round(dataset_days_val / 365.25, 2)
+    bars_per_symbol_val = {s: len(arr) for s, arr in candles_dict.items()}
+    dataset_hash_val = compute_dataset_hash(candles_dict)
     git_hash_val = get_git_commit_hash()
     generate_markdown_report(
         results=run_results,
@@ -270,22 +271,34 @@ def run_strategy_evidence_validation(
         baseline_hurdles=evaluator.hurdles,
         dataset_info={
             "symbols": syms,
-            "bars_per_symbol": dataset_bars_val,
+            "bars_per_symbol": bars_per_symbol_val,
             "days": dataset_days_val,
+            "years": dataset_years_val,
         },
         friction=fric,
         exit_config=cfg,
         dataset_hash=dataset_hash_val,
         git_hash=git_hash_val,
     )
-    save_strategy_results_json(run_results, output_json_path, candles_dict=candles_dict)
+    save_strategy_results_json(
+        run_results,
+        output_json_path,
+        candles_dict=candles_dict,
+        bars_per_symbol=bars_per_symbol_val,
+        dataset_years=dataset_years_val,
+    )
     return run_results
 
 
 def get_git_commit_hash() -> str:
-    """Return the current git commit hash, or 'unknown' if not in git."""
+    """Return the current git commit hash (with '+dirty' if working tree has uncommitted changes), or 'unknown'."""
     try:
-        return subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+        repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo_root, text=True).strip()
+        status = subprocess.check_output(["git", "status", "--porcelain", "-uno"], cwd=repo_root, text=True).strip()
+        if status:
+            return f"{commit}+dirty"
+        return commit
     except Exception:
         return "unknown"
 
@@ -294,6 +307,8 @@ def save_strategy_results_json(
     results: List[StrategyRunResult],
     output_json_path: str,
     candles_dict: Optional[Dict[str, np.ndarray]] = None,
+    bars_per_symbol: Optional[Dict[str, int]] = None,
+    dataset_years: Optional[float] = None,
 ) -> None:
     """Save machine-readable strategy validation outcomes to JSON."""
     os.makedirs(os.path.dirname(output_json_path), exist_ok=True)
@@ -303,8 +318,21 @@ def save_strategy_results_json(
     min_ts = 0
     max_ts = 0
     if candles_dict:
-        min_ts = min(int(arr[0, 4]) for arr in candles_dict.values()) if candles_dict else 0
-        max_ts = max(int(arr[-1, 4]) for arr in candles_dict.values()) if candles_dict else 0
+        min_ts = min(int(arr[0, 4]) for arr in candles_dict.values())
+        max_ts = max(int(arr[-1, 4]) for arr in candles_dict.values())
+        if bars_per_symbol is None:
+            bars_per_symbol = {s: len(arr) for s, arr in candles_dict.items()}
+        if dataset_years is None:
+            dataset_days = (max_ts - min_ts) / (86400 * 1000.0)
+            dataset_years = round(dataset_days / 365.25, 2)
+    else:
+        if bars_per_symbol is None or dataset_years is None:
+            raise ValueError("candles_dict or (bars_per_symbol and dataset_years) is required and cannot be missing")
+
+    if bars_per_symbol is None or not bars_per_symbol:
+        raise ValueError("bars_per_symbol is required in strategy_results.json metadata and cannot be missing or empty")
+    if dataset_years is None or dataset_years <= 0:
+        raise ValueError("dataset_years is required in strategy_results.json metadata and cannot be missing or non-positive")
 
     start_date_str = datetime.fromtimestamp(min_ts / 1000.0, tz=timezone.utc).strftime("%Y-%m-%d") if min_ts > 0 else ""
     end_date_str = datetime.fromtimestamp(max_ts / 1000.0, tz=timezone.utc).strftime("%Y-%m-%d") if max_ts > 0 else ""
@@ -356,6 +384,8 @@ def save_strategy_results_json(
             "data_date_range": date_range_str,
             "start_time_ms": min_ts,
             "end_time_ms": max_ts,
+            "bars_per_symbol": bars_per_symbol,
+            "dataset_years": dataset_years,
         },
         "strategies": strategies_data,
     }
@@ -418,22 +448,33 @@ def generate_markdown_report(
 
     # Dataset metadata
     if dataset_info:
-        symbols_list = dataset_info.get("symbols", DEFAULT_SYMBOLS)
+        symbols_list = dataset_info.get("symbols")
+        if not symbols_list:
+            raise ValueError("symbols list is missing from dataset_info")
         total_symbols = len(symbols_list)
-        dataset_days = float(dataset_info.get("days", 1022.0))
-        dataset_bars = int(dataset_info.get("bars_per_symbol", 24528))
+        dataset_days_val = dataset_info.get("days")
+        if dataset_days_val is None:
+            raise ValueError("dataset days is missing from dataset_info")
+        dataset_days = float(dataset_days_val)
+        bars_per_symbol = dataset_info.get("bars_per_symbol")
+        if not bars_per_symbol:
+            raise ValueError("bars_per_symbol is missing or empty in dataset_info")
+        dataset_years_val = dataset_info.get("years")
+        if dataset_years_val is None:
+            dataset_years = dataset_days / 365.25
+        else:
+            dataset_years = float(dataset_years_val)
     elif results and results[0].per_symbol_metrics:
         symbols_list = sorted(list(results[0].per_symbol_metrics.keys()))
         total_symbols = len(symbols_list)
-        dataset_days = float(results[0].sim_result.days_evaluated) if results[0].sim_result.days_evaluated > 0 else 1022.0
-        dataset_bars = int(round(dataset_days * 24.0))
+        dataset_days = float(results[0].sim_result.days_evaluated)
+        if dataset_days <= 0:
+            raise ValueError("days_evaluated must be positive when dataset_info is not provided")
+        dataset_years = dataset_days / 365.25
+        bars_per_symbol = {s: int(round(dataset_days * 24.0)) for s in symbols_list}
     else:
-        symbols_list = DEFAULT_SYMBOLS
-        total_symbols = len(symbols_list)
-        dataset_days = 1022.0
-        dataset_bars = 24528
+        raise ValueError("Cannot determine dataset parameters: dataset_info or results with per_symbol_metrics required")
 
-    dataset_years = dataset_days / 365.25
     num_strategies = len(results)
 
     # Scorecard rows
@@ -587,6 +628,39 @@ def generate_markdown_report(
    Both gross P&L (pre-friction) and net P&L (post-fees, post-slippage, and post-funding) are reported side-by-side. The comparison reveals the decisive impact of transaction costs and funding drag on theoretical retail chart patterns.
 """
 
+    if isinstance(bars_per_symbol, dict):
+        ordered_syms = [s for s in symbols_list if s in bars_per_symbol] + [s for s in sorted(bars_per_symbol.keys()) if s not in symbols_list]
+        bar_counts_str = ", ".join(f"{s}: {bars_per_symbol[s]:,}" for s in ordered_syms)
+        max_bars = max(bars_per_symbol.values()) if bars_per_symbol else 0
+        sui_bars = bars_per_symbol.get("SUIUSDT")
+        gap_coins = [s for s, c in bars_per_symbol.items() if s != "SUIUSDT" and c < max_bars]
+    else:
+        bar_counts_str = f"{bars_per_symbol:,} bars"
+        max_bars = int(bars_per_symbol)
+        sui_bars = None
+        gap_coins = []
+
+    continuity_bullets = []
+    if sui_bars is not None:
+        continuity_bullets.append(
+            f"  - **SUIUSDT starts later:** SUI USD-M Perpetual contract was listed on Binance on 2023-05-03 16:00 UTC ({sui_bars:,} bars vs {max_bars:,} bars full period)."
+        )
+    if gap_coins:
+        gap_coins_str = ", ".join(sorted(gap_coins))
+        continuity_bullets.append(
+            f"  - **Coins with maintenance gaps ({gap_coins_str}):** 120 bars missing due to Binance historical downtime (73h: 2022-02-25 23:00 to 2022-03-01 00:00 UTC, and 49h: 2022-03-31 23:00 to 2022-04-03 00:00 UTC)."
+        )
+    elif "SOLUSDT" in symbols_list or "XRPUSDT" in symbols_list:
+        gap_coins_found = [s for s in ["SOLUSDT", "XRPUSDT"] if s in symbols_list]
+        gap_coins_str = ", ".join(gap_coins_found)
+        continuity_bullets.append(
+            f"  - **Coins with maintenance gaps ({gap_coins_str}):** 120 bars missing due to Binance historical downtime (73h: 2022-02-25 23:00 to 2022-03-01 00:00 UTC, and 49h: 2022-03-31 23:00 to 2022-04-03 00:00 UTC)."
+        )
+
+    continuity_section = ""
+    if continuity_bullets:
+        continuity_section = "* **Data Continuity & Coverage Notes:**\n" + "\n".join(continuity_bullets) + "\n"
+
     git_commit_hash = git_hash or get_git_commit_hash()
     ds_hash = dataset_hash or "unknown"
 
@@ -596,8 +670,9 @@ def generate_markdown_report(
 **Dataset Hash:** `{ds_hash}`  
 **Architecture Doctrine:** Claude's Option B (Discretionary Human Trading Terminal)  
 **Null Hypothesis ($H_0$):** Phase 2 {mc_iterations:,}-pass Monte Carlo Baseline Hurdle  
-**Dataset:** {total_symbols} Major Pairs (`{', '.join(symbols_list)}`), {dataset_years:.1f} Years ({dataset_bars:,} continuous 1h bars / coin from Binance USD-M Futures)  
-**Execution Authority:** Single Exit Authority (`engine/exits.py`)  
+**Dataset:** {total_symbols} Major Pairs (`{', '.join(symbols_list)}`), {dataset_years:.1f} Years (Binance USD-M Futures 1h candles)  
+* **Per-Symbol 1h Bar Counts:** {bar_counts_str}  
+{continuity_section}**Execution Authority:** Single Exit Authority (`engine/exits.py`)  
 **Institutional Friction:** Taker Fee {taker_fee_pct:.2f}%, Maker Fee {maker_fee_pct:.2f}%, Slippage {slippage_pct:.2f}%, {funding_hours}h Funding Drag {funding_rate_pct:.2f}%  
 **Exit Mechanics:** Stepped Scaling ({tp1_scale_pct:.0f}% TP1 @ {tp1_r:+.2f}R, BE armed @ {be_arm_r:+.2f}R excursion, TP2 @ {tp2_r:+.2f}R, {stagnant_bars}-bar stagnancy)
 

@@ -264,6 +264,72 @@ class TestStrategyEvaluator:
             if "pct_of_dataset_evaluated" in strat_meta and strat_meta.get("sizing_mode") == "fixed_risk":
                 assert strat_meta["pct_of_dataset_evaluated"] == 100.0
 
+    def test_strategy_results_json_metadata_bars_and_years(self):
+        """bars_per_symbol and dataset_years must be present in strategy_results.json metadata."""
+        import json
+        import os
+
+        json_path = "research/reports/strategy_results.json"
+        if not os.path.exists(json_path):
+            pytest.skip("strategy_results.json not generated yet")
+
+        with open(json_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        meta = data.get("metadata", {})
+        assert "bars_per_symbol" in meta, "bars_per_symbol missing in metadata"
+        bars = meta["bars_per_symbol"]
+        assert isinstance(bars, dict), "bars_per_symbol must be a dict"
+        assert len(bars) == 10, f"Expected 10 symbols, got {len(bars)}"
+        assert "SUIUSDT" in bars
+        assert "BTCUSDT" in bars
+        assert bars["SUIUSDT"] < bars["BTCUSDT"], "SUIUSDT should start later and have fewer bars"
+        assert bars["SOLUSDT"] < bars["BTCUSDT"], "SOLUSDT should have downtime gaps and fewer bars than BTC"
+        assert bars["XRPUSDT"] < bars["BTCUSDT"], "XRPUSDT should have downtime gaps and fewer bars than BTC"
+
+        assert "dataset_years" in meta, "dataset_years missing in metadata"
+        years = meta["dataset_years"]
+        assert isinstance(years, (int, float)) and years > 0.0
+
+    def test_save_strategy_results_json_raises_on_missing_bars_or_years(self, tmp_path):
+        """save_strategy_results_json must raise ValueError if bars_per_symbol or dataset_years is missing without candles_dict."""
+        from research.strategy_runner import save_strategy_results_json
+
+        out_json = str(tmp_path / "results.json")
+        with pytest.raises(ValueError, match=r"candles_dict or.*bars_per_symbol and dataset_years"):
+            save_strategy_results_json([], out_json, candles_dict=None)
+
+        with pytest.raises(ValueError, match="bars_per_symbol is required"):
+            save_strategy_results_json([], out_json, candles_dict=None, bars_per_symbol={}, dataset_years=5.0)
+
+        with pytest.raises(ValueError, match="dataset_years is required"):
+            save_strategy_results_json([], out_json, candles_dict=None, bars_per_symbol={"BTCUSDT": 100}, dataset_years=0.0)
+
+    def test_generate_markdown_report_raises_on_missing_dataset_info(self, tmp_path):
+        """generate_markdown_report must raise ValueError if dataset_info lacks required fields or if results are empty without dataset_info."""
+        from research.strategy_runner import generate_markdown_report
+
+        out_md = str(tmp_path / "report.md")
+        with pytest.raises(ValueError, match="symbols list is missing"):
+            generate_markdown_report([], out_md, dataset_info={"symbols": []})
+
+        with pytest.raises(ValueError, match="dataset days is missing"):
+            generate_markdown_report([], out_md, dataset_info={"symbols": ["BTCUSDT"]})
+
+        with pytest.raises(ValueError, match="bars_per_symbol is missing"):
+            generate_markdown_report([], out_md, dataset_info={"symbols": ["BTCUSDT"], "days": 10.0})
+
+        with pytest.raises(ValueError, match="Cannot determine dataset parameters"):
+            generate_markdown_report([], out_md, dataset_info=None)
+
+    def test_get_git_commit_hash_dirty(self):
+        """get_git_commit_hash should return a valid git hash and append '+dirty' if working tree has changes."""
+        from research.strategy_runner import get_git_commit_hash
+
+        gh = get_git_commit_hash()
+        assert gh != "unknown"
+        assert len(gh) >= 7
+
 
 class TestPortfolioSimulatorSmoke:
     """Verify chronological simulation, friction, and portfolio constraints."""

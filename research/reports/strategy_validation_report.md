@@ -1,10 +1,14 @@
 # Strategy Validation Dossier: Evidence Before Infrastructure
-**Generated:** 2026-10-21 16:26 UTC  
-**Git Commit:** `f578398ad673303720cb28ff0802471693b72478`  
+**Generated:** 2026-10-22 02:07 UTC  
+**Git Commit:** `15f6c3dad2e737f9a0e4f4aae246cdd7f8ae1b79+dirty`  
 **Dataset Hash:** `61d0448603612d76`  
 **Architecture Doctrine:** Claude's Option B (Discretionary Human Trading Terminal)  
 **Null Hypothesis ($H_0$):** Phase 2 1,000-pass Monte Carlo Baseline Hurdle  
-**Dataset:** 10 Major Pairs (`BTCUSDT, ETHUSDT, SOLUSDT, BNBUSDT, XRPUSDT, DOGEUSDT, ADAUSDT, AVAXUSDT, LINKUSDT, SUIUSDT`), 5.3 Years (50,832 continuous 1h bars / coin from Binance USD-M Futures)  
+**Dataset:** 10 Major Pairs (`BTCUSDT, ETHUSDT, SOLUSDT, BNBUSDT, XRPUSDT, DOGEUSDT, ADAUSDT, AVAXUSDT, LINKUSDT, SUIUSDT`), 5.3 Years (Binance USD-M Futures 1h candles)  
+* **Per-Symbol 1h Bar Counts:** BTCUSDT: 46,393, ETHUSDT: 46,393, SOLUSDT: 46,273, BNBUSDT: 46,393, XRPUSDT: 46,273, DOGEUSDT: 46,393, ADAUSDT: 46,393, AVAXUSDT: 46,393, LINKUSDT: 46,393, SUIUSDT: 25,929  
+* **Data Continuity & Coverage Notes:**
+  - **SUIUSDT starts later:** SUI USD-M Perpetual contract was listed on Binance on 2023-05-03 16:00 UTC (25,929 bars vs 46,393 bars full period).
+  - **Coins with maintenance gaps (SOLUSDT, XRPUSDT):** 120 bars missing due to Binance historical downtime (73h: 2022-02-25 23:00 to 2022-03-01 00:00 UTC, and 49h: 2022-03-31 23:00 to 2022-04-03 00:00 UTC).
 **Execution Authority:** Single Exit Authority (`engine/exits.py`)  
 **Institutional Friction:** Taker Fee 0.05%, Maker Fee 0.02%, Slippage 0.03%, 8h Funding Drag 0.01%  
 **Exit Mechanics:** Stepped Scaling (50% TP1 @ +0.75R, BE armed @ +0.85R excursion, TP2 @ +1.33R, 12-bar stagnancy)
