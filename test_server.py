@@ -587,7 +587,7 @@ def test_candle_feed_buffer_lifecycle():
 def test_futures_stream_url_format():
     """Verify get_combined_stream_url points to Binance USD-M futures and excludes spot / US hosts."""
     url = get_combined_stream_url(["BTCUSDT", "ETHUSDT"], "15m")
-    assert url.startswith("wss://fstream.binance.com/stream?streams=")
+    assert url.startswith("wss://fstream.binance.com/market/stream?streams=")
     assert "btcusdt@kline_15m/ethusdt@kline_15m" in url
     assert "wss://stream.binance.com" not in url
     assert "binance.us" not in url
@@ -758,7 +758,7 @@ async def test_run_kline_ingestion_futures_ws_mock(tmp_path):
             pass
 
     assert len(ws_urls) == 1
-    assert ws_urls[0].startswith("wss://fstream.binance.com/stream?streams=")
+    assert ws_urls[0].startswith("wss://fstream.binance.com/market/stream?streams=")
     assert "btcusdt@kline_15m" in ws_urls[0]
     assert app.state.latest_prices.get("BTCUSDT") == 65300.0
     assert "BTCUSDT" in app.state.last_update_times
@@ -823,5 +823,18 @@ def test_health_endpoint_status_states(app_and_client):
     assert data["spot_connectivity"] is True
 
 
+def test_seed_buffer_from_parquet():
+    """Verify seed_buffer_from_parquet pre-seeds buffer with 249 historical candles and timestamps."""
+    from server import CandleFeedBuffer, seed_buffer_from_parquet
+    buf = CandleFeedBuffer(symbol="BTCUSDT", timeframe="15m")
+    ts_dict = {"BTCUSDT": []}
 
-
+    success = seed_buffer_from_parquet(buf, "BTCUSDT", "15m", timestamps_dict=ts_dict, limit=249)
+    assert success is True
+    assert len(buf.candles) == 249
+    assert len(ts_dict["BTCUSDT"]) == 249
+    # Strict monotonicity of timestamps
+    for i in range(1, len(ts_dict["BTCUSDT"])):
+        assert ts_dict["BTCUSDT"][i] > ts_dict["BTCUSDT"][i - 1]
+    # Closes are realistic BTC prices (> 10000)
+    assert buf.candles[-1][3] > 10000.0

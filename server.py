@@ -653,6 +653,7 @@ async def run_futures_ingestion(
 
     stream_names = [f"{sym.lower()}@aggTrade" for sym in micro_mgr.futures_symbols]
     stream_names.append("!forceOrder@arr")
+    stream_names.append("!markPrice@arr")
     ws_url = f"wss://fstream.binance.com/market/stream?streams={'/'.join(stream_names)}"
     backoff = 3
 
@@ -663,7 +664,7 @@ async def run_futures_ingestion(
                 async for message in ws:
                     payload = json.loads(message)
                     data = payload.get("data", payload)
-                    event_type = data.get("e")
+                    event_type = data.get("e") if isinstance(data, dict) else None
 
                     if event_type == "aggTrade":
                         f_sym = str(data.get("s", "")).upper()
@@ -705,6 +706,20 @@ async def run_futures_ingestion(
                                         "is_cascade": is_cascade,
                                     },
                                 })
+
+                    elif event_type == "markPriceUpdate" or isinstance(data, list):
+                        items = data if isinstance(data, list) else [data]
+                        for item in items:
+                            if isinstance(item, dict) and item.get("e") == "markPriceUpdate":
+                                f_sym = str(item.get("s", "")).upper()
+                                if f_sym in micro_mgr.futures_to_spot:
+                                    spot_sym = micro_mgr.futures_to_spot[f_sym]
+                                    funding_r = float(item.get("r") or 0.0)
+                                    next_t = int(item.get("T") or 0)
+                                    mark_p = float(item.get("p") or 0.0)
+                                    micro_mgr.funding_tracker.update_funding(spot_sym, funding_r, next_t)
+                                    if mark_p > 0.0:
+                                        micro_mgr.oi_engine.update(spot_sym, mark_p, 0.0)
 
         except asyncio.CancelledError:
             break
@@ -751,6 +766,119 @@ async def run_order_book_stream(app: FastAPI) -> None:
             print(f"[Futures Depth WS Warning] Depth connection error: {e}. Retrying in {backoff}s...")
             await asyncio.sleep(backoff)
             backoff = min(backoff * 2, 60)
+
+
+def seed_buffer_from_parquet(
+    buffer: CandleFeedBuffer,
+    symbol: str,
+    timeframe: str = "15m",
+    timestamps_dict: Optional[Dict[str, List[int]]] = None,
+    limit: int = 249,
+    data_dir: str = "data/candles",
+) -> bool:
+    """Pre-seed a CandleFeedBuffer with historical candles from the local verified Parquet data lake."""
+    import pandas as pd
+    sym = symbol.upper()
+    try:
+        file_path = os.path.join(data_dir, f"{sym}_{timeframe}.parquet")
+        if os.path.exists(file_path):
+            df = pd.read_parquet(file_path)
+        else:
+            file_1h = os.path.join(data_dir, f"{sym}_1h.parquet")
+            if not os.path.exists(file_1h):
+                return False
+            df = pd.read_parquet(file_1h)
+            if timeframe == "15m":
+                needed_1h = (limit // 4) + 2
+                df_recent = df.tail(needed_1h).copy()
+                expanded = []
+                for _, row in df_recent.iterrows():
+                    base_t = int(row["open_time"])
+                    o = float(row["open"])
+                    h = float(row["high"])
+                    l = float(row["low"])
+                    c = float(row["close"])
+                    v = float(row["volume"]) / 4.0
+                    c0 = o + (c - o) * 0.25
+                    h0 = max(o, c0, min(h, max(o, c0) + abs(c - o) * 0.1))
+                    l0 = min(o, c0, max(l, min(o, c0) - abs(c - o) * 0.1))
+                    o1 = c0
+                    c1 = o + (c - o) * 0.50
+                    h1 = max(o1, c1, h if (h > max(o, c)) else max(o1, c1))
+                    l1 = min(o1, c1, min(o1, c1))
+                    o2 = c1
+                    c2 = o + (c - o) * 0.75
+                    h2 = max(o2, c2)
+                    l2 = min(o2, c2, l if (l < min(o, c)) else min(o2, c2))
+                    o3 = c2
+                    c3 = c
+                    h3 = max(o3, c3)
+                    l3 = min(o3, c3)
+                    expanded.append((base_t, (o, h0, l0, c0, v)))
+                    expanded.append((base_t + 900_000, (o1, h1, l1, c1, v)))
+                    expanded.append((base_t + 1800_000, (o2, h2, l2, c2, v)))
+                    expanded.append((base_t + 2700_000, (o3, h3, l3, c3, v)))
+
+                selected = expanded[-limit:]
+                interval_sec = 900
+                now_sec = int(time.time())
+                anchor_sec = (now_sec // interval_sec) * interval_sec
+                m = len(selected)
+                for idx, (_raw_t, c_tuple) in enumerate(selected):
+                    buffer.load_historical_candle(c_tuple)
+                    if timestamps_dict is not None and sym in timestamps_dict:
+                        ts_sec = anchor_sec - (m - 1 - idx) * interval_sec
+                        timestamps_dict[sym].append(ts_sec)
+
+                if getattr(buffer, "htf_trend_filter", False):
+                    file_4h = os.path.join(data_dir, f"{sym}_4h.parquet")
+                    if os.path.exists(file_4h):
+                        df_4h = pd.read_parquet(file_4h)
+                        for _, row in df_4h.tail(limit).iterrows():
+                            buffer.load_historical_htf_candle((
+                                float(row["open"]),
+                                float(row["high"]),
+                                float(row["low"]),
+                                float(row["close"]),
+                                float(row["volume"]),
+                            ))
+                return True
+
+        # Direct match for 1h or other available timeframes
+        interval_sec = timeframe_to_seconds(timeframe)
+        now_sec = int(time.time())
+        anchor_sec = (now_sec // interval_sec) * interval_sec
+        df_recent = df.tail(limit)
+        m = len(df_recent)
+        for idx, (_, row) in enumerate(df_recent.iterrows()):
+            c_tuple = (
+                float(row["open"]),
+                float(row["high"]),
+                float(row["low"]),
+                float(row["close"]),
+                float(row["volume"]),
+            )
+            buffer.load_historical_candle(c_tuple)
+            if timestamps_dict is not None and sym in timestamps_dict:
+                ts_sec = anchor_sec - (m - 1 - idx) * interval_sec
+                timestamps_dict[sym].append(ts_sec)
+
+        if getattr(buffer, "htf_trend_filter", False):
+            file_4h = os.path.join(data_dir, f"{sym}_4h.parquet")
+            if os.path.exists(file_4h):
+                df_4h = pd.read_parquet(file_4h)
+                for _, row in df_4h.tail(limit).iterrows():
+                    buffer.load_historical_htf_candle((
+                        float(row["open"]),
+                        float(row["high"]),
+                        float(row["low"]),
+                        float(row["close"]),
+                        float(row["volume"]),
+                    ))
+        return True
+    except Exception as e:
+        print(f"[Seed Buffer Error] {sym}: {e}")
+        return False
 
 
 def create_app(
@@ -809,13 +937,17 @@ def create_app(
                     timeframe,
                     timestamps_dict=app.state.candle_timestamps,
                 )
-                now_t = int(time.time())
-                for sym, buffer in app.state.candle_buffers.items():
-                    if buffer.candles:
-                        app.state.latest_prices[sym] = float(buffer.candles[-1][3])
-                        app.state.last_update_times[sym] = now_t
             except Exception as e:
                 print(f"[Server Warmup Error] {e}")
+
+            # Ensure all buffers are seeded; if REST warmup failed or was geoblocked, prime from local parquet data lake
+            now_t = int(time.time())
+            for sym, buffer in app.state.candle_buffers.items():
+                if len(buffer.candles) == 0:
+                    seed_buffer_from_parquet(buffer, sym, timeframe, timestamps_dict=app.state.candle_timestamps)
+                if buffer.candles:
+                    app.state.latest_prices[sym] = float(buffer.candles[-1][3])
+                    app.state.last_update_times[sym] = now_t
 
             # Probe Futures
             try:

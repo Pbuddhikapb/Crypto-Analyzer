@@ -79,7 +79,7 @@ def parse_arguments() -> argparse.Namespace:
 def get_combined_stream_url(symbols: Sequence[str], timeframe: str) -> str:
     """Build Binance USD-M Futures multiplexed WebSocket stream URL."""
     stream_params = "/".join(f"{s.strip().lower()}@kline_{timeframe}" for s in symbols)
-    return f"wss://fstream.binance.com/stream?streams={stream_params}"
+    return f"wss://fstream.binance.com/market/stream?streams={stream_params}"
 
 
 async def warmup_symbol(
@@ -226,6 +226,24 @@ class FuturesMicrostructureManager:
     async def check_health(self) -> Tuple[bool, str]:
         loop = asyncio.get_running_loop()
         is_ok, msg = await loop.run_in_executor(None, FuturesHealthProber.probe_connectivity)
+        if not is_ok:
+            # When REST ping is restricted (e.g. HTTP 451 in cloud VMs), probe WebSocket reachability
+            def _probe_ws() -> bool:
+                import socket
+                import ssl
+                try:
+                    ctx = ssl.create_default_context()
+                    with socket.create_connection(("fstream.binance.com", 443), timeout=3.0) as sock:
+                        with ctx.wrap_socket(sock, server_hostname="fstream.binance.com"):
+                            return True
+                except Exception:
+                    return False
+
+            ws_ok = await loop.run_in_executor(None, _probe_ws)
+            if ws_ok:
+                self.is_online = True
+                return True, "Binance Futures Online (WS Active, REST Restricted)"
+
         self.is_online = is_ok
         return is_ok, msg
 
@@ -236,6 +254,7 @@ class FuturesMicrostructureManager:
 
         stream_names = [f"{sym.lower()}@aggTrade" for sym in self.futures_symbols]
         stream_names.append("!forceOrder@arr")
+        stream_names.append("!markPrice@arr")
         ws_url = f"wss://fstream.binance.com/market/stream?streams={'/'.join(stream_names)}"
         backoff = 3
 
@@ -249,7 +268,7 @@ class FuturesMicrostructureManager:
                     async for message in ws:
                         payload = json.loads(message)
                         data = payload.get("data", payload)
-                        event_type = data.get("e")
+                        event_type = data.get("e") if isinstance(data, dict) else None
 
                         if event_type == "aggTrade":
                             f_sym = str(data.get("s", "")).upper()
@@ -269,6 +288,20 @@ class FuturesMicrostructureManager:
                                     rolling_vol, is_cascade = self.liq_tracker.get_rolling_summary(f_sym)
                                     if is_cascade:
                                         print(f"\n>>> [CASCADE ALERT] {spot_sym} {event.liquidated_position} FLUSH: 60s Liquidation Volume ${rolling_vol:,.2f} Exceeded $1M! <<<\n")
+
+                        elif event_type == "markPriceUpdate" or isinstance(data, list):
+                            items = data if isinstance(data, list) else [data]
+                            for item in items:
+                                if isinstance(item, dict) and item.get("e") == "markPriceUpdate":
+                                    f_sym = str(item.get("s", "")).upper()
+                                    if f_sym in self.futures_to_spot:
+                                        spot_sym = self.futures_to_spot[f_sym]
+                                        funding_r = float(item.get("r") or 0.0)
+                                        next_t = int(item.get("T") or 0)
+                                        mark_p = float(item.get("p") or 0.0)
+                                        self.funding_tracker.update_funding(spot_sym, funding_r, next_t)
+                                        if mark_p > 0.0:
+                                            self.oi_engine.update(spot_sym, mark_p, 0.0)
 
             except asyncio.CancelledError:
                 print("[Futures WS] Stream cancelled. Shutting down cleanly.")

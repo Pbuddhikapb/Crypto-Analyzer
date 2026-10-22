@@ -95,7 +95,7 @@ async def test_collector_klines_and_bbo_ws_mocked(temp_collector):
     # Verify WebSocket endpoint is Binance USD-M Futures
     assert len(recorded_urls) >= 1
     ws_url = recorded_urls[0]
-    assert ws_url.startswith("wss://fstream.binance.com/stream?streams=")
+    assert ws_url.startswith("wss://fstream.binance.com/market/stream?streams=")
     assert "stream.binance.com:9443" not in ws_url
     assert "btcusdt@bookTicker" in ws_url
     assert "btcusdt@kline_1m" in ws_url

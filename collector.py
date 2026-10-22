@@ -194,7 +194,7 @@ class MarketDataCollector:
             streams.append(f"{low_s}@kline_1m")
             streams.append(f"{low_s}@kline_15m")
 
-        ws_url = f"wss://fstream.binance.com/stream?streams={'/'.join(streams)}"
+        ws_url = f"wss://fstream.binance.com/market/stream?streams={'/'.join(streams)}"
         backoff = 3
 
         while self._running:
