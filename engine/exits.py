@@ -23,6 +23,8 @@ class ExitConfig:
     use_trailing_stop: bool = False  # Dynamic trailing stop flag
     trailing_activation_r: float = 1.0  # R threshold to activate trailing
     trailing_callback_r: float = 0.3  # Distance behind peak R for trailing stop
+    exit_mode: str = "stepped"  # "stepped" (default: stepped scaling TP1/BE/TP2/stagnancy) or "trailing_1r"
+    trail_dist_r: float = 1.0  # Distance in R behind extreme since entry for trailing_1r mode
 
 
 @dataclass
@@ -81,7 +83,10 @@ def create_trade_state(
     if risk_dist <= 0.0:
         raise ValueError("Stop loss cannot be identical to entry price (risk_dist must be > 0)")
 
-    if side_upper == "LONG":
+    if cfg.exit_mode in ("trailing_1r", "atr_trailing"):
+        tp1_price = float("inf") if side_upper == "LONG" else -float("inf")
+        tp2_price = float("inf") if side_upper == "LONG" else -float("inf")
+    elif side_upper == "LONG":
         tp1_price = entry_price + (cfg.tp1_r * risk_dist)
         tp2_price = entry_price + (cfg.tp2_r * risk_dist)
     else:
@@ -123,6 +128,27 @@ def calculate_bracket_geometry(
     side_upper = side.upper()
     risk_dist = abs(entry_price - stop_loss)
     risk_pct = (risk_dist / entry_price * 100.0) if entry_price > 0 else 0.0
+
+    if cfg.exit_mode in ("trailing_1r", "atr_trailing"):
+        return {
+            "side": side_upper,
+            "limit_entry": round(entry_price, 4),
+            "stop_loss": round(stop_loss, 4),
+            "risk_dist": round(risk_dist, 4),
+            "risk_pct": round(risk_pct, 2),
+            "tp1": None,
+            "tp1_r": None,
+            "be_trigger": None,
+            "be_trigger_r": None,
+            "be_price": None,
+            "tp2": None,
+            "tp2_r": None,
+            "stagnancy_bars": None,
+            "stagnancy_r_threshold": None,
+            "rr_ratio": None,
+            "exit_mode": cfg.exit_mode,
+            "trail_dist_r": cfg.trail_dist_r,
+        }
 
     if side_upper == "LONG":
         tp1_price = entry_price + (cfg.tp1_r * risk_dist)
@@ -223,6 +249,97 @@ def evaluate_trade_exit(
         state.highest_r = bar_high_r
     if bar_low_r < state.lowest_r:
         state.lowest_r = bar_low_r
+
+    # Specialized Exit Mode: Trailing 1R (No Take-Profit, No Breakeven, No Stagnancy)
+    if cfg.exit_mode in ("trailing_1r", "atr_trailing"):
+        sl_at_start = state.current_sl
+        is_sl_hit = False
+        exit_price = 0.0
+        exit_reason = ""
+
+        if side == "LONG":
+            if c_low <= sl_at_start:
+                is_sl_hit = True
+                if c_open <= sl_at_start:
+                    exit_price = c_open
+                    exit_reason = "GAP_STOP_LOSS"
+                else:
+                    exit_price = sl_at_start
+                    exit_reason = "TRAILING_STOP" if (state.trailing_active and state.current_sl != state.initial_sl) else "STOP_LOSS"
+        else:  # SHORT
+            if c_high >= sl_at_start:
+                is_sl_hit = True
+                if c_open >= sl_at_start:
+                    exit_price = c_open
+                    exit_reason = "GAP_STOP_LOSS"
+                else:
+                    exit_price = sl_at_start
+                    exit_reason = "TRAILING_STOP" if (state.trailing_active and state.current_sl != state.initial_sl) else "STOP_LOSS"
+
+        if is_sl_hit:
+            closed_pct = state.size_remaining_pct
+            state.size_remaining_pct = 0.0
+            r_mult = calculate_r_multiple(side, entry, exit_price, risk_dist)
+            ret_pct = calculate_gross_return_pct(side, entry, exit_price)
+            return ExitDecision(
+                action="FULL_EXIT",
+                exit_reason=exit_reason,
+                exit_price=exit_price,
+                closed_pct=closed_pct,
+                realized_r=r_mult,
+                gross_return_pct=ret_pct,
+                updated_state=state,
+            )
+
+        # Update dynamic trailing stop: 1R behind extreme since entry, moving only in profit direction
+        if side == "LONG":
+            new_sl = entry + (state.highest_r - cfg.trail_dist_r) * risk_dist
+            if new_sl > state.current_sl:
+                state.current_sl = new_sl
+                state.trailing_active = True
+            if c_close <= state.current_sl:
+                closed_pct = state.size_remaining_pct
+                state.size_remaining_pct = 0.0
+                r_mult = calculate_r_multiple(side, entry, state.current_sl, risk_dist)
+                ret_pct = calculate_gross_return_pct(side, entry, state.current_sl)
+                return ExitDecision(
+                    action="FULL_EXIT",
+                    exit_reason="TRAILING_STOP",
+                    exit_price=state.current_sl,
+                    closed_pct=closed_pct,
+                    realized_r=r_mult,
+                    gross_return_pct=ret_pct,
+                    updated_state=state,
+                )
+        else:  # SHORT
+            new_sl = entry - (state.highest_r - cfg.trail_dist_r) * risk_dist
+            if new_sl < state.current_sl:
+                state.current_sl = new_sl
+                state.trailing_active = True
+            if c_close >= state.current_sl:
+                closed_pct = state.size_remaining_pct
+                state.size_remaining_pct = 0.0
+                r_mult = calculate_r_multiple(side, entry, state.current_sl, risk_dist)
+                ret_pct = calculate_gross_return_pct(side, entry, state.current_sl)
+                return ExitDecision(
+                    action="FULL_EXIT",
+                    exit_reason="TRAILING_STOP",
+                    exit_price=state.current_sl,
+                    closed_pct=closed_pct,
+                    realized_r=r_mult,
+                    gross_return_pct=ret_pct,
+                    updated_state=state,
+                )
+
+        return ExitDecision(
+            action="HOLD",
+            exit_reason=None,
+            exit_price=None,
+            closed_pct=0.0,
+            realized_r=0.0,
+            gross_return_pct=0.0,
+            updated_state=state,
+        )
 
     # Rule 1: Check Stop Loss Hit
     sl_at_start = state.current_sl

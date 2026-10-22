@@ -11,7 +11,10 @@ import json
 import math
 import os
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
+
+import numpy as np
 
 
 
@@ -213,6 +216,14 @@ class StrategyEvaluation:
     diagnostics: List[str] = field(default_factory=list)
     verdict: str = "REJECTED (p >= 0.05)"
     is_validated: bool = False
+    significance_level: float = 0.05
+
+    # Pre-registered diagnostic metrics
+    med_stop_pct: Optional[float] = None
+    cost_drag_r: Optional[float] = None
+    med_holding_bars: Optional[float] = None
+    trades_per_symbol: Optional[Dict[str, int]] = None
+    per_year_net_r: Optional[Dict[int, float]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -243,6 +254,12 @@ class StrategyEvaluation:
             "matched_p95_ev": self.matched_p95_ev,
             "verdict": self.verdict,
             "is_validated": self.is_validated,
+            "significance_level": self.significance_level,
+            "med_stop_pct": self.med_stop_pct,
+            "cost_drag_r": self.cost_drag_r,
+            "med_holding_bars": self.med_holding_bars,
+            "trades_per_symbol": self.trades_per_symbol,
+            "per_year_net_r": self.per_year_net_r,
             "hurdles_passed": self.hurdles_passed,
             "hurdles_failed": self.hurdles_failed,
             "diagnostics": self.diagnostics,
@@ -277,6 +294,7 @@ class StrategyEvaluator:
         sim_result: Any,
         matched_baseline: Optional[Any] = None,
         bootstrap_ci: Optional[Tuple[float, float]] = None,
+        significance_level: float = 0.05,
     ) -> StrategyEvaluation:
         h = self.hurdles
 
@@ -346,11 +364,11 @@ class StrategyEvaluator:
             p_composite = max(p_pf, p_ev)
 
         # Explicit alpha decision rule:
-        # VALIDATED only if total_trades >= 100 AND mean net_r > 0 AND bootstrap 95% CI lower bound > 0 AND matched rank p < 0.05.
+        # VALIDATED only if total_trades >= 100 AND mean net_r > 0 AND bootstrap 95% CI lower bound > 0 AND matched rank p < significance_level.
         has_min_trades = total_trades >= 100
         has_positive_ev = expectancy_r > 0.0
         has_positive_ci = bootstrap_ci is not None and bootstrap_ci[0] > 0.0
-        has_significant_p = matched_p is not None and matched_p < 0.05
+        has_significant_p = matched_p is not None and matched_p < significance_level
 
         is_validated = (
             has_min_trades
@@ -358,7 +376,8 @@ class StrategyEvaluator:
             and has_positive_ci
             and has_significant_p
         )
-        verdict = "VALIDATED (p < 0.05)" if is_validated else "REJECTED (p >= 0.05)"
+        sig_str = f"{significance_level:.3g}"
+        verdict = f"VALIDATED (p < {sig_str})" if is_validated else f"REJECTED (p >= {sig_str})"
 
         passed: List[str] = []
         failed: List[str] = []
@@ -380,17 +399,66 @@ class StrategyEvaluator:
             failed.append(f"Bootstrap 95% CI lower bound {ci_str} <= 0.0R")
 
         if has_significant_p:
-            passed.append(f"Matched Rank p-value {matched_p:.4f} < 0.05")
+            passed.append(f"Matched Rank p-value {matched_p:.4f} < {sig_str}")
         else:
             p_str = f"{matched_p:.4f}" if matched_p is not None else "N/A"
-            failed.append(f"Matched Rank p-value {p_str} >= 0.05")
+            failed.append(f"Matched Rank p-value {p_str} >= {sig_str}")
 
-        diagnostics: List[str] = [
-            f"Net Profit Factor: {profit_factor:.2f} (Null p95 Hurdle: {h.pf_hurdle_p95:.2f}, p={p_pf:.4f})",
-            f"Net Win Rate: {win_rate:.2f}% (Null p95 Hurdle: {h.wr_hurdle_p95:.2f}%, p={p_wr:.4f})",
-            f"Max Drawdown (R): {max_dd_r:.2f}R",
-            f"Sharpe Ratio: {sharpe:.2f} (p={p_sharpe:.4f})",
-        ]
+        # Compute pre-registered diagnostics if trades are available
+        trades_list = getattr(sim_result, "trades", [])
+        med_stop_pct = None
+        cost_drag_r = None
+        med_holding_bars = None
+        trades_per_symbol = None
+        per_year_net_r = None
+
+        if trades_list:
+            stop_pcts = [
+                (t.initial_risk_usd / t.position_size_usd * 100.0)
+                for t in trades_list
+                if getattr(t, "position_size_usd", 0) > 0 and getattr(t, "initial_risk_usd", 0) > 0
+            ]
+            if stop_pcts:
+                med_stop_pct = float(np.median(stop_pcts))
+            cost_drag_r = float(np.mean([t.realized_r - t.net_r for t in trades_list]))
+            holding_bars = [getattr(t, "bars_held", 0) for t in trades_list]
+            med_holding_bars = float(np.median(holding_bars)) if holding_bars else 0.0
+
+            sym_counts: Dict[str, int] = {}
+            for t in trades_list:
+                sym_counts[t.symbol] = sym_counts.get(t.symbol, 0) + 1
+            trades_per_symbol = sym_counts
+            sym_counts_str = ", ".join(f"{s}: {c}" for s, c in sorted(sym_counts.items()))
+
+            year_net_r: Dict[int, float] = {}
+            for t in trades_list:
+                yr = datetime.fromtimestamp(t.entry_time_ms / 1000.0, tz=timezone.utc).year
+                year_net_r[yr] = year_net_r.get(yr, 0.0) + t.net_r
+            per_year_net_r = year_net_r
+            year_r_str = ", ".join(f"{yr}: {r:+.2f}R" for yr, r in sorted(year_net_r.items()))
+
+            diagnostics_items = [
+                f"Net Profit Factor: {profit_factor:.2f} (Null p95 Hurdle: {h.pf_hurdle_p95:.2f}, p={p_pf:.4f})",
+                f"Net Win Rate: {win_rate:.2f}% (Null p95 Hurdle: {h.wr_hurdle_p95:.2f}%, p={p_wr:.4f})",
+                f"Max Drawdown (R): {max_dd_r:.2f}R",
+                f"Sharpe Ratio: {sharpe:.2f} (p={p_sharpe:.4f})",
+            ]
+            if med_stop_pct is not None:
+                diagnostics_items.append(f"Median Stop % of Price: {med_stop_pct:.2f}%")
+            diagnostics_items.extend([
+                f"Cost Drag in R per Trade: {cost_drag_r:+.4f}R",
+                f"Median Holding Time: {med_holding_bars:.0f} bars ({med_holding_bars:.0f}h)",
+                f"Trades per Symbol: {sym_counts_str}",
+                f"Per-Year Net R: {year_r_str}",
+            ])
+            diagnostics = diagnostics_items
+        else:
+            diagnostics = [
+                f"Net Profit Factor: {profit_factor:.2f} (Null p95 Hurdle: {h.pf_hurdle_p95:.2f}, p={p_pf:.4f})",
+                f"Net Win Rate: {win_rate:.2f}% (Null p95 Hurdle: {h.wr_hurdle_p95:.2f}%, p={p_wr:.4f})",
+                f"Max Drawdown (R): {max_dd_r:.2f}R",
+                f"Sharpe Ratio: {sharpe:.2f} (p={p_sharpe:.4f})",
+            ]
 
         return StrategyEvaluation(
             strategy_name=strategy_name,
@@ -423,4 +491,10 @@ class StrategyEvaluator:
             diagnostics=diagnostics,
             verdict=verdict,
             is_validated=is_validated,
+            significance_level=significance_level,
+            med_stop_pct=med_stop_pct,
+            cost_drag_r=cost_drag_r,
+            med_holding_bars=med_holding_bars,
+            trades_per_symbol=trades_per_symbol,
+            per_year_net_r=per_year_net_r,
         )

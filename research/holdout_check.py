@@ -25,6 +25,7 @@ from data.loader import DEVELOPMENT_END, load_candles
 from engine.simulator import CandidateSignal, SimulationResult, simulate_portfolio_signals
 from research.strategies.base import BaseStrategy
 from research.strategies.confluence_threshold import ConfluenceThresholdStrategy
+from research.strategies.donchian_4h import Donchian4hN20, Donchian4hN55
 from research.strategies.fvg_retest import FVGRetestStrategy
 from research.strategies.liquidity_sweep import LiquiditySweepStrategy
 from research.strategies.trend_pullback import TrendPullbackStrategy
@@ -44,6 +45,10 @@ STRATEGY_REGISTRY: Dict[str, Tuple[Type[BaseStrategy], str, str]] = {
     "confluencethresholdstrategy": (ConfluenceThresholdStrategy, "ConfluenceThreshold", "research/strategies/confluence_threshold.py"),
     "liquiditysweep": (LiquiditySweepStrategy, "LiquiditySweep", "research/strategies/liquidity_sweep.py"),
     "liquiditysweepstrategy": (LiquiditySweepStrategy, "LiquiditySweep", "research/strategies/liquidity_sweep.py"),
+    "donchian4hn20": (Donchian4hN20, "Donchian4hN20", "research/strategies/donchian_4h.py"),
+    "donchian4hn20strategy": (Donchian4hN20, "Donchian4hN20", "research/strategies/donchian_4h.py"),
+    "donchian4hn55": (Donchian4hN55, "Donchian4hN55", "research/strategies/donchian_4h.py"),
+    "donchian4hn55strategy": (Donchian4hN55, "Donchian4hN55", "research/strategies/donchian_4h.py"),
 }
 
 

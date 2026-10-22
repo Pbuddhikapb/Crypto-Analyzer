@@ -133,6 +133,7 @@ class MatchedBaselineResult:
     p95_expectancy_r: float
     empirical_p_value: float
     bootstrap_ci: Tuple[float, float]
+    exit_mode: str = "stepped"
 
 
 def compute_dataset_hash(candles_dict: Dict[str, np.ndarray]) -> str:
@@ -293,6 +294,7 @@ def run_matched_baseline(
             p95_expectancy_r=0.0,
             empirical_p_value=1.0,
             bootstrap_ci=(0.0, 0.0),
+            exit_mode=cfg.exit_mode,
         )
 
     # Per-trade profile: (symbol, stop_dist_pct)
@@ -351,6 +353,7 @@ def run_matched_baseline(
         p95_expectancy_r=p95_ev,
         empirical_p_value=round(empirical_p, 4),
         bootstrap_ci=boot_ci,
+        exit_mode=cfg.exit_mode,
     )
 
 

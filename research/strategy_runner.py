@@ -42,6 +42,8 @@ from research.random_baseline import (
 from research.strategies import (
     BaseStrategy,
     ConfluenceThresholdStrategy,
+    Donchian4hN20,
+    Donchian4hN55,
     FVGRetestStrategy,
     LiquiditySweepStrategy,
     TrendPullbackStrategy,
@@ -157,6 +159,8 @@ def run_strategy_evidence_validation(
         FVGRetestStrategy(),
         ConfluenceThresholdStrategy(),
         LiquiditySweepStrategy(),
+        Donchian4hN20(),
+        Donchian4hN55(),
     ]
 
     dataset_hash = compute_dataset_hash(candles_dict)
@@ -178,6 +182,8 @@ def run_strategy_evidence_validation(
     for strat in strategies:
         s_name = strat.config.name
         s_desc = strat.config.description
+        strat_cfg = getattr(strat, "exit_config", cfg)
+        strat_sig_level = getattr(strat, "significance_level", 0.05)
         logger.info(f"--- Generating Candidate Signals for Strategy: {s_name} ---")
 
         all_candidates: List[CandidateSignal] = []
@@ -199,6 +205,7 @@ def run_strategy_evidence_validation(
             bar_index_map=bar_index_map,
             sizing_mode=sizing_mode,
             ruin_threshold_usd=ruin_threshold_usd,
+            exit_config=strat_cfg,
         )
 
         # Compute bootstrap 95% CI on mean net R (10,000 resamples, seeded)
@@ -213,7 +220,7 @@ def run_strategy_evidence_validation(
             iterations=matched_passes,
             seed=42,
             friction=fric,
-            exit_config=cfg,
+            exit_config=strat_cfg,
         )
 
         evaluation = evaluator.evaluate(
@@ -222,6 +229,7 @@ def run_strategy_evidence_validation(
             sim_res,
             matched_baseline=matched_res,
             bootstrap_ci=boot_ci,
+            significance_level=strat_sig_level,
         )
         per_sym = compute_per_symbol_breakdown(sim_res.trades)
 
@@ -372,6 +380,12 @@ def save_strategy_results_json(
             "run_timestamp": now_iso,
             "data_date_range": date_range_str,
             "git_commit": git_hash,
+            "significance_level": getattr(ev, "significance_level", 0.05),
+            "median_stop_pct": round(ev.med_stop_pct, 2) if getattr(ev, "med_stop_pct", None) is not None else None,
+            "cost_drag_r": round(ev.cost_drag_r, 4) if getattr(ev, "cost_drag_r", None) is not None else None,
+            "median_holding_bars": round(ev.med_holding_bars, 1) if getattr(ev, "med_holding_bars", None) is not None else None,
+            "trades_per_symbol": getattr(ev, "trades_per_symbol", None),
+            "per_year_net_r": {str(k): round(v, 2) for k, v in ev.per_year_net_r.items()} if getattr(ev, "per_year_net_r", None) else None,
         }
 
     dataset_hash = compute_dataset_hash(candles_dict) if candles_dict else "unknown"
