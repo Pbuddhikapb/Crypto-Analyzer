@@ -575,12 +575,24 @@ def run_monte_carlo_baseline(
         total_trades_mean=round(trades_mean, 1),
     )
 
+    # Calculate dynamic dataset metadata
+    min_ts = min(arr[0, 4] for arr in candles_dict.values() if len(arr) > 0)
+    max_ts = max(arr[-1, 4] for arr in candles_dict.values() if len(arr) > 0)
+    if min_ts > 10_000_000_000:
+        total_days = (max_ts - min_ts) / (86400.0 * 1000.0)
+    else:
+        total_days = (max_ts - min_ts) / 86400.0
+    dataset_years = total_days / 365.25
+    bars_counts = [len(arr) for arr in candles_dict.values()]
+    min_bars = min(bars_counts) if bars_counts else 0
+    max_bars = max(bars_counts) if bars_counts else 0
+
     # Format Markdown Report
     now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     report_content = f"""# Monte Carlo Random-Entry Baseline: The Statistical Hurdle
 **Generated:** {now_str}  
 **Iterations:** {iterations:,} Monte Carlo Passes  
-**Dataset:** 10 Major Pairs (`{', '.join(syms)}`), 1-Hour Timeframe (2.8 Years, 24,528 continuous bars/coin from Binance USD-M Futures)  
+**Dataset:** 10 Major Pairs (`{', '.join(syms)}`), 1-Hour Timeframe ({dataset_years:.2f} Years, {min_bars:,} to {max_bars:,} bars/coin from Binance USD-M Futures)  
 **Friction Model:** Taker Fee 0.05%, Maker Fee 0.02%, Adverse Slippage 0.03%, 8h Funding Drag 0.01%  
 **Exit Mechanics:** Stepped Scaling (50% TP1 @ +0.75R, BE armed @ +0.85R excursion, TP2 @ +1.33R, 12-bar stagnancy stop)
 
@@ -615,14 +627,14 @@ def run_monte_carlo_baseline(
 | **Sortino Ratio** | `{dist_sortino.p5:.2f}` | `{dist_sortino.p25:.2f}` | `{dist_sortino.p50:.2f}` | `{dist_sortino.p75:.2f}` | **`{dist_sortino.p95:.2f}`** | `{dist_sortino.mean:.2f} ± {dist_sortino.std:.2f}` |
 | **Net Portfolio Return (%)** | `{dist_ret.p5:+.2f}%` | `{dist_ret.p25:+.2f}%` | `{dist_ret.p50:+.2f}%` | `{dist_ret.p75:+.2f}%` | **`{dist_ret.p95:+.2f}%`** | `{dist_ret.mean:+.2f} ± {dist_ret.std:.2f}%` |
 
-*Average trades generated per 2-year portfolio run: {trades_mean:.1f} trades.*
+*Average trades generated per portfolio run ({dataset_years:.2f} years): {trades_mean:.1f} trades.*
 
 ---
 
 ## 3. Quantitative Takeaways for Strategy Development
 
 1. **The Cost of Friction**:
-   Without an edge, median random trading loses money over 2 years (median net return is `{dist_ret.p50:+.2f}%`, median expectancy is `{dist_ev_r.p50:+.4f}R`). This confirms the honesty of the simulation: exchange fees (0.05%), adverse slippage (0.03%), and 8h funding costs slowly bleed random entries.
+   Without an edge, median random trading loses money over the full evaluation timeline (median net return is `{dist_ret.p50:+.2f}%`, median expectancy is `{dist_ev_r.p50:+.4f}R`). This confirms the honesty of the simulation: exchange fees (0.05%), adverse slippage (0.03%), and 8h funding costs slowly bleed random entries.
 2. **The Asymmetric Exit Effect**:
    Because of stepped scaling (+0.75R partial scale and breakeven arming), random entries can sometimes string together winning streaks that push profit factor up to `{dist_pf.p75:.2f}`. This proves why examining simple backtests without a random benchmark leads retail traders to confuse asymmetric exit math with true entry edge.
 3. **The Unbending Standard**:

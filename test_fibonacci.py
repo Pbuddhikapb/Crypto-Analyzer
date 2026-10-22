@@ -132,7 +132,7 @@ def test_dealing_range_and_ote_confluence():
 
 
 def test_trader_fibonacci_ote_blocks_premium_long():
-    from trader import PaperTrader
+    from legacy.trader import PaperTrader
 
     trader = PaperTrader(
         symbol="BTCUSDT",

@@ -116,32 +116,17 @@ def test_market_candles_invalid_symbol(app_and_client):
 
 
 def test_portfolio_summary_endpoint(app_and_client):
-    """Verify /api/portfolio/summary returns metrics and active trade details."""
+    """Verify /api/portfolio/summary returns risk sizing parameters with paper trading disabled."""
     app, client = app_and_client
-    trader = app.state.traders["BTCUSDT"]
-
-    # Simulate an active trade
-    trader.active_trade = {
-        "id": 1,
-        "symbol": "BTCUSDT",
-        "side": "LONG",
-        "entry_price": 50000.0,
-        "stop_loss": 49000.0,
-        "take_profit": 52000.0,
-        "timestamp": "2026-04-14T12:00:00Z",
-    }
-    app.state.latest_prices["BTCUSDT"] = 51000.0
 
     response = client.get("/api/portfolio/summary")
     assert response.status_code == 200
     data = response.json()
-    assert data["active_positions_count"] == 1
+    assert data["active_positions_count"] == 0
     assert data["max_open_positions"] == 3
-    assert len(data["active_trades"]) == 1
-
-    trade = data["active_trades"][0]
-    assert trade["symbol"] == "BTCUSDT"
-    assert trade["unrealized_pnl_pct"] == 2.0  # (51000 - 50000) / 50000 * 100
+    assert data["active_trades"] == []
+    assert data["paper_trading_enabled"] is False
+    assert data["execution_mode"] == "EVIDENCE_ONLY"
 
 
 def test_microstructure_summary_endpoint(app_and_client):
@@ -269,22 +254,8 @@ def test_trade_bracket_endpoint(app_and_client):
 
 
 def test_api_portfolio_summary_returns_extended_metrics(app_and_client):
-    """Verify /api/portfolio/summary returns capital allocation, notional, and unrealized USD PnL."""
+    """Verify /api/portfolio/summary returns capital allocation and risk sizing metrics."""
     app, client = app_and_client
-    trader = app.state.traders["BTCUSDT"]
-    trader.active_trade = {
-        "id": 1,
-        "symbol": "BTCUSDT",
-        "side": "LONG",
-        "entry_price": 50000.0,
-        "stop_loss": 49000.0,
-        "take_profit": 52000.0,
-        "quantity": 0.1,
-        "notional_usd": 5000.0,
-        "leverage": 0.5,
-        "timestamp": "2026-10-14T10:00:00",
-    }
-    app.state.latest_prices["BTCUSDT"] = 51000.0  # +$1000 on 0.1 BTC = +$100.00 unrealized
 
     response = client.get("/api/portfolio/summary")
     assert response.status_code == 200
@@ -292,12 +263,9 @@ def test_api_portfolio_summary_returns_extended_metrics(app_and_client):
     assert "account_equity_usd" in data
     assert "total_unrealized_pnl_usd" in data
     assert "current_equity_usd" in data
-    assert data["active_positions_count"] >= 1
-
-    active = next(t for t in data["active_trades"] if t["symbol"] == "BTCUSDT")
-    assert active["unrealized_pnl_usd"] == 100.0
-    assert active["unrealized_pnl_pct"] == 2.0
-    assert active["current_r_multiple"] == 1.0
+    assert data["active_positions_count"] == 0
+    assert data["active_trades"] == []
+    assert data["paper_trading_enabled"] is False
 
 
 def test_market_depth_endpoint(app_and_client):

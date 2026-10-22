@@ -376,7 +376,7 @@ In Phase 2, we established the empirical null hypothesis ($H_0$) across 1,000 Mo
    - **Donchian4hN20**: 1,317 executed trades (1933 days evaluated, 100.0% of dataset)
    - **Donchian4hN55**: 916 executed trades (1933 days evaluated, 100.0% of dataset)
 3. **No Out-of-Sample Holdout**:
-   No holdout dataset has been used yet (until Prompt 7 is done). All metrics reflect in-sample backtesting across the complete historical timeline.
+   No holdout dataset has been used yet. All metrics reflect in-sample backtesting across the complete historical timeline.
 4. **Gross vs. Net Metrics**:
    Both gross P&L (pre-friction) and net P&L (post-fees, post-slippage, and post-funding) are reported side-by-side. The comparison reveals the decisive impact of transaction costs and funding drag on theoretical retail chart patterns.
 

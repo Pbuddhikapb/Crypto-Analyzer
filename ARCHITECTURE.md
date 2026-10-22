@@ -1,7 +1,7 @@
 # System Architecture & Research Pipeline
 
 ## 1. Purpose and Current Status
-The Binance Cryptocurrency Analysis Tool is an institutional market microstructure and strategy research platform designed to validate trading hypotheses against empirical noise hurdles before deployment. The project is currently in the **research phase**, where all four codified strategy hypotheses have been statistically **rejected** under institutional friction and have failed to demonstrate genuine alpha over matched random noise. Consequently, the user-facing terminal operates in **evidence-status mode only**, reporting unvarnished statistical evidence without directional endorsement.
+The Binance Cryptocurrency Analysis Tool is an institutional market microstructure and strategy research platform designed to validate trading hypotheses against empirical noise hurdles before deployment. The project is currently in the **research phase**, where all six codified strategy hypotheses (TrendPullback, FVGRetest, ConfluenceThreshold, LiquiditySweep, Donchian4hN20, Donchian4hN55) have been statistically **rejected** under institutional friction and have failed to demonstrate genuine alpha over matched random noise. Consequently, the user-facing terminal operates in **evidence-status mode only**, reporting unvarnished statistical evidence without directional endorsement.
 
 ---
 
@@ -117,13 +117,16 @@ The following anti-patterns compromise research integrity and are strictly forbi
 5. **Evaluating Strategies on Holdout Data Without Holdout Runner**:
    Never pass `allow_holdout=True` into exploratory research scripts, baseline runners, or unit tests. Holdout data may only be accessed via `research/holdout_check.py`.
 
+### Legacy and Retired Components
+All files in `legacy/` (including `legacy/validator/`, `legacy/backtest.py`, `legacy/trader.py`, `legacy/reports/`, and `legacy/forensic_report.md`) are unvalidated legacy components and are **NOT part of the evidence pipeline**. They are preserved for historical audit only and must never be referenced by the empirical evidence or live terminal workflows.
+
 ---
 
-## 6. How to Run the Pipeline (PowerShell Commands)
+## 6. How to Run the Pipeline (Linux / Bash Commands)
 
 ### Development Setup & Pre-Commit Hooks
 Install dependencies and activate pre-commit hooks locally to enforce static checks and secret leak prevention before each commit:
-```powershell
+```bash
 pip install pre-commit
 pre-commit install
 ```
@@ -131,43 +134,43 @@ This registers git hooks defined in `.pre-commit-config.yaml`:
 * **Ruff**: Enforces Pyflakes rules (`F`) and syntax error validation (`E9`) configured in `ruff.toml`.
 * **Gitleaks**: Scans staged commits to block secret and API key exposure with zero ignore exceptions.
 
-Run commands from the repository root in PowerShell using `python`:
+Run commands from the repository root in bash using `python3` (or active venv python):
 
 ### Step 1: Download Clean Parquet Data Lake
 Download 1h and 4h Binance USD-M futures historical klines with SHA-256 verification:
-```powershell
+```bash
 python -m data.downloader --symbols BTCUSDT ETHUSDT SOLUSDT BNBUSDT XRPUSDT DOGEUSDT ADAUSDT AVAXUSDT LINKUSDT SUIUSDT --timeframes 1h 4h
 ```
 
 ### Step 2: Generate Monte Carlo Baseline Distribution
 Run the 1,000-pass random baseline to establish $H_0$ empirical hurdles:
-```powershell
+```bash
 python -m research.random_baseline --passes 1000
 ```
 *Outputs: `research/reports/baseline_distribution.json` and `research/reports/random_baseline_hurdle.md`*
 
 ### Step 3: Run Strategy Evidence Validation Pipeline
-Run the four codified trading hypotheses against the empirical baseline:
-```powershell
+Run the codified trading hypotheses against the empirical baseline:
+```bash
 python -m research.strategy_runner --passes 1000
 ```
 *Outputs: `research/reports/strategy_results.json` and `research/reports/strategy_validation_report.md`*
 
 ### Step 4: Run Complete Test Suite
 Verify that all unit tests, zero-volume guards, session break checks, and hash synchronization pass:
-```powershell
+```bash
 python -m pytest -q
 ```
 
 ### Step 5: Launch Live Terminal Server
 Start the FastAPI server serving the market terminal and evidence-backed radar:
-```powershell
-python server.py
+```bash
+uvicorn server:app --host 127.0.0.1 --port 8008
 ```
 
 ### Step 6 (Locked Audit): Evaluate Single Strategy on Holdout Data
 When a strategy is ready for final out-of-sample verification:
-```powershell
+```bash
 python -m research.holdout_check TrendPullback
 ```
 *Logs audit record to `research/reports/holdout_log.csv` and blocks reruns on unchanged source code.*
@@ -182,7 +185,7 @@ The following discrepancies and unverified items exist in the codebase:
    `data/downloader.py` includes `download_funding_rates()` which downloads historical USD-M funding rate parquets to `data/funding/<SYMBOL>.parquet`. However, `engine/simulator.py` currently computes funding drag using a constant 8-hour rate parameter (`friction.funding_rate_8h_pct = 0.01%`) rather than joining the timestamped funding parquets dynamically during backtests.
 2. **Unimplemented Opportunity Patterns on Radar**:
    `server.py` defines `"RSI Divergence": None` in `PATTERN_STRATEGY_MAP` (which correctly reports `UNTESTED` and displays no historical edge). There is currently no `RSIDivergenceStrategy` implemented in `research/strategies/`.
-3. **Paper Trader Real-Time Mark Price Approximation**:
-   In `trader.py`, `PaperTrader.update_funding()` estimates 8-hour funding cadence based on elapsed candle bars held rather than synchronizing with the Binance live funding clock WebSocket.
+3. **Paper Trader Decommissioned from Terminal**:
+   Automated paper trading via `PaperTrader` has been decommissioned from the live terminal path and moved to `legacy/trader.py`. The terminal operates in evidence-status mode with lightweight `MarketDataFeed` buffers and risk sizing parameters, rather than live simulated order execution.
 4. **Holdout Historical Depth**:
    Parquet files currently present in `data/candles/` were downloaded up to development boundaries. Running `python -m research.holdout_check` on fresh post-2026 data requires downloading newer monthly archives from Binance Vision that extend beyond `DEVELOPMENT_END = "2026-04-18"`.

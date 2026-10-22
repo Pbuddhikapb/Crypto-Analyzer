@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 import time
+from collections import deque
 from contextlib import asynccontextmanager
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -10,6 +11,7 @@ from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnec
 from fastapi.middleware.cors import CORSMiddleware
 
 from indicators import (
+    calculate_ema,
     calculate_fibonacci_levels,
     calculate_optimal_trade_setup,
     check_order_block_confluence,
@@ -27,7 +29,67 @@ from main import (
 )
 from microstructure import OrderBookEngine, SymbolNormalizer
 from risk import PortfolioRiskManager
-from trader import PaperTrader
+
+
+class MarketDataFeed:
+    """
+    Lightweight market data feed container maintaining candle buffers
+    for live terminal display, technical indicator computation, and radar scoring.
+    Does not execute trades or manage positions (evidence-status mode).
+    """
+
+    def __init__(self, symbol: str, timeframe: str = "15m", maxlen: int = 250):
+        self.symbol = symbol
+        self.timeframe = timeframe
+        self.candles: deque = deque(maxlen=maxlen)
+        self.htf_candles: deque = deque(maxlen=maxlen)
+        self.htf_trend_filter: bool = True
+        self.htf_trend: Optional[str] = None
+        self.trend_1h: Optional[str] = None
+        self.active_trade: Optional[Dict[str, Any]] = None
+        self.bar_count: int = 0
+
+    def load_historical_candle(self, candle_data: Any) -> None:
+        self.candles.append(tuple(candle_data))
+        self.bar_count += 1
+
+    def load_historical_htf_candle(self, candle_data: Any) -> None:
+        self.htf_candles.append(tuple(candle_data))
+
+    def on_candle(self, candle_data: Any, timestamp: Optional[str] = None) -> None:
+        self.candles.append(tuple(candle_data))
+        self.bar_count += 1
+
+    def on_htf_candle(self, candle_data: Any) -> None:
+        self.htf_candles.append(tuple(candle_data))
+
+    def set_htf_trend(self, trend: Optional[str]) -> None:
+        self.htf_trend = trend.upper() if trend else None
+
+    def get_htf_trend(self) -> Optional[str]:
+        if self.htf_trend is not None:
+            return self.htf_trend
+        if len(self.htf_candles) < 50:
+            return None
+        htf_closes = [c[3] for c in self.htf_candles]
+        ema_50 = calculate_ema(htf_closes, 50)
+        curr_close = htf_closes[-1]
+        if len(htf_closes) >= 200:
+            ema_200 = calculate_ema(htf_closes, 200)
+            if ema_50 > ema_200:
+                return "BULLISH" if curr_close >= ema_200 else "NEUTRAL"
+            elif ema_50 < ema_200:
+                return "BEARISH" if curr_close <= ema_200 else "NEUTRAL"
+            return "NEUTRAL"
+        else:
+            if curr_close >= ema_50:
+                return "BULLISH"
+            elif curr_close < ema_50:
+                return "BEARISH"
+            return "NEUTRAL"
+
+    def get_active_trade(self) -> Optional[Dict[str, Any]]:
+        return None
 
 # Explicit Pattern -> Tested Strategy Mapping
 PATTERN_STRATEGY_MAP: Dict[str, Optional[str]] = {
@@ -459,14 +521,12 @@ async def process_closed_candle_event(
     raw_t: int,
     kline_time_sec: int,
 ) -> None:
-    """Process a closed candle for a symbol: on_candle lifecycle, indicators, and broadcasts."""
-    trader = app.state.traders.get(symbol)
-    if trader is None:
+    """Process a closed candle for a symbol: update candle buffer, indicators, and broadcast."""
+    feed = app.state.traders.get(symbol)
+    if feed is None:
         return
 
-    prev_trade = trader.get_active_trade()
-    trader.on_candle(candle_tuple, timestamp=str(raw_t))
-    new_trade = trader.get_active_trade()
+    feed.on_candle(candle_tuple, timestamp=str(raw_t))
 
     # Store in rolling timestamp buffer
     if symbol not in app.state.candle_timestamps:
@@ -475,20 +535,8 @@ async def process_closed_candle_event(
     if len(app.state.candle_timestamps[symbol]) > 250:
         app.state.candle_timestamps[symbol].pop(0)
 
-    # Broadcast trade events
-    if prev_trade is None and new_trade is not None:
-        await app.state.connection_manager.broadcast({
-            "type": "trade_opened",
-            "trade": new_trade,
-        })
-    elif prev_trade is not None and new_trade is None:
-        await app.state.connection_manager.broadcast({
-            "type": "trade_closed",
-            "symbol": symbol,
-        })
-
     # Broadcast closed candle with indicators
-    indicators = compute_indicators(trader.candles)
+    indicators = compute_indicators(feed.candles)
     await app.state.connection_manager.broadcast({
         "type": "candle",
         "symbol": symbol,
@@ -502,72 +550,6 @@ async def process_closed_candle_event(
         },
         "indicators": indicators,
     })
-
-
-async def queue_candidate_candle(
-    app: FastAPI,
-    symbol: str,
-    candle_tuple: Tuple[float, float, float, float, float],
-    raw_t: int,
-    kline_time_sec: int,
-) -> None:
-    """Queue idle symbol closed candle in 1.0s batching buffer to rank by conviction."""
-    if not hasattr(app.state, "candle_batch_queue"):
-        app.state.candle_batch_queue = {}
-        app.state.candle_batch_task = None
-
-    app.state.candle_batch_queue[symbol] = {
-        "symbol": symbol,
-        "candle_tuple": candle_tuple,
-        "raw_t": raw_t,
-        "kline_time_sec": kline_time_sec,
-    }
-
-    if app.state.candle_batch_task is None or app.state.candle_batch_task.done():
-        async def flush_batch():
-            await asyncio.sleep(1.0)
-            batch = getattr(app.state, "candle_batch_queue", {})
-            app.state.candle_batch_queue = {}
-            if not batch:
-                return
-
-            # Sort candidate idle symbols descending by estimated confluence score
-            scored_candidates = []
-            for sym, item in batch.items():
-                t = app.state.traders.get(sym)
-                score = t.estimate_confluence_priority(item["candle_tuple"]) if t and hasattr(t, "estimate_confluence_priority") else 0.0
-                scored_candidates.append((score, sym, item))
-
-            scored_candidates.sort(key=lambda x: x[0], reverse=True)
-
-            # Process candidates in priority order
-            for score, sym, item in scored_candidates:
-                # Check priority preemption if portfolio is at capacity and score is elite (>= 85.0)
-                rm = getattr(app.state, "risk_manager", None)
-                if rm is not None and getattr(rm, "allow_preemption", False) and score >= getattr(rm, "preemption_min_candidate_score", 85.0):
-                    preempt_sym, pre_reason = rm.find_preemption_candidate(app.state.traders, score)
-                    if preempt_sym:
-                        stagnant_t = app.state.traders.get(preempt_sym)
-                        if stagnant_t and stagnant_t.active_trade is not None:
-                            curr_p = app.state.latest_prices.get(preempt_sym, stagnant_t.active_trade["entry_price"])
-                            preempt_snap = stagnant_t.preempt_trade(curr_p, exit_timestamp=str(item["raw_t"]))
-                            if preempt_snap:
-                                await app.state.connection_manager.broadcast({
-                                    "type": "trade_preempted",
-                                    "symbol": preempt_sym,
-                                    "replaced_by": sym,
-                                    "trade": preempt_snap,
-                                })
-
-                await process_closed_candle_event(
-                    app,
-                    sym,
-                    item["candle_tuple"],
-                    item["raw_t"],
-                    item["kline_time_sec"],
-                )
-
-        app.state.candle_batch_task = asyncio.create_task(flush_batch())
 
 
 async def run_spot_ingestion(
@@ -616,17 +598,6 @@ async def run_spot_ingestion(
                                 "timestamp": int(now_t),
                             })
 
-                        # Sub-second intra-candle exit monitoring (TP1, TP2, BE, SL)
-                        trader = app.state.traders.get(symbol)
-                        if trader is not None and trader.active_trade is not None:
-                            closed_snapshot = trader.on_tick(curr_c, timestamp=str(kline.get("t", int(time.time() * 1000))))
-                            if closed_snapshot is not None:
-                                await app.state.connection_manager.broadcast({
-                                    "type": "trade_closed",
-                                    "symbol": symbol,
-                                    "trade": closed_snapshot,
-                                    })
-
                     # Process closed candle
                     if kline.get("x") is True:
                         candle_tuple = (
@@ -639,13 +610,7 @@ async def run_spot_ingestion(
                         raw_t = int(kline.get("t", time.time() * 1000))
                         kline_time_sec = raw_t // 1000 if raw_t > 10_000_000_000 else raw_t
 
-                        trader = app.state.traders.get(symbol)
-                        if trader is not None and trader.active_trade is not None:
-                            # Pass 1: Active trade exit evaluations process immediately
-                            await process_closed_candle_event(app, symbol, candle_tuple, raw_t, kline_time_sec)
-                        else:
-                            # Pass 2: Idle candidate setup - buffer for 1.0s to rank by confluence score
-                            await queue_candidate_candle(app, symbol, candle_tuple, raw_t, kline_time_sec)
+                        await process_closed_candle_event(app, symbol, candle_tuple, raw_t, kline_time_sec)
 
         except asyncio.CancelledError:
             break
@@ -803,19 +768,9 @@ def create_app(
         app.state.is_telemetry_paused = False
         app.state.last_tick_broadcast = {}
         app.state.traders = {
-            sym: PaperTrader(
+            sym: MarketDataFeed(
                 symbol=sym,
                 timeframe=timeframe,
-                db_path=db_path,
-                risk_manager=app.state.risk_manager,
-                micro_mgr=app.state.micro_mgr,
-                adaptive_sl_floor=True,
-                htf_trend_filter=True,
-                require_market_structure=True,
-                require_fibonacci_ote=True,
-                enable_order_blocks=True,
-                enable_collinearity_cap=True,
-                order_book_engine=app.state.order_book_engine,
             )
             for sym in active_symbols
         }
@@ -927,13 +882,12 @@ def create_app(
                 latest_price = trader.candles[-1][3]
 
             indicators = compute_indicators(trader.candles)
-            has_open = trader.get_active_trade() is not None
 
             results.append({
                 "symbol": sym,
                 "futures_symbol": f_sym,
                 "latest_price": latest_price,
-                "has_open_position": has_open,
+                "has_open_position": False,
                 "trend": indicators["trend"],
                 "htf_trend": trader.get_htf_trend(),
                 "rsi": indicators["rsi"],
@@ -986,47 +940,20 @@ def create_app(
 
     @app.get("/api/portfolio/summary")
     async def get_portfolio_summary():
-        """Return comprehensive portfolio performance summary, capital allocation, and active trades."""
+        """Return portfolio risk sizing and capital allocation metrics (paper trading disabled)."""
         summary = app.state.risk_manager.get_portfolio_summary()
-        active_trades = []
-        total_unrealized_usd = 0.0
-
-        for sym, trader in app.state.traders.items():
-            trade = trader.get_active_trade()
-            if trade:
-                curr_p = app.state.latest_prices.get(sym, trade["entry_price"])
-                side = trade.get("side", "LONG")
-                entry = trade["entry_price"]
-                sl = trade.get("initial_stop_loss", trade.get("stop_loss", entry))
-                risk_dist = abs(entry - sl)
-                qty = float(trade.get("quantity") or 0.0)
-
-                unrealized_pct = ((curr_p - entry) / entry * 100.0) if side == "LONG" else ((entry - curr_p) / entry * 100.0)
-                unrealized_usd = (qty * (curr_p - entry)) if side == "LONG" else (qty * (entry - curr_p))
-                curr_r = ((curr_p - entry) / risk_dist) if side == "LONG" else ((entry - curr_p) / risk_dist) if risk_dist > 0 else 0.0
-
-                total_unrealized_usd += unrealized_usd
-
-                trade_copy = dict(trade)
-                trade_copy["unrealized_pnl_pct"] = round(unrealized_pct, 2)
-                trade_copy["unrealized_pnl_usd"] = round(unrealized_usd, 2)
-                trade_copy["current_r_multiple"] = round(curr_r, 2)
-                trade_copy["current_price"] = curr_p
-                entry_b = int(trade.get("entry_bar") or trader.bar_count)
-                trade_copy["bars_held"] = max(0, trader.bar_count - entry_b)
-                trade_copy["max_stagnancy_bars"] = getattr(trader, "max_stagnancy_bars", 12)
-                active_trades.append(trade_copy)
-
         base_equity = float(summary.get("account_equity_usd", 10000.0))
-        current_equity = round(base_equity + total_unrealized_usd, 2)
 
         return {
             **summary,
-            "active_positions_count": len(active_trades),
+            "active_positions_count": 0,
             "max_open_positions": app.state.risk_manager.max_open_positions,
-            "active_trades": active_trades,
-            "total_unrealized_pnl_usd": round(total_unrealized_usd, 2),
-            "current_equity_usd": current_equity,
+            "active_trades": [],
+            "total_unrealized_pnl_usd": 0.0,
+            "current_equity_usd": base_equity,
+            "paper_trading_enabled": False,
+            "execution_mode": "EVIDENCE_ONLY",
+            "evidence_note": "Automated paper trading disabled. All tested hypotheses failed to show edge over random noise.",
         }
 
     @app.get("/api/microstructure/summary")

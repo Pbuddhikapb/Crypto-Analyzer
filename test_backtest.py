@@ -1,5 +1,5 @@
 import pytest
-from backtest import replay_trade_1m
+from legacy.backtest import replay_trade_1m
 
 
 def test_replay_trade_1m_take_profit_precision(monkeypatch):
@@ -19,7 +19,7 @@ def test_replay_trade_1m_take_profit_precision(monkeypatch):
         (1060000, 100.5, 103.5, 100.2, 103.0, 25.0),
     ]
 
-    monkeypatch.setattr("backtest.fetch_1m_candles_for_window", lambda *args, **kwargs: synthetic_1m)
+    monkeypatch.setattr("legacy.backtest.fetch_1m_candles_for_window", lambda *args, **kwargs: synthetic_1m)
 
     res = replay_trade_1m("BTCUSDT", active_trade, 1000000)
     assert res is not None
@@ -47,7 +47,7 @@ def test_replay_trade_1m_breakeven_trailing_rescue(monkeypatch):
         (1060000, 101.8, 101.9, 99.8, 99.9, 20.0),
     ]
 
-    monkeypatch.setattr("backtest.fetch_1m_candles_for_window", lambda *args, **kwargs: synthetic_1m)
+    monkeypatch.setattr("legacy.backtest.fetch_1m_candles_for_window", lambda *args, **kwargs: synthetic_1m)
 
     res = replay_trade_1m("BTCUSDT", active_trade, 1000000)
     assert res is not None

@@ -24,7 +24,7 @@ from microstructure import (
     WhaleTradeFilter,
 )
 from risk import PortfolioRiskManager
-from trader import PaperTrader
+from legacy.trader import PaperTrader
 
 DEFAULT_MONITORED_SYMBOLS = [
     "BTCUSDT",

@@ -485,7 +485,7 @@ class TestMarkdownReportGeneration:
         assert "## 5. Limitations" in content
         assert "fixed_risk" in content
         assert "**TrendPullback**: 150 executed trades" in content
-        assert "Prompt 7" in content
+        assert "No holdout dataset has been used yet" in content
         assert "gross P&L" in content or "Gross vs. Net" in content
 
     def test_report_validated_lists_only_passed_strategies(self, tmp_path):

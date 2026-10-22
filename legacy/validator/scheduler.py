@@ -22,7 +22,7 @@ if sys.platform == "win32":
     except Exception:
         pass
 
-from validator.backtest_agent import agent_run, load_config
+from legacy.validator.backtest_agent import agent_run, load_config
 
 
 def run_scheduler(interval_hours: float = 4.0, run_mode: str = "portfolio", run_immediately: bool = True):

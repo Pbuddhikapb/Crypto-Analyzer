@@ -4,7 +4,7 @@ import pytest
 from indicators import format_price
 from main import print_multi_coin_radar, warmup_all_traders
 from risk import PortfolioRiskManager
-from trader import PaperTrader
+from legacy.trader import PaperTrader
 
 
 def test_format_price_boundaries():

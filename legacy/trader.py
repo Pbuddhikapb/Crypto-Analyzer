@@ -1,3 +1,4 @@
+# Legacy, unvalidated, not used by the terminal.
 import os
 import sqlite3
 from collections import deque

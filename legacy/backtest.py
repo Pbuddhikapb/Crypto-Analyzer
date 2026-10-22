@@ -1,3 +1,4 @@
+# Legacy, unvalidated, not used by the terminal.
 import argparse
 import json
 import os
@@ -22,7 +23,7 @@ from indicators import (
     format_price,
 )
 from risk import PortfolioRiskManager
-from trader import PaperTrader
+from legacy.trader import PaperTrader
 from microstructure import (
     HistoricalMicrostructureReplayer,
     fetch_historical_funding_rates,

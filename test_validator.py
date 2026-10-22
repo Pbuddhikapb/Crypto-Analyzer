@@ -6,9 +6,9 @@ import os
 import tempfile
 import unittest
 
-from validator.output_parser import parse_backtest_output, parse_trade_rows
-from validator import db_manager
-from validator.report_generator import generate_report
+from legacy.validator.output_parser import parse_backtest_output, parse_trade_rows
+from legacy.validator import db_manager
+from legacy.validator.report_generator import generate_report
 
 SAMPLE_SINGLE_OUTPUT = """
 =============================================================================================================================

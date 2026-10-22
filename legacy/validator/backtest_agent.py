@@ -30,10 +30,10 @@ if sys.platform == "win32":
     except Exception:
         pass
 
-from validator.output_parser import parse_backtest_output, parse_trade_rows
-from validator.db_manager import init_db, save_run, save_trades, save_config_snapshot, save_alert
-from validator.validation import run_all_checks, compute_config_hashes, check_config_drift
-from validator.report_generator import generate_report, save_report
+from legacy.validator.output_parser import parse_backtest_output, parse_trade_rows
+from legacy.validator.db_manager import init_db, save_run, save_trades, save_config_snapshot, save_alert
+from legacy.validator.validation import run_all_checks, compute_config_hashes, check_config_drift
+from legacy.validator.report_generator import generate_report, save_report
 
 # ---------------------------------------------------------------------------
 # Configuration loader
@@ -324,7 +324,7 @@ def agent_run(config: dict, portfolio: bool = False, overrides: dict = None, ski
     # Step 9: Dispatch notification if configured
     notif_method = config.get("notification", {}).get("method", "file").lower()
     if notif_method == "email":
-        from validator.notifier import send_email_report
+        from legacy.validator.notifier import send_email_report
         send_email_report(
             report_md=report_md,
             run_id=run_id,
@@ -455,7 +455,7 @@ def main():
     )
 
     # Exit with non-zero if critical alerts were found
-    from validator.db_manager import get_alerts_for_run
+    from legacy.validator.db_manager import get_alerts_for_run
     run_alerts = get_alerts_for_run(run_id)
     critical_count = sum(1 for a in run_alerts if a.get("severity") == "CRITICAL")
     sys.exit(1 if critical_count > 0 else 0)

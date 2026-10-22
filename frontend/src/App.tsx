@@ -59,7 +59,7 @@ export function App() {
   const [showFVGs, setShowFVGs] = useState<boolean>(true);
   const [showRSI, setShowRSI] = useState<boolean>(true);
   const [isRightPanelCollapsed, setIsRightPanelCollapsed] = useState<boolean>(false);
-  const [rightTab, setRightTab] = useState<'COCKPIT' | 'STAGING' | 'ORDER_FLOW' | 'RADAR'>('COCKPIT');
+  const [rightTab, setRightTab] = useState<'COCKPIT' | 'STAGING' | 'ORDER_FLOW' | 'RADAR'>('RADAR');
 
   // WebSocket Message Dispatcher
   const handleWebSocketMessage = useCallback(
@@ -235,12 +235,7 @@ export function App() {
                     : 'text-slate-400 hover:text-slate-200'
                 }`}
               >
-                <span>COCKPIT</span>
-                {(portfolio?.active_positions_count || 0) > 0 && (
-                  <span className="ml-1 px-1 py-0.2 rounded-full bg-laser-green text-dark-bg text-[9px] font-bold animate-pulse">
-                    {portfolio?.active_positions_count}
-                  </span>
-                )}
+                <span>RISK</span>
               </button>
               <button
                 onClick={() => setRightTab('STAGING')}

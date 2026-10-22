@@ -1,7 +1,7 @@
 """
 Strategy Evidence Runner for Phase 3 Validation.
 
-Executes backtests across the 10 major pairs over the full 2-year Parquet dataset
+Executes backtests across the 10 major pairs over the full development Parquet dataset
 using the Single Exit Authority (engine/exits.py) and realistic institutional friction.
 Evaluates every hypothesis against the Phase 2 1,000-pass Monte Carlo Alpha Hurdle (H0)
 and produces the formal validation report in research/reports/strategy_validation_report.md.
@@ -651,7 +651,7 @@ def generate_markdown_report(
 2. **Sample Size Evaluated Per Strategy**:
 {sample_size_bullets}
 3. **No Out-of-Sample Holdout**:
-   No holdout dataset has been used yet (until Prompt 7 is done). All metrics reflect in-sample backtesting across the complete historical timeline.
+   No holdout dataset has been used yet. All metrics reflect in-sample backtesting across the complete historical timeline.
 4. **Gross vs. Net Metrics**:
    Both gross P&L (pre-friction) and net P&L (post-fees, post-slippage, and post-funding) are reported side-by-side. The comparison reveals the decisive impact of transaction costs and funding drag on theoretical retail chart patterns.
 """

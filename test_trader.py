@@ -1,7 +1,7 @@
 import sqlite3
 import pytest
 import numpy as np
-from trader import PaperTrader
+from legacy.trader import PaperTrader
 from risk import PortfolioRiskManager
 from microstructure import WhaleTrade
 

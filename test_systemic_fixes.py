@@ -1,7 +1,7 @@
 import sqlite3
 from indicators import detect_rsi_divergences, check_bullish_fvg_retest
 from risk import PortfolioRiskManager
-from trader import PaperTrader
+from legacy.trader import PaperTrader
 
 
 from test_trader import setup_trader_ready_for_trigger
