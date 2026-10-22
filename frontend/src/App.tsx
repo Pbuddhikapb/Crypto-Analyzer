@@ -14,6 +14,7 @@ import { useWebSocket } from './state/useWebSocket';
 import { soundEngine } from './state/audio';
 import {
   fetchCandles,
+  fetchHealth,
   fetchMarketSymbols,
   fetchMicrostructureSummary,
   fetchPortfolioSummary,
@@ -27,6 +28,7 @@ import {
   MicrostructureSummary,
   PortfolioSummary,
   ScannerOpportunity,
+  SystemHealth,
   WhaleTrade,
   WSMessage,
 } from './types/market';
@@ -53,6 +55,8 @@ export function App() {
 
   // Portfolio State
   const [portfolio, setPortfolio] = useState<PortfolioSummary | null>(null);
+  const [health, setHealth] = useState<SystemHealth | null>(null);
+  const [localUpdates, setLocalUpdates] = useState<Record<string, number>>({});
 
   // UI Toggles
   const [showEMAs, setShowEMAs] = useState<boolean>(true);
@@ -67,9 +71,11 @@ export function App() {
       switch (msg.type) {
         case 'tick':
           setLatestPrices((prev) => ({ ...prev, [msg.symbol]: msg.price }));
+          setLocalUpdates((prev) => ({ ...prev, [msg.symbol]: Math.floor(Date.now() / 1000) }));
           break;
 
         case 'candle':
+          setLocalUpdates((prev) => ({ ...prev, [msg.symbol]: Math.floor(Date.now() / 1000) }));
           if (msg.symbol === activeSymbol) {
             setCandles((prev) => {
               const updated = [...prev];
@@ -139,9 +145,12 @@ export function App() {
 
     fetchPortfolioSummary().then(setPortfolio).catch(() => {});
     fetchScannerOpportunities().then(setOpportunities).catch(() => {});
+    fetchHealth().then(setHealth).catch(() => {});
+
     const oppInterval = setInterval(() => {
       fetchScannerOpportunities().then(setOpportunities).catch(() => {});
-    }, 10000);
+      fetchHealth().then(setHealth).catch(() => {});
+    }, 5000);
     return () => clearInterval(oppInterval);
   }, []);
 
@@ -168,6 +177,24 @@ export function App() {
 
   const activeOpportunity = opportunities.find((o) => o.symbol === activeSymbol);
 
+  const timeframeSecondsMap: Record<string, number> = {
+    '1m': 60,
+    '3m': 180,
+    '5m': 300,
+    '15m': 900,
+    '30m': 1800,
+    '1h': 3600,
+    '2h': 7200,
+    '4h': 14400,
+    '1d': 86400,
+  };
+  const candleIntervalSec = timeframeSecondsMap[activeTimeframe] || health?.candle_interval_sec || 900;
+  const currentLastUpdate =
+    localUpdates[activeSymbol] ||
+    health?.last_update_per_symbol?.[activeSymbol] ||
+    health?.last_update_times?.[activeSymbol] ||
+    null;
+
   return (
     <div className="flex flex-col h-screen w-screen overflow-hidden bg-dark-bg text-slate-100">
       {/* 1. Header Navigation */}
@@ -180,6 +207,10 @@ export function App() {
         mode={mode}
         macroBias={indicators?.trend || 'NEUTRAL'}
         onModeToggle={() => setMode((m) => (m === 'FUTURES' ? 'SPOT' : 'FUTURES'))}
+        dataSource={health?.data_source || 'binance_futures_um'}
+        lastUpdateSec={currentLastUpdate}
+        candleIntervalSec={candleIntervalSec}
+        activeSymbol={activeSymbol}
       />
 
       {/* 2. Top Coins Horizontal Bar */}

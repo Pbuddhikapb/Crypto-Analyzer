@@ -1,9 +1,12 @@
 import asyncio
+import json
 import time
+from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-from server import CandleFeedBuffer, MarketDataFeed, create_app
+from main import get_combined_stream_url, poll_htf_candles, warmup_symbol
+from server import CandleFeedBuffer, MarketDataFeed, create_app, run_kline_ingestion
 
 
 @pytest.fixture
@@ -576,6 +579,204 @@ def test_candle_feed_buffer_lifecycle():
 
     # Verify MarketDataFeed is CandleFeedBuffer
     assert MarketDataFeed is CandleFeedBuffer
+
+
+def test_futures_stream_url_format():
+    """Verify get_combined_stream_url points to Binance USD-M futures and excludes spot / US hosts."""
+    url = get_combined_stream_url(["BTCUSDT", "ETHUSDT"], "15m")
+    assert url.startswith("wss://fstream.binance.com/stream?streams=")
+    assert "btcusdt@kline_15m/ethusdt@kline_15m" in url
+    assert "wss://stream.binance.com" not in url
+    assert "binance.us" not in url
+
+
+@pytest.mark.asyncio
+async def test_warmup_symbol_uses_futures_url_and_retries():
+    """Verify warmup_symbol queries fapi.binance.com, handles retries with backoff, and sets buffer."""
+    buf = CandleFeedBuffer(symbol="BTCUSDT", timeframe="15m")
+    timestamps = []
+
+    mock_candle_payload = [
+        [1729597200000, "65000.0", "65500.0", "64900.0", "65200.0", "150.0", 1729598099999],
+        [1729598100000, "65200.0", "65600.0", "65100.0", "65400.0", "200.0", 1729598999999],
+    ]
+
+    mock_resp_429 = MagicMock()
+    mock_resp_429.status = 429
+
+    mock_resp_200 = MagicMock()
+    mock_resp_200.status = 200
+    mock_resp_200.json = AsyncMock(return_value=mock_candle_payload)
+
+    # First attempt returns 429, second attempt succeeds with 200
+    mock_session = MagicMock()
+    call_urls = []
+
+    class MockContextManager:
+        def __init__(self, resp):
+            self.resp = resp
+        async def __aenter__(self):
+            return self.resp
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            pass
+
+    def mock_get(url, *args, **kwargs):
+        call_urls.append(url)
+        if len(call_urls) == 1:
+            return MockContextManager(mock_resp_429)
+        return MockContextManager(mock_resp_200)
+
+    mock_session.get = mock_get
+
+    with patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+        await warmup_symbol(mock_session, "BTCUSDT", "15m", buf, timestamps_list=timestamps)
+        assert mock_sleep.called
+
+    assert len(call_urls) == 3
+    assert call_urls[0].startswith("https://fapi.binance.com/fapi/v1/klines?symbol=BTCUSDT&interval=15m")
+    assert call_urls[1].startswith("https://fapi.binance.com/fapi/v1/klines?symbol=BTCUSDT&interval=15m")
+    assert call_urls[2].startswith("https://fapi.binance.com/fapi/v1/klines?symbol=BTCUSDT&interval=4h")
+    for url in call_urls:
+        assert "https://api.binance.com" not in url
+        assert "binance.us" not in url
+
+    assert len(buf.candles) == 2
+    assert len(timestamps) == 2
+    assert buf.candles[0] == (65000.0, 65500.0, 64900.0, 65200.0, 150.0)
+
+
+@pytest.mark.asyncio
+async def test_warmup_symbol_raises_on_fatal_failure():
+    """Verify warmup_symbol raises RuntimeError if USD-M futures fails 3 times."""
+    buf = CandleFeedBuffer(symbol="BTCUSDT", timeframe="15m")
+    mock_session = MagicMock()
+    mock_session.get.side_effect = RuntimeError("Connection timeout")
+
+    with patch("asyncio.sleep", new_callable=AsyncMock):
+        with pytest.raises(RuntimeError) as exc_info:
+            await warmup_symbol(mock_session, "BTCUSDT", "15m", buf)
+        assert "Binance USD-M futures" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_poll_htf_candles_uses_futures_endpoint():
+    """Verify poll_htf_candles fetches 4h candles strictly from USD-M futures."""
+    buf = CandleFeedBuffer(symbol="BTCUSDT", timeframe="15m")
+    buf.htf_trend_filter = True
+    traders = {"BTCUSDT": buf}
+
+    mock_resp = MagicMock()
+    mock_resp.status = 200
+    mock_resp.json = AsyncMock(return_value=[
+        [1729597200000, "65000.0", "66000.0", "64500.0", "65800.0", "1200.0"],
+    ])
+
+    class MockContextManager:
+        async def __aenter__(self):
+            return mock_resp
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            pass
+
+    called_urls = []
+    class MockClientSession:
+        def __init__(self, *args, **kwargs):
+            pass
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            pass
+        def get(self, url, *args, **kwargs):
+            called_urls.append(url)
+            return MockContextManager()
+
+    # Run one cycle of poll_htf_candles by patching sleep to cancel after first pass
+    with patch("aiohttp.ClientSession", MockClientSession), \
+         patch("asyncio.sleep", side_effect=[None, asyncio.CancelledError]):
+        try:
+            await poll_htf_candles(traders, ["BTCUSDT"])
+        except asyncio.CancelledError:
+            pass
+
+    assert len(called_urls) == 1
+    assert called_urls[0] == "https://fapi.binance.com/fapi/v1/klines?symbol=BTCUSDT&interval=4h&limit=2"
+    assert len(buf.htf_candles) == 1
+    assert buf.htf_candles[0] == (65000.0, 66000.0, 64500.0, 65800.0, 1200.0)
+
+
+@pytest.mark.asyncio
+async def test_run_kline_ingestion_futures_ws_mock(tmp_path):
+    """Verify run_kline_ingestion connects to fstream, processes closed kline, and tracks last_update_times."""
+    db_path = str(tmp_path / "test.db")
+    app = create_app(enable_ingestion=False, db_path=db_path, symbols=["BTCUSDT"], timeframe="15m")
+    app.state.candle_buffers = {"BTCUSDT": CandleFeedBuffer("BTCUSDT", "15m")}
+    app.state.traders = app.state.candle_buffers
+
+    kline_msg = json.dumps({
+        "stream": "btcusdt@kline_15m",
+        "data": {
+            "e": "kline",
+            "s": "BTCUSDT",
+            "k": {
+                "t": 1729597200000,
+                "o": "65000.0",
+                "h": "65500.0",
+                "l": "64800.0",
+                "c": "65300.0",
+                "v": "300.0",
+                "x": True,
+            },
+        },
+    })
+
+    class MockWS:
+        def __init__(self):
+            self.sent = False
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            pass
+        def __aiter__(self):
+            return self
+        async def __anext__(self):
+            if not self.sent:
+                self.sent = True
+                return kline_msg
+            raise asyncio.CancelledError()
+
+    ws_urls = []
+    def mock_connect(url, *args, **kwargs):
+        ws_urls.append(url)
+        return MockWS()
+
+    with patch("websockets.connect", side_effect=mock_connect):
+        try:
+            await run_kline_ingestion(app, ["BTCUSDT"], "15m")
+        except asyncio.CancelledError:
+            pass
+
+    assert len(ws_urls) == 1
+    assert ws_urls[0].startswith("wss://fstream.binance.com/stream?streams=")
+    assert "btcusdt@kline_15m" in ws_urls[0]
+    assert app.state.latest_prices.get("BTCUSDT") == 65300.0
+    assert "BTCUSDT" in app.state.last_update_times
+    assert len(app.state.candle_buffers["BTCUSDT"].candles) == 1
+
+
+def test_health_endpoint_data_source_and_last_updates(app_and_client):
+    """Verify /api/health exposes data_source='binance_futures_um', last_update_per_symbol, and interval."""
+    app, client = app_and_client
+    app.state.last_update_times["BTCUSDT"] = 1729597200
+    app.state.last_update_times["ETHUSDT"] = 1729597205
+
+    resp = client.get("/api/health")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "healthy"
+    assert data["data_source"] == "binance_futures_um"
+    assert data["last_update_per_symbol"]["BTCUSDT"] == 1729597200
+    assert data["last_update_per_symbol"]["ETHUSDT"] == 1729597205
+    assert data["candle_interval_sec"] == 60  # timeframe="1m" in fixture
+    assert data["timeframe"] == "1m"
 
 
 

@@ -225,6 +225,11 @@ export interface MicrostructureSummary {
 
 export interface SystemHealth {
   status: string;
+  data_source?: string;
+  last_update_per_symbol?: Record<string, number>;
+  last_update_times?: Record<string, number>;
+  timeframe?: string;
+  candle_interval_sec?: number;
   spot_connectivity: boolean;
   futures_connectivity: boolean;
   futures_status_message: string;

@@ -521,3 +521,37 @@ def test_guardrail_no_holdout_leakage():
         f"Only research/holdout_check.py is permitted to pass allow_holdout=True, "
         f"but found in: {holdout_allowed_files}"
     )
+
+
+# ==============================================================================
+# 8. No Binance US Fallback Guardrail
+# ==============================================================================
+def test_guardrail_no_binance_us_hosts():
+    """
+    Assert that no '.us' Binance hosts (api.binance.us, stream.binance.us, etc.)
+    remain in any non-legacy production code across the repository.
+    """
+    repo_files = [
+        f for f in glob.glob("**/*", recursive=True)
+        if os.path.isfile(f)
+        and (f.endswith(".py") or f.endswith(".ts") or f.endswith(".tsx") or f.endswith(".sh"))
+        and not f.startswith("venv")
+        and not f.startswith("legacy")
+        and "/legacy/" not in f
+        and not f.startswith("test_")
+        and "/test_" not in f
+        and "node_modules" not in f
+        and ".git" not in f
+    ]
+    assert len(repo_files) > 0, "Expected non-legacy source files to verify"
+
+    us_matches = []
+    for filepath in repo_files:
+        with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+        if re.search(r"binance\.us", content, re.IGNORECASE):
+            us_matches.append(filepath.replace("\\", "/"))
+
+    assert us_matches == [], (
+        f"Forbidden '.us' Binance hosts found in non-legacy files: {us_matches}"
+    )

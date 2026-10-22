@@ -77,9 +77,9 @@ def parse_arguments() -> argparse.Namespace:
 
 
 def get_combined_stream_url(symbols: Sequence[str], timeframe: str) -> str:
-    """Build Binance multiplexed WebSocket stream URL."""
+    """Build Binance USD-M Futures multiplexed WebSocket stream URL."""
     stream_params = "/".join(f"{s.strip().lower()}@kline_{timeframe}" for s in symbols)
-    return f"wss://stream.binance.com:9443/stream?streams={stream_params}"
+    return f"wss://fstream.binance.com/stream?streams={stream_params}"
 
 
 async def warmup_symbol(
@@ -89,22 +89,52 @@ async def warmup_symbol(
     trader: PaperTrader,
     timestamps_list: Optional[List[int]] = None,
 ) -> None:
-    """Fetch initial 250 klines for a single symbol and pre-seed trader buffers."""
-    endpoints = [
-        f"https://api.binance.com/api/v3/klines?symbol={symbol.upper()}&interval={timeframe}&limit=250",
-        f"https://api.binance.us/api/v3/klines?symbol={symbol.upper()}&interval={timeframe}&limit=250",
-    ]
-    loaded = False
-    for url in endpoints:
-        if loaded:
-            break
+    """Fetch initial 250 klines for a single symbol from Binance USD-M Futures and pre-seed buffers."""
+    url = f"https://fapi.binance.com/fapi/v1/klines?symbol={symbol.upper()}&interval={timeframe}&limit=250"
+    backoff = 1.0
+    for attempt in range(1, 4):
+        try:
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    # Load first 249 closed candles
+                    for k in data[:249]:
+                        candle_tuple = (
+                            float(k[1]),
+                            float(k[2]),
+                            float(k[3]),
+                            float(k[4]),
+                            float(k[5]),
+                        )
+                        trader.load_historical_candle(candle_tuple)
+                        if timestamps_list is not None:
+                            raw_t = int(k[0])
+                            timestamps_list.append(raw_t // 1000 if raw_t > 10_000_000_000 else raw_t)
+                    break
+                elif response.status == 429:
+                    print(f"[WARMUP RATE LIMIT] 429 for {symbol}. Waiting {backoff * 2:.1f}s before retry...")
+                    await asyncio.sleep(backoff * 2)
+                    backoff *= 2
+                else:
+                    print(f"[WARMUP WARNING] HTTP {response.status} for {symbol} (attempt {attempt}/3)")
+                    await asyncio.sleep(backoff)
+                    backoff *= 2
+        except Exception as e:
+            if attempt == 3:
+                raise RuntimeError(f"Failed to warm up {symbol} from Binance USD-M futures after 3 attempts: {e}")
+            await asyncio.sleep(backoff)
+            backoff *= 2
+
+    # If trader has HTF trend filter enabled, also prime 4h macro candles from USD-M futures
+    if getattr(trader, "htf_trend_filter", False):
+        htf_url = f"https://fapi.binance.com/fapi/v1/klines?symbol={symbol.upper()}&interval=4h&limit=250"
+        htf_backoff = 1.0
         for attempt in range(1, 4):
             try:
-                async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as response:
+                async with session.get(htf_url, timeout=aiohttp.ClientTimeout(total=10)) as response:
                     if response.status == 200:
-                        data = await response.json()
-                        # Load first 249 closed candles
-                        for k in data[:249]:
+                        htf_data = await response.json()
+                        for k in htf_data[:249]:
                             candle_tuple = (
                                 float(k[1]),
                                 float(k[2]),
@@ -112,60 +142,19 @@ async def warmup_symbol(
                                 float(k[4]),
                                 float(k[5]),
                             )
-                            trader.load_historical_candle(candle_tuple)
-                            if timestamps_list is not None:
-                                raw_t = int(k[0])
-                                timestamps_list.append(raw_t // 1000 if raw_t > 10_000_000_000 else raw_t)
-                        loaded = True
-                        break
-                    elif response.status == 451:
-                        # Geoblocked on current domain; immediately fall back to secondary endpoint
+                            trader.load_historical_htf_candle(candle_tuple)
                         break
                     elif response.status == 429:
-                        print(f"[WARMUP RATE LIMIT] 429 for {symbol}. Waiting 2s before retry...")
-                        await asyncio.sleep(2.0)
+                        await asyncio.sleep(htf_backoff * 2)
+                        htf_backoff *= 2
                     else:
-                        print(f"[WARMUP WARNING] HTTP {response.status} for {symbol} (attempt {attempt}/3)")
-                        await asyncio.sleep(1.0)
-            except Exception as e:
-                if attempt == 3 and url == endpoints[-1]:
-                    raise RuntimeError(f"Failed to warm up {symbol} after 3 attempts: {e}")
-                await asyncio.sleep(1.0)
-
-    # If trader has HTF trend filter enabled, also prime 4h macro candles
-    if getattr(trader, "htf_trend_filter", False):
-        htf_endpoints = [
-            f"https://api.binance.com/api/v3/klines?symbol={symbol.upper()}&interval=4h&limit=250",
-            f"https://api.binance.us/api/v3/klines?symbol={symbol.upper()}&interval=4h&limit=250",
-        ]
-        loaded_htf = False
-        for htf_url in htf_endpoints:
-            if loaded_htf:
-                break
-            for attempt in range(1, 4):
-                try:
-                    async with session.get(htf_url, timeout=aiohttp.ClientTimeout(total=10)) as response:
-                        if response.status == 200:
-                            htf_data = await response.json()
-                            for k in htf_data[:249]:
-                                candle_tuple = (
-                                    float(k[1]),
-                                    float(k[2]),
-                                    float(k[3]),
-                                    float(k[4]),
-                                    float(k[5]),
-                                )
-                                trader.load_historical_htf_candle(candle_tuple)
-                            loaded_htf = True
-                            break
-                        elif response.status == 451:
-                            break
-                        elif response.status == 429:
-                            await asyncio.sleep(2.0)
-                        else:
-                            await asyncio.sleep(1.0)
-                except Exception:
-                    await asyncio.sleep(1.0)
+                        await asyncio.sleep(htf_backoff)
+                        htf_backoff *= 2
+            except Exception:
+                if attempt == 3:
+                    print(f"[WARMUP WARNING] Failed to prime 4h HTF candles for {symbol} from USD-M futures")
+                await asyncio.sleep(htf_backoff)
+                htf_backoff *= 2
 
 
 async def warmup_all_traders(
@@ -345,7 +334,7 @@ async def poll_htf_candles(
                     trader = traders.get(sym)
                     if not trader or not getattr(trader, "htf_trend_filter", False):
                         continue
-                    url = f"https://api.binance.com/api/v3/klines?symbol={sym.upper()}&interval=4h&limit=2"
+                    url = f"https://fapi.binance.com/fapi/v1/klines?symbol={sym.upper()}&interval=4h&limit=2"
                     try:
                         async with session.get(url) as resp:
                             if resp.status == 200:

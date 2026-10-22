@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Volume2, VolumeX, Activity, Radio, ShieldAlert } from 'lucide-react';
+import { Volume2, VolumeX, Activity, Radio, ShieldAlert, AlertTriangle } from 'lucide-react';
 import { soundEngine } from '../state/audio';
 
 interface NavbarProps {
@@ -8,9 +8,13 @@ interface NavbarProps {
   activePositionsCount: number;
   maxPositions: number;
   isFuturesOnline: boolean;
-  mode: 'SPOT' | 'FUTURES';
+  mode: 'FUTURES' | 'SPOT';
   macroBias?: string;
   onModeToggle: () => void;
+  dataSource?: string;
+  lastUpdateSec?: number | null;
+  candleIntervalSec?: number;
+  activeSymbol?: string;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -22,14 +26,20 @@ export const Navbar: React.FC<NavbarProps> = ({
   mode,
   macroBias = 'NEUTRAL',
   onModeToggle,
+  dataSource = 'binance_futures_um',
+  lastUpdateSec = null,
+  candleIntervalSec = 900,
+  activeSymbol = 'BTCUSDT',
 }) => {
   const [isMuted, setIsMuted] = useState<boolean>(soundEngine.isMuted());
   const [currentTime, setCurrentTime] = useState<string>('');
+  const [nowSec, setNowSec] = useState<number>(() => Math.floor(Date.now() / 1000));
 
   useEffect(() => {
     const updateClock = () => {
       const now = new Date();
       setCurrentTime(now.toTimeString().split(' ')[0] + ' UTC');
+      setNowSec(Math.floor(Date.now() / 1000));
     };
     updateClock();
     const interval = setInterval(updateClock, 1000);
@@ -41,10 +51,14 @@ export const Navbar: React.FC<NavbarProps> = ({
     setIsMuted(muted);
   };
 
+  const intervalSec = candleIntervalSec || 900;
+  const timeSinceUpdate = lastUpdateSec !== null ? Math.max(0, nowSec - lastUpdateSec) : null;
+  const isStale = timeSinceUpdate !== null && timeSinceUpdate > 2 * intervalSec;
+
   return (
     <header className="h-11 bg-dark-panel border-b border-dark-border px-4 flex items-center justify-between text-xs select-none">
       {/* Brand & Market Switcher */}
-      <div className="flex items-center space-x-4">
+      <div className="flex items-center space-x-3">
         <div className="flex items-center space-x-2">
           <div className="w-2.5 h-2.5 rounded-sm bg-laser-cyan shadow-[0_0_8px_rgba(0,242,254,0.6)]" />
           <span className="font-bold tracking-wider text-slate-100 text-sm">
@@ -54,6 +68,33 @@ export const Navbar: React.FC<NavbarProps> = ({
             v1.0-PRO
           </span>
         </div>
+
+        {/* Active Data Source Badge */}
+        <div className="flex items-center space-x-1.5 px-2 py-0.5 bg-dark-card border border-dark-border rounded text-[11px] font-mono">
+          <span className="text-slate-400">SRC:</span>
+          <span className="text-laser-cyan font-bold">{dataSource}</span>
+        </div>
+
+        {/* Freshness / Stale Data Alert */}
+        {isStale ? (
+          <div
+            className="flex items-center space-x-1 px-2 py-0.5 rounded text-[11px] font-bold bg-crimson-red/20 border border-crimson-red text-crimson-red animate-pulse"
+            title={`Data for ${activeSymbol} is older than 2 candle intervals (${timeSinceUpdate}s > ${2 * intervalSec}s)`}
+          >
+            <AlertTriangle size={12} className="text-crimson-red" />
+            <span>STALE DATA (&gt; 2 BARS)</span>
+          </div>
+        ) : (
+          timeSinceUpdate !== null && (
+            <div
+              className="hidden lg:flex items-center space-x-1 px-1.5 py-0.5 rounded text-[10px] bg-dark-card border border-dark-border text-slate-400 font-mono"
+              title={`Last update for ${activeSymbol}: ${timeSinceUpdate}s ago`}
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-laser-green" />
+              <span>{timeSinceUpdate}s ago</span>
+            </div>
+          )
+        )}
 
         <button
           onClick={onModeToggle}

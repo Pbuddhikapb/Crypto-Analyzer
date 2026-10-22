@@ -536,6 +536,11 @@ async def process_closed_candle_event(
 
     feed.add_candle(candle_tuple, timestamp=str(raw_t))
 
+    # Update last update tracking
+    if not hasattr(app.state, "last_update_times"):
+        app.state.last_update_times = {}
+    app.state.last_update_times[symbol] = int(time.time())
+
     # Store in rolling timestamp buffer
     if symbol not in app.state.candle_timestamps:
         app.state.candle_timestamps[symbol] = []
@@ -560,27 +565,23 @@ async def process_closed_candle_event(
     })
 
 
-async def run_spot_ingestion(
+async def run_kline_ingestion(
     app: FastAPI,
     symbols: List[str],
     timeframe: str,
 ) -> None:
-    """Stream real-time Spot klines and ticks, broadcasting to connected WebSocket clients."""
+    """Stream real-time Binance USD-M Futures klines and ticks, broadcasting to connected WebSocket clients."""
     import websockets
 
-    stream_urls = [
-        get_combined_stream_url(symbols, timeframe),
-        f"wss://stream.binance.us:9443/stream?streams={'/'.join(f'{s.strip().lower()}@kline_{timeframe}' for s in symbols)}",
-    ]
-    url_idx = 0
+    ws_url = get_combined_stream_url(symbols, timeframe)
     backoff = 3
 
     while True:
         try:
-            ws_url = stream_urls[url_idx % len(stream_urls)]
             async with websockets.connect(ws_url, ping_interval=20, ping_timeout=20) as ws:
                 backoff = 3
                 app.state.is_spot_connected = True
+                app.state.is_kline_connected = True
 
                 async for message in ws:
                     payload = json.loads(message)
@@ -591,11 +592,18 @@ async def run_spot_ingestion(
                     if not symbol or symbol not in app.state.traders:
                         continue
 
+                    # Record last-update timestamp
+                    now_t = time.time()
+                    if not hasattr(app.state, "last_update_times"):
+                        app.state.last_update_times = {}
+                    app.state.last_update_times[symbol] = int(now_t)
+
                     curr_c = float(kline.get("c") or 0.0)
                     if curr_c > 0.0:
                         app.state.latest_prices[symbol] = curr_c
                         # Broadcast throttled tick to protect client bandwidth (max 2 updates/sec per symbol)
-                        now_t = time.time()
+                        if not hasattr(app.state, "last_tick_broadcast"):
+                            app.state.last_tick_broadcast = {}
                         last_t = app.state.last_tick_broadcast.get(symbol, 0.0)
                         if (now_t - last_t) >= 0.5:
                             app.state.last_tick_broadcast[symbol] = now_t
@@ -624,10 +632,13 @@ async def run_spot_ingestion(
             break
         except Exception as e:
             app.state.is_spot_connected = False
-            if "451" in str(e) or (hasattr(e, "status_code") and getattr(e, "status_code", 0) == 451):
-                url_idx += 1
+            app.state.is_kline_connected = False
+            print(f"[Futures Kline WS Warning] Connection to {ws_url} failed: {e}. Retrying in {backoff}s...")
             await asyncio.sleep(backoff)
             backoff = min(backoff * 2, 60)
+
+
+run_spot_ingestion = run_kline_ingestion
 
 
 async def run_futures_ingestion(
@@ -703,11 +714,9 @@ async def run_futures_ingestion(
 
 
 async def run_order_book_stream(app: FastAPI) -> None:
-    """Stream real-time @depth20 (1s update rate) for the active UI symbol with automatic focus switching."""
+    """Stream real-time Binance USD-M Futures @depth20 for the active UI symbol with automatic focus switching."""
     import websockets
 
-    ws_hosts = ["stream.binance.com:9443", "stream.binance.us:9443"]
-    host_idx = 0
     backoff = 3
     while True:
         try:
@@ -716,8 +725,7 @@ async def run_order_book_stream(app: FastAPI) -> None:
                 continue
 
             current_sym = getattr(app.state, "active_depth_symbol", "BTCUSDT").lower()
-            current_host = ws_hosts[host_idx % len(ws_hosts)]
-            ws_url = f"wss://{current_host}/ws/{current_sym}@depth20"
+            ws_url = f"wss://fstream.binance.com/ws/{current_sym}@depth20"
             active_at_connect = current_sym
 
             async with websockets.connect(ws_url, ping_interval=20, ping_timeout=20, compression="deflate") as ws:
@@ -740,8 +748,7 @@ async def run_order_book_stream(app: FastAPI) -> None:
         except asyncio.CancelledError:
             break
         except Exception as e:
-            if "451" in str(e) or (hasattr(e, "status_code") and getattr(e, "status_code", 0) == 451):
-                host_idx += 1
+            print(f"[Futures Depth WS Warning] Depth connection error: {e}. Retrying in {backoff}s...")
             await asyncio.sleep(backoff)
             backoff = min(backoff * 2, 60)
 
@@ -786,7 +793,9 @@ def create_app(
         app.state.traders = app.state.candle_buffers
         app.state.latest_prices = {}
         app.state.candle_timestamps = {sym: [] for sym in active_symbols}
+        app.state.last_update_times = {}
         app.state.is_spot_connected = False
+        app.state.is_kline_connected = False
         app.state.futures_status_message = "Not checked"
 
         background_tasks: List[asyncio.Task] = []
@@ -800,9 +809,11 @@ def create_app(
                     timeframe,
                     timestamps_dict=app.state.candle_timestamps,
                 )
-                for sym, trader in app.state.traders.items():
-                    if trader.candles:
-                        app.state.latest_prices[sym] = float(trader.candles[-1][3])
+                now_t = int(time.time())
+                for sym, buffer in app.state.candle_buffers.items():
+                    if buffer.candles:
+                        app.state.latest_prices[sym] = float(buffer.candles[-1][3])
+                        app.state.last_update_times[sym] = now_t
             except Exception as e:
                 print(f"[Server Warmup Error] {e}")
 
@@ -852,7 +863,10 @@ def create_app(
     app.state.micro_mgr = None
     app.state.latest_prices = {}
     app.state.candle_timestamps = {}
+    app.state.last_update_times = {}
+    app.state.last_tick_broadcast = {}
     app.state.is_spot_connected = False
+    app.state.is_kline_connected = False
     app.state.futures_status_message = "Not checked"
 
     # CORS configuration restricted to local loopback Vite dev and GET only
@@ -872,14 +886,22 @@ def create_app(
         micro = getattr(app.state, "micro_mgr", None)
         conn_mgr = getattr(app.state, "connection_manager", None)
         buffers = getattr(app.state, "candle_buffers", getattr(app.state, "traders", {}))
+        tf_sec = timeframe_to_seconds(timeframe)
+        last_updates = getattr(app.state, "last_update_times", {})
         return {
             "status": "healthy",
+            "data_source": "binance_futures_um",
             "spot_connectivity": getattr(app.state, "is_spot_connected", False),
+            "kline_connectivity": getattr(app.state, "is_kline_connected", getattr(app.state, "is_spot_connected", False)),
             "futures_connectivity": getattr(micro, "is_online", False) if micro else False,
             "futures_status_message": getattr(app.state, "futures_status_message", "Unknown"),
             "active_symbols_count": len(buffers),
             "db_status": "connected" if db_ok else "unreachable",
             "connected_ws_clients": len(conn_mgr.active_connections) if conn_mgr else 0,
+            "last_update_per_symbol": dict(last_updates),
+            "last_update_times": dict(last_updates),
+            "timeframe": timeframe,
+            "candle_interval_sec": tf_sec,
         }
 
     @app.get("/api/market/symbols")
