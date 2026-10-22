@@ -29,6 +29,18 @@ jobs:
         run: |
           ruff check .
 
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install frontend dependencies, typecheck, and build
+        working-directory: frontend
+        run: |
+          npm ci
+          npx tsc --noEmit
+          npm run build
+
       - name: Run test suite
         run: |
           python -m pytest -q

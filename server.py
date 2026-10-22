@@ -32,9 +32,9 @@ from microstructure import OrderBookEngine, SymbolNormalizer
 from risk import PortfolioRiskManager
 
 
-class MarketDataFeed:
+class CandleFeedBuffer:
     """
-    Lightweight market data feed container maintaining candle buffers
+    Lightweight candle feed buffer maintaining rolling historical bars
     for live terminal display, technical indicator computation, and radar scoring.
     Does not execute trades or manage positions (evidence-status mode).
     """
@@ -47,7 +47,6 @@ class MarketDataFeed:
         self.htf_trend_filter: bool = True
         self.htf_trend: Optional[str] = None
         self.trend_1h: Optional[str] = None
-        self.active_trade: Optional[Dict[str, Any]] = None
         self.bar_count: int = 0
 
     def load_historical_candle(self, candle_data: Any) -> None:
@@ -57,9 +56,14 @@ class MarketDataFeed:
     def load_historical_htf_candle(self, candle_data: Any) -> None:
         self.htf_candles.append(tuple(candle_data))
 
-    def on_candle(self, candle_data: Any, timestamp: Optional[str] = None) -> None:
+    def add_candle(self, candle_data: Any, timestamp: Optional[str] = None) -> None:
+        """Append a closed candle to the rolling buffer."""
         self.candles.append(tuple(candle_data))
         self.bar_count += 1
+
+    def on_candle(self, candle_data: Any, timestamp: Optional[str] = None) -> None:
+        """Backwards compatibility alias for add_candle."""
+        self.add_candle(candle_data, timestamp=timestamp)
 
     def on_htf_candle(self, candle_data: Any) -> None:
         self.htf_candles.append(tuple(candle_data))
@@ -89,8 +93,9 @@ class MarketDataFeed:
                 return "BEARISH"
             return "NEUTRAL"
 
-    def get_active_trade(self) -> Optional[Dict[str, Any]]:
-        return None
+
+# Backwards compatibility alias
+MarketDataFeed = CandleFeedBuffer
 
 # Explicit Pattern -> Tested Strategy Mapping
 PATTERN_STRATEGY_MAP: Dict[str, Optional[str]] = {
@@ -523,11 +528,13 @@ async def process_closed_candle_event(
     kline_time_sec: int,
 ) -> None:
     """Process a closed candle for a symbol: update candle buffer, indicators, and broadcast."""
-    feed = app.state.traders.get(symbol)
+    feed = app.state.candle_buffers.get(symbol)
+    if feed is None:
+        feed = app.state.traders.get(symbol)
     if feed is None:
         return
 
-    feed.on_candle(candle_tuple, timestamp=str(raw_t))
+    feed.add_candle(candle_tuple, timestamp=str(raw_t))
 
     # Store in rolling timestamp buffer
     if symbol not in app.state.candle_timestamps:
@@ -744,6 +751,7 @@ def create_app(
     db_path: str = "data/signals_audit.db",
     symbols: Optional[List[str]] = None,
     timeframe: str = "15m",
+    frontend_dist: Optional[str] = None,
 ) -> FastAPI:
     """Create and configure the FastAPI application instance."""
     if enable_ingestion is None:
@@ -768,13 +776,14 @@ def create_app(
         app.state.active_depth_symbol = active_symbols[0]
         app.state.is_telemetry_paused = False
         app.state.last_tick_broadcast = {}
-        app.state.traders = {
-            sym: MarketDataFeed(
+        app.state.candle_buffers = {
+            sym: CandleFeedBuffer(
                 symbol=sym,
                 timeframe=timeframe,
             )
             for sym in active_symbols
         }
+        app.state.traders = app.state.candle_buffers
         app.state.latest_prices = {}
         app.state.candle_timestamps = {sym: [] for sym in active_symbols}
         app.state.is_spot_connected = False
@@ -838,7 +847,8 @@ def create_app(
     # Initialize default state attributes before lifespan execution
     app.state.connection_manager = ConnectionManager()
     app.state.risk_manager = None
-    app.state.traders = {}
+    app.state.candle_buffers = {}
+    app.state.traders = app.state.candle_buffers
     app.state.micro_mgr = None
     app.state.latest_prices = {}
     app.state.candle_timestamps = {}
@@ -861,13 +871,13 @@ def create_app(
         db_ok = os.path.exists(db_path) or getattr(app.state, "risk_manager", None) is not None
         micro = getattr(app.state, "micro_mgr", None)
         conn_mgr = getattr(app.state, "connection_manager", None)
-        traders = getattr(app.state, "traders", {})
+        buffers = getattr(app.state, "candle_buffers", getattr(app.state, "traders", {}))
         return {
             "status": "healthy",
             "spot_connectivity": getattr(app.state, "is_spot_connected", False),
             "futures_connectivity": getattr(micro, "is_online", False) if micro else False,
             "futures_status_message": getattr(app.state, "futures_status_message", "Unknown"),
-            "active_symbols_count": len(traders),
+            "active_symbols_count": len(buffers),
             "db_status": "connected" if db_ok else "unreachable",
             "connected_ws_clients": len(conn_mgr.active_connections) if conn_mgr else 0,
         }
@@ -876,13 +886,14 @@ def create_app(
     async def get_market_symbols():
         """Return monitored symbols with contracts and current market snapshots."""
         results = []
-        for sym, trader in app.state.traders.items():
+        buffers = getattr(app.state, "candle_buffers", getattr(app.state, "traders", {}))
+        for sym, buffer in buffers.items():
             f_sym = SymbolNormalizer.to_futures_symbol(sym)
             latest_price = app.state.latest_prices.get(sym)
-            if latest_price is None and trader.candles:
-                latest_price = trader.candles[-1][3]
+            if latest_price is None and buffer.candles:
+                latest_price = buffer.candles[-1][3]
 
-            indicators = compute_indicators(trader.candles)
+            indicators = compute_indicators(buffer.candles)
 
             results.append({
                 "symbol": sym,
@@ -890,7 +901,7 @@ def create_app(
                 "latest_price": latest_price,
                 "has_open_position": False,
                 "trend": indicators["trend"],
-                "htf_trend": trader.get_htf_trend(),
+                "htf_trend": buffer.get_htf_trend(),
                 "rsi": indicators["rsi"],
             })
         return results
@@ -903,17 +914,18 @@ def create_app(
     ):
         """Return candles formatted with integer-second timestamps for Lightweight Charts."""
         sym = symbol.upper()
-        if sym not in app.state.traders:
+        buffers = getattr(app.state, "candle_buffers", getattr(app.state, "traders", {}))
+        if sym not in buffers:
             raise HTTPException(status_code=404, detail=f"Symbol '{sym}' not found in active universe.")
 
-        trader = app.state.traders[sym]
-        candles_list = list(trader.candles)
+        buffer = buffers[sym]
+        candles_list = list(buffer.candles)
         timestamps = list(app.state.candle_timestamps.get(sym, []))
 
         # Check if timeframe aggregation is required
-        trader_tf = getattr(trader, "timeframe", "15m")
+        buffer_tf = getattr(buffer, "timeframe", "15m")
         req_sec = timeframe_to_seconds(timeframe)
-        base_sec = timeframe_to_seconds(trader_tf)
+        base_sec = timeframe_to_seconds(buffer_tf)
         factor = max(1, req_sec // base_sec) if base_sec > 0 else 1
 
         if factor > 1 and len(candles_list) >= factor:
@@ -1002,11 +1014,12 @@ def create_app(
     async def get_scanner_opportunities():
         """Scan active universe and return ranked high-confluence institutional trade opportunities."""
         opportunities = []
-        for sym, trader in app.state.traders.items():
-            if len(trader.candles) < 20:
+        buffers = getattr(app.state, "candle_buffers", getattr(app.state, "traders", {}))
+        for sym, buffer in buffers.items():
+            if len(buffer.candles) < 20:
                 continue
 
-            candles_list = list(trader.candles)
+            candles_list = list(buffer.candles)
             indicators = compute_indicators(candles_list)
             trade_setup = indicators.get("trade_setup")
 
@@ -1018,7 +1031,7 @@ def create_app(
             curr_price = app.state.latest_prices.get(sym, float(candles_list[-1][3]))
             adx_val = indicators.get("adx_14") or 20.0
             trend = indicators["trend"]
-            htf_trend = trader.get_htf_trend() or "NEUTRAL"
+            htf_trend = buffer.get_htf_trend() or "NEUTRAL"
             pricing_zone = indicators.get("pricing_zone") or "EQUILIBRIUM"
 
             # Compute priority score: Directional confluence model
@@ -1144,7 +1157,8 @@ def create_app(
                         })
                     elif action == "focus_symbol":
                         target_sym = str(payload.get("symbol", "")).upper()
-                        if target_sym in app.state.traders:
+                        buffers = getattr(app.state, "candle_buffers", getattr(app.state, "traders", {}))
+                        if target_sym in buffers:
                             app.state.active_depth_symbol = target_sym
                             cached_snap = app.state.order_book_engine.get_snapshot(
                                 target_sym,
@@ -1166,9 +1180,13 @@ def create_app(
             app.state.connection_manager.disconnect(websocket)
 
     # Mount built frontend static files if available
-    frontend_dist = os.path.join(os.path.dirname(os.path.abspath(__file__)), "frontend", "dist")
-    if os.path.isdir(frontend_dist):
-        app.mount("/", StaticFiles(directory=frontend_dist, html=True), name="static")
+    dist_dir = (
+        frontend_dist
+        or os.getenv("FRONTEND_DIST")
+        or os.path.join(os.path.dirname(os.path.abspath(__file__)), "frontend", "dist")
+    )
+    if os.path.isdir(dist_dir):
+        app.mount("/", StaticFiles(directory=dist_dir, html=True), name="static")
 
     return app
 

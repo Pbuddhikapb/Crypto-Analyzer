@@ -3,7 +3,7 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
-from server import create_app
+from server import CandleFeedBuffer, MarketDataFeed, create_app
 
 
 @pytest.fixture
@@ -511,13 +511,71 @@ def test_cors_restricted_origins_and_methods(app_and_client):
     assert "Disallowed CORS origin" in resp_disallowed.text
 
 
-def test_static_frontend_serving(app_and_client):
-    """Verify that built frontend index.html is served from root /."""
-    _, client = app_and_client
-    resp = client.get("/")
-    assert resp.status_code == 200
-    assert "html" in resp.headers.get("content-type", "").lower()
-    assert "<div id=\"root\"></div>" in resp.text
+def test_static_frontend_serving(tmp_path):
+    """Verify hermetic static frontend serving via create_app(frontend_dist=...)."""
+    dist_dir = tmp_path / "mock_dist"
+    dist_dir.mkdir()
+    index_file = dist_dir / "index.html"
+    index_file.write_text("<!DOCTYPE html><html><body><div id=\"root\"></div></body></html>", encoding="utf-8")
+
+    db_path = str(tmp_path / "test_server.db")
+    app = create_app(
+        enable_ingestion=False,
+        db_path=db_path,
+        symbols=["BTCUSDT"],
+        frontend_dist=str(dist_dir),
+    )
+    with TestClient(app) as client:
+        resp = client.get("/")
+        assert resp.status_code == 200
+        assert "html" in resp.headers.get("content-type", "").lower()
+        assert '<div id="root"></div>' in resp.text
+
+
+def test_static_frontend_serving_env_var(tmp_path, monkeypatch):
+    """Verify hermetic static frontend serving via FRONTEND_DIST environment variable."""
+    dist_dir = tmp_path / "mock_dist_env"
+    dist_dir.mkdir()
+    index_file = dist_dir / "index.html"
+    index_file.write_text("<!DOCTYPE html><html><body><div id=\"root\"></div></body></html>", encoding="utf-8")
+    monkeypatch.setenv("FRONTEND_DIST", str(dist_dir))
+
+    db_path = str(tmp_path / "test_server.db")
+    app = create_app(
+        enable_ingestion=False,
+        db_path=db_path,
+        symbols=["BTCUSDT"],
+    )
+    with TestClient(app) as client:
+        resp = client.get("/")
+        assert resp.status_code == 200
+        assert '<div id="root"></div>' in resp.text
+
+
+def test_candle_feed_buffer_lifecycle():
+    """Verify CandleFeedBuffer stores candles, updates HTF EMA trend, and exposes no fake trade stub."""
+    buffer = CandleFeedBuffer(symbol="BTCUSDT", timeframe="15m")
+    assert buffer.symbol == "BTCUSDT"
+    assert buffer.bar_count == 0
+    assert len(buffer.candles) == 0
+
+    # Add candles using add_candle
+    buffer.add_candle((50000.0, 50100.0, 49900.0, 50050.0, 100.0))
+    assert buffer.bar_count == 1
+    assert len(buffer.candles) == 1
+
+    # Backwards compatibility alias
+    buffer.on_candle((50050.0, 50200.0, 50000.0, 50150.0, 120.0))
+    assert buffer.bar_count == 2
+    assert len(buffer.candles) == 2
+
+    # HTF trend calculation
+    for i in range(50):
+        buffer.load_historical_htf_candle((50000.0 + i * 10, 50100.0 + i * 10, 49900.0 + i * 10, 50050.0 + i * 10, 50.0))
+    assert buffer.get_htf_trend() == "BULLISH"
+
+    # Verify MarketDataFeed is CandleFeedBuffer
+    assert MarketDataFeed is CandleFeedBuffer
 
 
 

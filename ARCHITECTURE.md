@@ -186,6 +186,6 @@ The following discrepancies and unverified items exist in the codebase:
 2. **Unimplemented Opportunity Patterns on Radar**:
    `server.py` defines `"RSI Divergence": None` in `PATTERN_STRATEGY_MAP` (which correctly reports `UNTESTED` and displays no historical edge). There is currently no `RSIDivergenceStrategy` implemented in `research/strategies/`.
 3. **Paper Trader Decommissioned from Terminal**:
-   Automated paper trading via `PaperTrader` has been decommissioned from the live terminal path and moved to `legacy/trader.py`. The terminal operates in evidence-status mode with lightweight `MarketDataFeed` buffers and risk sizing parameters, rather than live simulated order execution.
+   Automated paper trading via `PaperTrader` has been decommissioned from the live terminal path and moved to `legacy/trader.py`. The terminal operates in evidence-status mode with lightweight `CandleFeedBuffer` buffers and risk sizing parameters, rather than live simulated order execution.
 4. **Holdout Historical Depth**:
    Parquet files currently present in `data/candles/` were downloaded up to development boundaries. Running `python -m research.holdout_check` on fresh post-2026 data requires downloading newer monthly archives from Binance Vision that extend beyond `DEVELOPMENT_END = "2026-04-18"`.
