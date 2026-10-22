@@ -52,7 +52,7 @@ An institutional market microstructure terminal and empirical quantitative valid
    python3 -m venv venv
    source venv/bin/activate
    pip install --upgrade pip
-   pip install -r requirements.txt
+   pip install -r requirements.lock
    ```
 
 3. **Install and Configure Pre-Commit Hooks:**
@@ -122,6 +122,49 @@ python -m research.holdout_check TrendPullback
 
 ---
 
+## Operational Management Scripts (Linux / Tmux)
+
+Production operations on Linux should be managed via the scripts in `scripts/`:
+
+### Start the Terminal Server
+```bash
+./scripts/start.sh
+```
+* **Execution Flow:**
+  1. Builds the frontend static bundle once (`cd frontend && npm run build`).
+  2. Ensures log directory `logs/` exists.
+  3. Launches `uvicorn server:app` bound strictly to `127.0.0.1:8008` inside an isolated tmux session (`crypto-terminal`).
+  4. Serves the pre-compiled frontend directly from FastAPI static files on the same port (`http://127.0.0.1:8008/`).
+  5. Streams all backend stdout/stderr to `logs/server.log`.
+  6. Verifies system readiness by polling `/api/health`.
+
+### Stop the Terminal Server
+```bash
+./scripts/stop.sh
+```
+* Gracefully terminates the `crypto-terminal` tmux session and frees port 8008.
+
+---
+
+## Secure Remote Access via SSH Port Forwarding
+
+> **Security Guardrail:** The terminal server is bound strictly to `127.0.0.1:8008`. **Do not open any external firewall ports on the host VM.**
+
+To securely access the web interface and real-time WebSocket streams from your local machine, open an SSH port-forwarding tunnel:
+
+```bash
+ssh -L 8008:127.0.0.1:8008 <user>@<VM_IP_ADDRESS>
+```
+
+Once the SSH connection is established, navigate to the following address in your local browser:
+```
+http://localhost:8008
+```
+
+All static assets, REST API requests (`/api/...`), and bi-directional WebSocket telemetry (`/ws`) will route securely through loopback over the encrypted SSH channel.
+
+---
+
 ## Repository Structure
 
 ```
@@ -146,10 +189,14 @@ python -m research.holdout_check TrendPullback
 │   ├── validator/             # Old scheduled validator suite
 │   ├── reports/               # Legacy validator run logs
 │   └── forensic_report.md     # Early forensic analysis notes
+├── scripts/
+│   ├── start.sh               # Builds frontend & runs FastAPI in tmux on 127.0.0.1:8008
+│   └── stop.sh                # Gracefully terminates tmux session and port 8008
 ├── frontend/                  # React + TypeScript + Tailwind institutional terminal
 ├── server.py                  # FastAPI WebSocket hub & evidence REST server
 ├── indicators.py              # Mathematical technical indicators (EMA, ATR, ADX, etc.)
 ├── microstructure.py          # Futures L2 order book, funding, and liquidation engines
 ├── risk.py                    # Portfolio margin, drawdown limits, and position sizing
+├── requirements.lock          # Exact pinned dependencies for CI and production
 └── ARCHITECTURE.md            # Comprehensive system architecture & governance rules
 ```

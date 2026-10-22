@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 import numpy as np
 from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from indicators import (
     calculate_ema,
@@ -844,12 +845,12 @@ def create_app(
     app.state.is_spot_connected = False
     app.state.futures_status_message = "Not checked"
 
-    # CORS configuration for Vite and local dev
+    # CORS configuration restricted to local loopback Vite dev and GET only
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=["http://127.0.0.1:5174", "http://localhost:5174"],
         allow_credentials=True,
-        allow_methods=["*"],
+        allow_methods=["GET"],
         allow_headers=["*"],
     )
 
@@ -1163,6 +1164,11 @@ def create_app(
             app.state.connection_manager.disconnect(websocket)
         except Exception:
             app.state.connection_manager.disconnect(websocket)
+
+    # Mount built frontend static files if available
+    frontend_dist = os.path.join(os.path.dirname(os.path.abspath(__file__)), "frontend", "dist")
+    if os.path.isdir(frontend_dist):
+        app.mount("/", StaticFiles(directory=frontend_dist, html=True), name="static")
 
     return app
 

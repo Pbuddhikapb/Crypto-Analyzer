@@ -472,4 +472,52 @@ def test_modifying_strategy_results_json_updates_endpoint_live(tmp_path):
     assert res2["status"] == "VALIDATED (p < 0.05)"
 
 
+def test_cors_restricted_origins_and_methods(app_and_client):
+    """Verify CORS allow_origins is restricted to loopback Vite dev and only GET is permitted."""
+    _, client = app_and_client
+
+    # 1. Allowed origin with GET method
+    resp = client.options(
+        "/api/health",
+        headers={
+            "Origin": "http://127.0.0.1:5174",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+    assert resp.status_code == 200
+    assert resp.headers.get("access-control-allow-origin") == "http://127.0.0.1:5174"
+    assert "GET" in resp.headers.get("access-control-allow-methods", "")
+
+    # 2. Disallowed method POST (must be rejected with 400 Bad Request)
+    resp_post = client.options(
+        "/api/health",
+        headers={
+            "Origin": "http://127.0.0.1:5174",
+            "Access-Control-Request-Method": "POST",
+        },
+    )
+    assert resp_post.status_code == 400
+    assert "Disallowed CORS method" in resp_post.text
+
+    # 3. Disallowed origin (must be rejected with 400 Bad Request)
+    resp_disallowed = client.options(
+        "/api/health",
+        headers={
+            "Origin": "http://malicious.com",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+    assert resp_disallowed.status_code == 400
+    assert "Disallowed CORS origin" in resp_disallowed.text
+
+
+def test_static_frontend_serving(app_and_client):
+    """Verify that built frontend index.html is served from root /."""
+    _, client = app_and_client
+    resp = client.get("/")
+    assert resp.status_code == 200
+    assert "html" in resp.headers.get("content-type", "").lower()
+    assert "<div id=\"root\"></div>" in resp.text
+
+
 
