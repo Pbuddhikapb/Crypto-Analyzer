@@ -46,7 +46,7 @@ class MarketDataVault:
                     badge TEXT NOT NULL,
                     is_buyer_maker INTEGER NOT NULL,
                     trade_id INTEGER,
-                    source TEXT DEFAULT 'binance_futures_um'
+                    source TEXT DEFAULT NULL
                 )
                 """
             )
@@ -71,7 +71,7 @@ class MarketDataVault:
                     notional REAL NOT NULL,
                     order_type TEXT NOT NULL,
                     status TEXT NOT NULL,
-                    source TEXT DEFAULT 'binance_futures_um'
+                    source TEXT DEFAULT NULL
                 )
                 """
             )
@@ -99,7 +99,7 @@ class MarketDataVault:
                     last_funding_rate REAL NOT NULL,
                     funding_apr_pct REAL NOT NULL,
                     next_funding_time_ms INTEGER NOT NULL,
-                    source TEXT DEFAULT 'binance_futures_um'
+                    source TEXT DEFAULT NULL
                 )
                 """
             )
@@ -124,7 +124,7 @@ class MarketDataVault:
                     spread REAL NOT NULL,
                     spread_bps REAL NOT NULL,
                     book_imbalance REAL NOT NULL,
-                    source TEXT DEFAULT 'binance_futures_um'
+                    source TEXT DEFAULT NULL
                 )
                 """
             )
@@ -146,7 +146,7 @@ class MarketDataVault:
                     top_trader_long_short_position_ratio REAL,
                     global_long_short_account_ratio REAL,
                     taker_buy_sell_volume_ratio REAL,
-                    source TEXT DEFAULT 'binance_futures_um'
+                    source TEXT DEFAULT NULL
                 )
                 """
             )
@@ -181,7 +181,7 @@ class MarketDataVault:
                     liq_long_notional REAL DEFAULT 0.0,
                     liq_short_notional REAL DEFAULT 0.0,
                     open_interest REAL,
-                    source TEXT DEFAULT 'binance_futures_um',
+                    source TEXT DEFAULT NULL,
                     PRIMARY KEY (symbol, timeframe, open_time)
                 )
                 """
@@ -218,7 +218,7 @@ class MarketDataVault:
                     confluence_score REAL,
                     action_taken TEXT,
                     block_reason TEXT,
-                    source TEXT DEFAULT 'binance_futures_um'
+                    source TEXT DEFAULT NULL
                 )
                 """
             )
@@ -232,7 +232,7 @@ class MarketDataVault:
             conn.commit()
 
     def _migrate_db(self, conn: sqlite3.Connection) -> None:
-        """Migrate existing schema tables to include source column without rewriting existing rows."""
+        """Migrate existing schema tables to include source column with DEFAULT NULL."""
         tables = [
             "whale_trades",
             "liquidation_events",
@@ -253,7 +253,7 @@ class MarketDataVault:
             cols = [row[1] for row in cursor.execute(f"PRAGMA table_info({table})").fetchall()]
             if "source" not in cols:
                 cursor.execute(
-                    f"ALTER TABLE {table} ADD COLUMN source TEXT DEFAULT 'binance_futures_um'"
+                    f"ALTER TABLE {table} ADD COLUMN source TEXT DEFAULT NULL"
                 )
 
     # ----------------------------------------------------
@@ -276,7 +276,7 @@ class MarketDataVault:
                 str(t.get("badge", "WHALE")).upper(),
                 1 if t.get("is_buyer_maker", False) else 0,
                 t.get("trade_id"),
-                str(t.get("source", "binance_futures_um")),
+                str(t.get("source") or "binance_futures_um"),
             )
             for t in trades
         ]
@@ -308,7 +308,7 @@ class MarketDataVault:
                 float(e["notional"]),
                 str(e.get("order_type", "LIMIT")).upper(),
                 str(e.get("status", "FILLED")).upper(),
-                str(e.get("source", "binance_futures_um")),
+                str(e.get("source") or "binance_futures_um"),
             )
             for e in events
         ]
@@ -343,7 +343,7 @@ class MarketDataVault:
                 float(s["last_funding_rate"]),
                 float(s.get("funding_apr_pct", 0.0)),
                 int(s.get("next_funding_time_ms", 0)),
-                str(s.get("source", "binance_futures_um")),
+                str(s.get("source") or "binance_futures_um"),
             )
             for s in snapshots
         ]
@@ -376,7 +376,7 @@ class MarketDataVault:
                 float(s.get("spread", s["best_ask_price"] - s["best_bid_price"])),
                 float(s.get("spread_bps", 0.0)),
                 float(s.get("book_imbalance", 0.0)),
-                str(s.get("source", "binance_futures_um")),
+                str(s.get("source") or "binance_futures_um"),
             )
             for s in snapshots
         ]
@@ -405,7 +405,7 @@ class MarketDataVault:
                 float(m.get("top_trader_long_short_position_ratio", 1.0)),
                 float(m.get("global_long_short_account_ratio", 1.0)),
                 float(m.get("taker_buy_sell_volume_ratio", 1.0)),
-                str(m.get("source", "binance_futures_um")),
+                str(m.get("source") or "binance_futures_um"),
             )
             for m in metrics_list
         ]
@@ -449,7 +449,7 @@ class MarketDataVault:
                 float(b.get("liq_long_notional", 0.0)),
                 float(b.get("liq_short_notional", 0.0)),
                 b.get("open_interest"),
-                str(b.get("source", "binance_futures_um")),
+                str(b.get("source") or "binance_futures_um"),
             )
             for b in bars
         ]
@@ -494,7 +494,7 @@ class MarketDataVault:
                 float(a.get("confluence_score", 0.0)),
                 str(a.get("action_taken", "IDLE")),
                 a.get("block_reason"),
-                str(a.get("source", "binance_futures_um")),
+                str(a.get("source") or "binance_futures_um"),
             )
             for a in audits
         ]
