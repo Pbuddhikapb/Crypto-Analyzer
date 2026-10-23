@@ -35,7 +35,7 @@ export const OpportunityRadar: React.FC<OpportunityRadarProps> = ({
       <div className="flex items-center justify-between pb-2 border-b border-dark-border">
         <div className="flex items-center space-x-2">
           <Radar size={15} className="text-laser-cyan animate-pulse" />
-          <span className="font-bold text-slate-200 tracking-wider">TOP ALPHA SCANNER</span>
+          <span className="font-bold text-slate-200 tracking-wider text-xs md:text-sm">TOP ALPHA SCANNER</span>
         </div>
         <button
           onClick={loadData}
@@ -77,7 +77,7 @@ export const OpportunityRadar: React.FC<OpportunityRadarProps> = ({
               <div
                 key={opp.symbol}
                 onClick={() => onSelectSymbol(opp.symbol)}
-                className={`p-2.5 rounded border transition cursor-pointer ${
+                className={`p-1.5 rounded border transition cursor-pointer ${
                   isSelected
                     ? 'bg-sky-500/10 border-sky-400/50 shadow-md shadow-sky-500/10'
                     : 'bg-dark-card border-dark-border hover:bg-dark-card/80 hover:border-slate-600'

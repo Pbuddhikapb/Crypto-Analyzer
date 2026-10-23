@@ -223,7 +223,7 @@ export function App() {
       />
 
       {/* 3. Main Terminal Workspace (3-Column Layout) */}
-      <div className="flex-1 flex min-h-0 overflow-hidden">
+      <div className="flex-1 flex flex-col md:flex-row min-h-0 overflow-hidden">
         {/* Left/Center: Chart + Indicator Sub-Pane */}
         <div className="flex-1 flex flex-col min-w-0 border-r border-dark-border">
           <ChartToolbar
@@ -255,7 +255,7 @@ export function App() {
 
         {/* Right Panel: Trade Staging, Order Flow, Alpha Radar (Collapsible) */}
         {!isRightPanelCollapsed && (
-          <div className="w-80 lg:w-96 flex flex-col min-h-0 bg-dark-panel border-l border-dark-border">
+          <div className="hidden md:block w-80 lg:w-96 flex flex-col min-h-0 bg-dark-panel border-l border-dark-border">
             {/* Panel Tab Switcher */}
             <div className="flex items-center border-b border-dark-border bg-dark-bg/60 p-1 text-[11px] font-mono">
               <button

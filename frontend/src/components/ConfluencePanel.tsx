@@ -71,7 +71,7 @@ export const ConfluencePanel: React.FC<ConfluencePanelProps> = ({
   const activeTrade = portfolio?.active_trades?.[0];
 
   return (
-    <footer className="h-10 bg-dark-panel border-t border-dark-border px-4 flex items-center justify-between text-xs font-mono select-none overflow-x-auto no-scrollbar">
+    <footer className="h-8 bg-dark-panel border-t border-dark-border px-2 flex items-center justify-between text-xs font-mono select-none overflow-x-auto no-scrollbar">
       {/* Confluence Score & Regime */}
       <div className="flex items-center space-x-4">
         {/* Confluence Badge */}

@@ -33,7 +33,7 @@ export const ChartToolbar: React.FC<ChartToolbarProps> = ({
   onToggleRightPanel,
 }) => {
   return (
-    <div className="h-9 bg-dark-panel border-b border-dark-border px-3 flex items-center justify-between text-xs select-none">
+    <div className="h-8 bg-dark-panel border-b border-dark-border px-2 flex items-center justify-between text-xs select-none">
       {/* Symbol & Timeframe Selectors */}
       <div className="flex items-center space-x-3">
         <div className="flex items-center space-x-1.5 font-bold text-slate-100">

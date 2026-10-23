@@ -56,7 +56,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   const isStale = timeSinceUpdate !== null && timeSinceUpdate > 2 * intervalSec;
 
   return (
-    <header className="h-11 bg-dark-panel border-b border-dark-border px-4 flex items-center justify-between text-xs select-none">
+    <header className="h-9 bg-dark-panel border-b border-dark-border px-2 flex items-center justify-between text-xs select-none">
       {/* Brand & Market Switcher */}
       <div className="flex items-center space-x-3">
         <div className="flex items-center space-x-2">
@@ -70,7 +70,7 @@ export const Navbar: React.FC<NavbarProps> = ({
         </div>
 
         {/* Active Data Source Badge */}
-        <div className="flex items-center space-x-1.5 px-2 py-0.5 bg-dark-card border border-dark-border rounded text-[11px] font-mono">
+        <div className="hidden md:flex items-center space-x-1.5 bg-dark-card border border-dark-border px-1.5 py-0.5 rounded text-xs md:text-sm">
           <span className="text-slate-400">SRC:</span>
           <span className="text-laser-cyan font-bold">{dataSource}</span>
         </div>
@@ -147,7 +147,7 @@ export const Navbar: React.FC<NavbarProps> = ({
         </div>
 
         {/* Connection Status Badge */}
-        <div className="flex items-center space-x-1.5 bg-dark-card border border-dark-border px-2 py-0.5 rounded">
+        <div className="flex items-center space-x-1.5 bg-dark-card border border-dark-border px-1.5 py-0.5 rounded text-xs md:text-sm">
           <span
             className={`w-2 h-2 rounded-full ${
               isConnected

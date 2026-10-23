@@ -57,7 +57,7 @@ export const TopCoinsBar: React.FC<TopCoinsBarProps> = ({
           <button
             key={coin.symbol}
             onClick={() => onSelectSymbol(coin.symbol)}
-            className={`flex items-center space-x-1.5 px-2.5 py-1 rounded transition whitespace-nowrap border ${
+            className={`flex items-center space-x-1.5 px-2.5 py-1 rounded transition whitespace-nowrap border text-xs md:text-sm ${
               isActive
                 ? 'bg-dark-card border-laser-cyan text-slate-100 shadow-[0_0_8px_rgba(0,242,254,0.25)]'
                 : 'bg-dark-panel/60 border-dark-border text-slate-300 hover:border-slate-600 hover:bg-dark-panel'
