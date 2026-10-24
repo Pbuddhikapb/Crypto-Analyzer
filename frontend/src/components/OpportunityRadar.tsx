@@ -1,9 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import { ScannerOpportunity } from '../types/market';
-import { fetchScannerOpportunities } from '../state/api';
+import { fetchScannerOpportunitiesWithMeta } from '../state/api';
 import { Radar, RefreshCw, Zap, AlertCircle } from 'lucide-react';
 import { formatPrice } from '../utils/formatters';
 import { GLOSSARY_TOOLTIPS } from '../utils/tooltips';
+import { formatCacheAgeSeconds } from '../utils/version';
 
 interface OpportunityRadarProps {
   activeSymbol: string;
@@ -16,11 +17,17 @@ export const OpportunityRadar: React.FC<OpportunityRadarProps> = ({
 }) => {
   const [opportunities, setOpportunities] = useState<ScannerOpportunity[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [cacheMeta, setCacheMeta] = useState<{ cacheAgeMs: number; fetchedAt: number } | null>(null);
+  const [elapsedSec, setElapsedSec] = useState<number>(0);
 
   const loadData = () => {
     setIsLoading(true);
-    fetchScannerOpportunities()
-      .then((data) => setOpportunities(data))
+    fetchScannerOpportunitiesWithMeta()
+      .then((res) => {
+        setOpportunities(res.opportunities);
+        setCacheMeta({ cacheAgeMs: res.cacheAgeMs, fetchedAt: res.fetchedAt });
+        setElapsedSec(formatCacheAgeSeconds(res.cacheAgeMs, res.fetchedAt));
+      })
       .catch(() => {})
       .finally(() => setIsLoading(false));
   };
@@ -31,6 +38,14 @@ export const OpportunityRadar: React.FC<OpportunityRadarProps> = ({
     return () => clearInterval(interval);
   }, []);
 
+  useEffect(() => {
+    if (!cacheMeta) return;
+    const timer = setInterval(() => {
+      setElapsedSec(formatCacheAgeSeconds(cacheMeta.cacheAgeMs, cacheMeta.fetchedAt));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [cacheMeta]);
+
   return (
     <div className="flex flex-col h-full bg-dark-panel text-slate-100 font-mono text-xs select-none p-3 space-y-2">
       {/* Header */}
@@ -38,6 +53,9 @@ export const OpportunityRadar: React.FC<OpportunityRadarProps> = ({
         <div className="flex items-center space-x-2">
           <Radar size={15} className="text-laser-cyan animate-pulse" />
           <span className="font-bold text-slate-200 tracking-wider text-xs md:text-sm">SETUP SCANNER</span>
+          <span className="text-[10px] text-slate-400 font-mono bg-dark-bg/80 border border-dark-border px-1.5 py-0.5 rounded">
+            updated {elapsedSec}s ago
+          </span>
         </div>
         <button
           onClick={loadData}
@@ -103,6 +121,7 @@ export const OpportunityRadar: React.FC<OpportunityRadarProps> = ({
                         CHOP
                       </span>
                     )}
+                    <span className="text-[9px] text-slate-500 font-mono">updated {elapsedSec}s ago</span>
                   </div>
 
                   {/* Evidence badge BEFORE score, equally prominent */}

@@ -34,10 +34,11 @@ jobs:
         with:
           node-version: 20
 
-      - name: Install frontend dependencies, typecheck, and build
+      - name: Install frontend dependencies, test, typecheck, and build
         working-directory: frontend
         run: |
           npm ci
+          npm test
           npx tsc --noEmit
           npm run build
 

@@ -1,9 +1,20 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import { execSync } from 'child_process';
+
+let buildCommit = 'unknown';
+try {
+  buildCommit = execSync('git rev-parse --short HEAD').toString().trim() || 'unknown';
+} catch {
+  buildCommit = process.env.VITE_GIT_COMMIT || 'unknown';
+}
 
 // https://vitejs.dev/config/
 export default defineConfig({
   plugins: [react()],
+  define: {
+    __BUILD_COMMIT__: JSON.stringify(buildCommit),
+  },
   server: {
     port: 5174,
     host: '127.0.0.1',

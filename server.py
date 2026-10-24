@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import subprocess
 import time
 from collections import deque
 from contextlib import asynccontextmanager
@@ -30,6 +31,25 @@ from main import (
 )
 from microstructure import OrderBookEngine, SymbolNormalizer
 from risk import PortfolioRiskManager
+
+
+def get_git_commit() -> str:
+    """Return short git commit hash from git rev-parse, or 'unknown' if unavailable."""
+    try:
+        res = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
+        )
+        if res.returncode == 0:
+            commit = res.stdout.strip()
+            if commit:
+                return commit
+    except Exception:
+        pass
+    return "unknown"
 
 
 class CandleFeedBuffer:
@@ -1053,6 +1073,7 @@ def create_app(
 
         return {
             "status": status,
+            "git_commit": get_git_commit(),
             "data_source": "binance_futures_um",
             "kline_connectivity": kline_conn,
             "spot_connectivity": kline_conn,  # Backwards compatibility alias

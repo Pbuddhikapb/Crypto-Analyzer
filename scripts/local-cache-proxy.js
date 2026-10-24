@@ -13,7 +13,7 @@
 //   /api/microstructure/summary → 10s   (whale trades come via WS)
 //   /api/portfolio/summary      → 5s    (updates via WS trade events)
 //   /api/trade/bracket          → 5s    (price updates via WS)
-//   /api/health                 → LOCAL (answered without VM call)
+//   /api/health                 → NO CACHE (always forwarded to VM; never faked)
 
 'use strict';
 
@@ -42,6 +42,8 @@ let totalHits   = 0;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function getTTL(url) {
+  // /api/health is NEVER cached; always live from upstream VM
+  if (/^\/api\/health/.test(url)) return 0;
   for (const rule of CACHE_RULES) {
     if (rule.pattern.test(url)) return rule.ttl;
   }
@@ -53,6 +55,7 @@ function corsHeaders(extra = {}) {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Expose-Headers': 'X-Cache, X-Cache-Age-Ms',
     ...extra,
   };
 }
@@ -81,13 +84,21 @@ function forwardToVM(path, clientRes) {
           cache.set(path, {
             body,
             ct,
-            status:  vmRes.statusCode,
-            expires: Date.now() + ttl,
-            hits:    0,
+            status:   vmRes.statusCode,
+            cachedAt: Date.now(),
+            expires:  Date.now() + ttl,
+            hits:     0,
           });
         }
 
-        clientRes.writeHead(vmRes.statusCode, corsHeaders({ 'Content-Type': ct, 'X-Cache': 'MISS' }));
+        clientRes.writeHead(
+          vmRes.statusCode,
+          corsHeaders({
+            'Content-Type': ct,
+            'X-Cache': 'MISS',
+            'X-Cache-Age-Ms': '0',
+          })
+        );
         clientRes.end(body);
       });
     }
@@ -129,26 +140,16 @@ const server = http.createServer((req, res) => {
     return forwardToVM(url, res);
   }
 
-  // ── /api/health — answered locally, zero VM call ──────────────────────────
-  if (url.startsWith('/api/health')) {
-    const stats = { hit: totalHits, miss: totalMisses, entries: cache.size };
-    res.writeHead(200, corsHeaders({ 'Content-Type': 'application/json', 'X-Cache': 'LOCAL' }));
-    return res.end(JSON.stringify({
-      status:      'healthy',
-      data_source: 'hybrid_local_vm',
-      note:        'Served by local cache proxy — no VM call made',
-      cache_stats: stats,
-    }));
-  }
-
   // ── Cache lookup ──────────────────────────────────────────────────────────
   const entry = cache.get(url);
   if (entry && Date.now() < entry.expires) {
     totalHits++;
     entry.hits++;
+    const ageMs = Math.max(0, Date.now() - (entry.cachedAt || 0));
     res.writeHead(entry.status, corsHeaders({
-      'Content-Type': entry.ct,
-      'X-Cache':      `HIT (${entry.hits} hits, ttl ${Math.round((entry.expires - Date.now()) / 1000)}s left)`,
+      'Content-Type':   entry.ct,
+      'X-Cache':        `HIT (${entry.hits} hits, ttl ${Math.round((entry.expires - Date.now()) / 1000)}s left)`,
+      'X-Cache-Age-Ms': String(ageMs),
     }));
     return res.end(entry.body);
   }
@@ -157,29 +158,31 @@ const server = http.createServer((req, res) => {
   forwardToVM(url, res);
 });
 
-server.listen(PORT, '127.0.0.1', () => {
-  console.log('');
-  console.log('╔══════════════════════════════════════════════════════╗');
-  console.log('║     Crypto-Analyzer Local Cache Proxy  v1.0          ║');
-  console.log('╚══════════════════════════════════════════════════════╝');
-  console.log(`  Proxy  : http://127.0.0.1:${PORT}`);
-  console.log(`  Upstream: http://${VM_HOST}:${VM_PORT}  (SSH tunnel → VM)`);
-  console.log(`  Rules   : ${CACHE_RULES.length} cache patterns active`);
-  console.log('');
-  console.log('  Cache TTLs:');
-  console.log('    /api/market/candles         → 30s');
-  console.log('    /api/scanner/opportunities  → 60s');
-  console.log('    /api/market/symbols         → 5min');
-  console.log('    /api/microstructure/summary → 10s');
-  console.log('    /api/portfolio/summary      → 5s');
-  console.log('    /api/health                 → LOCAL (no VM call)');
-  console.log('');
-  console.log('  Waiting for requests...');
-  console.log('');
-});
+if (require.main === module) {
+  server.listen(PORT, '127.0.0.1', () => {
+    console.log('');
+    console.log('╔══════════════════════════════════════════════════════╗');
+    console.log('║     Crypto-Analyzer Local Cache Proxy  v1.0          ║');
+    console.log('╚══════════════════════════════════════════════════════╝');
+    console.log(`  Proxy  : http://127.0.0.1:${PORT}`);
+    console.log(`  Upstream: http://${VM_HOST}:${VM_PORT}  (SSH tunnel → VM)`);
+    console.log(`  Rules   : ${CACHE_RULES.length} cache patterns active`);
+    console.log('');
+    console.log('  Cache TTLs:');
+    console.log('    /api/market/candles         → 30s');
+    console.log('    /api/scanner/opportunities  → 60s');
+    console.log('    /api/market/symbols         → 5min');
+    console.log('    /api/microstructure/summary → 10s');
+    console.log('    /api/portfolio/summary      → 5s');
+    console.log('    /api/health                 → NO CACHE (always forwarded to VM)');
+    console.log('');
+    console.log('  Waiting for requests...');
+    console.log('');
+  });
+}
 
 // ── Evict expired cache entries every 60s ─────────────────────────────────────
-setInterval(() => {
+const gcInterval = setInterval(() => {
   const now  = Date.now();
   let evicted = 0;
   for (const [k, v] of cache) {
@@ -190,7 +193,19 @@ setInterval(() => {
     : '0.0';
   console.log(`[CacheProxy] GC: evicted=${evicted} live=${cache.size} hits=${totalHits} misses=${totalMisses} hit_rate=${hitRate}%`);
 }, 60_000);
+if (gcInterval.unref) gcInterval.unref();
 
 // ── Graceful shutdown ─────────────────────────────────────────────────────────
 process.on('SIGTERM', () => { server.close(() => process.exit(0)); });
 process.on('SIGINT',  () => { server.close(() => process.exit(0)); });
+
+module.exports = {
+  server,
+  CACHE_RULES,
+  getTTL,
+  corsHeaders,
+  cache,
+  PORT,
+  VM_HOST,
+  VM_PORT,
+};

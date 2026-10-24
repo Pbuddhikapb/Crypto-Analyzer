@@ -30,6 +30,9 @@ def test_health_endpoint(app_and_client):
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == "down"
+    assert "git_commit" in data
+    assert isinstance(data["git_commit"], str)
+    assert len(data["git_commit"]) > 0
     assert "kline_connectivity" in data
     assert "spot_connectivity" in data
     assert data["kline_connectivity"] == data["spot_connectivity"]
@@ -838,3 +841,23 @@ def test_seed_buffer_from_parquet():
         assert ts_dict["BTCUSDT"][i] > ts_dict["BTCUSDT"][i - 1]
     # Closes are realistic BTC prices (> 10000)
     assert buf.candles[-1][3] > 10000.0
+
+
+def test_git_commit_detection():
+    """Verify get_git_commit detects the git commit or returns 'unknown'."""
+    from server import get_git_commit
+    commit = get_git_commit()
+    assert isinstance(commit, str)
+    assert len(commit) > 0
+
+
+def test_git_commit_fallback_on_error(monkeypatch):
+    """Verify get_git_commit gracefully falls back to 'unknown' on subprocess failure."""
+    import subprocess
+    from server import get_git_commit
+
+    def fail_run(*args, **kwargs):
+        raise FileNotFoundError("git not found")
+
+    monkeypatch.setattr(subprocess, "run", fail_run)
+    assert get_git_commit() == "unknown"

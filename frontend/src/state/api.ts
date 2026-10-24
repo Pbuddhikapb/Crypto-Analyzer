@@ -44,10 +44,28 @@ export async function fetchMicrostructureSummary(symbol: string): Promise<Micros
   return res.json();
 }
 
-export async function fetchScannerOpportunities(): Promise<import('../types/market').ScannerOpportunity[]> {
+export interface ScannerOpportunitiesMeta {
+  opportunities: import('../types/market').ScannerOpportunity[];
+  cacheAgeMs: number;
+  fetchedAt: number;
+}
+
+export async function fetchScannerOpportunitiesWithMeta(): Promise<ScannerOpportunitiesMeta> {
   const res = await fetch(`${API_BASE}/scanner/opportunities`);
   if (!res.ok) throw new Error(`HTTP ${res.status}: Failed to fetch scanner opportunities`);
-  return res.json();
+  const ageHeader = res.headers.get('x-cache-age-ms');
+  const cacheAgeMs = ageHeader ? parseInt(ageHeader, 10) : 0;
+  const opportunities = await res.json();
+  return {
+    opportunities,
+    cacheAgeMs: isNaN(cacheAgeMs) ? 0 : cacheAgeMs,
+    fetchedAt: Date.now(),
+  };
+}
+
+export async function fetchScannerOpportunities(): Promise<import('../types/market').ScannerOpportunity[]> {
+  const meta = await fetchScannerOpportunitiesWithMeta();
+  return meta.opportunities;
 }
 
 export async function fetchMarketDepth(symbol: string): Promise<import('../types/market').OrderBookDepthData> {

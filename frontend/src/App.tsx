@@ -349,6 +349,7 @@ export function App() {
         microstructure={microstructure}
         portfolio={portfolio}
         opportunity={activeOpportunity}
+        apiGitCommit={health?.git_commit}
         onOpenCockpit={() => {
           setRightTab('COCKPIT');
           setIsRightPanelCollapsed(false);

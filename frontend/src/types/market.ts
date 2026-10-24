@@ -225,6 +225,7 @@ export interface MicrostructureSummary {
 
 export interface SystemHealth {
   status: string;
+  git_commit?: string;
   data_source?: string;
   last_update_per_symbol?: Record<string, number>;
   last_update_times?: Record<string, number>;

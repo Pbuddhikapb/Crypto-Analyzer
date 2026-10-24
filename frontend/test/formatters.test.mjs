@@ -1,6 +1,6 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { getPricePrecision, formatPrice, getMinMove, formatUTCClock } from './formatters.compiled.js';
+import { getPricePrecision, formatPrice, getMinMove, formatUTCClock } from './compiled/formatters.js';
 
 describe('Price Formatter', () => {
   test('derives price precision from symbol price according to institutional rules', () => {

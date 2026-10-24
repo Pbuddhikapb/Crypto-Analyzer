@@ -1,13 +1,15 @@
 import React, { useMemo } from 'react';
 import { Indicators, MicrostructureSummary, PortfolioSummary, ScannerOpportunity } from '../types/market';
-import { Compass, Gauge, Clock, Percent } from 'lucide-react';
+import { Compass, Gauge, Clock, Percent, AlertTriangle } from 'lucide-react';
 import { GLOSSARY_TOOLTIPS } from '../utils/tooltips';
+import { computeVersionInfo } from '../utils/version';
 
 interface ConfluencePanelProps {
   indicators: Indicators | null;
   microstructure: MicrostructureSummary | null;
   portfolio: PortfolioSummary | null;
   opportunity?: ScannerOpportunity | null;
+  apiGitCommit?: string;
   onOpenCockpit?: () => void;
 }
 
@@ -16,8 +18,13 @@ export const ConfluencePanel: React.FC<ConfluencePanelProps> = ({
   microstructure,
   portfolio,
   opportunity,
+  apiGitCommit,
   onOpenCockpit,
 }) => {
+  const version = useMemo(() => {
+    const ui = typeof __BUILD_COMMIT__ !== 'undefined' ? __BUILD_COMMIT__ : 'unknown';
+    return computeVersionInfo(ui, apiGitCommit);
+  }, [apiGitCommit]);
   // Use ONE unified confluence score (0 to 100) and display direction separately
   const { score, direction, scoreColorClass, directionColorClass } = useMemo(() => {
     // 1. Authoritative score from scanner opportunity or fallback indicator model
@@ -148,8 +155,25 @@ export const ConfluencePanel: React.FC<ConfluencePanelProps> = ({
         </div>
       </div>
 
-      {/* Active Position / Portfolio Snapshot */}
+      {/* Active Position / Portfolio Snapshot & Version Status */}
       <div className="flex items-center space-x-3">
+        {/* Version Status: UI abc1234 / API def5678 */}
+        <div className="flex items-center font-mono text-[10px]">
+          {version.isMismatch ? (
+            <span
+              className="text-crimson-red font-bold bg-crimson-red/15 border border-crimson-red/40 px-1.5 py-0.5 rounded flex items-center space-x-1"
+              title="Frontend build commit does not match backend API commit"
+            >
+              <AlertTriangle size={11} />
+              <span>{version.displayText}</span>
+            </span>
+          ) : (
+            <span className="text-slate-500">
+              {version.displayText}
+            </span>
+          )}
+        </div>
+
         {activeTrade ? (
           <button
             onClick={onOpenCockpit}
