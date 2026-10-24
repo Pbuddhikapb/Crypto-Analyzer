@@ -1,5 +1,7 @@
 import React, { useMemo } from 'react';
 import { Indicators, ScannerOpportunity } from '../types/market';
+import { formatPrice } from '../utils/formatters';
+import { GLOSSARY_TOOLTIPS } from '../utils/tooltips';
 import {
   CheckCircle2,
   XCircle,
@@ -107,7 +109,7 @@ export const ConfirmationChecklist: React.FC<ConfirmationChecklistProps> = ({
       p3Badge = 'GAP ACTIVE';
       const targetBox = matchingBoxes[0];
       p3Desc = targetBox?.ce
-        ? `50% CE Retest @ $${targetBox.ce.toFixed(2)}`
+        ? `50% CE Retest @ $${formatPrice(targetBox.ce, currentPrice)}`
         : `Active ${side} FVG Mitigated`;
     } else {
       p3Status = 'PENDING';
@@ -196,7 +198,7 @@ export const ConfirmationChecklist: React.FC<ConfirmationChecklistProps> = ({
       },
       {
         id: 'p3_fvg',
-        title: 'SMC Fair Value Gap',
+        title: 'SMC Fair Value Gap (FVG)',
         desc: p3Desc,
         status: p3Status,
         badge: p3Badge,
@@ -204,7 +206,7 @@ export const ConfirmationChecklist: React.FC<ConfirmationChecklistProps> = ({
       },
       {
         id: 'p4_ob',
-        title: 'Order / Breaker Block',
+        title: 'Order / Breaker Block (OB)',
         desc: p4Desc,
         status: p4Status,
         badge: p4Badge,
@@ -333,7 +335,16 @@ export const ConfirmationChecklist: React.FC<ConfirmationChecklistProps> = ({
                 <div className="flex items-center space-x-2 min-w-0 pr-2">
                   {statusIcon}
                   <div className="min-w-0">
-                    <div className="text-[11px] font-bold text-slate-200 truncate flex items-center space-x-1">
+                    <div
+                      className="text-[11px] font-bold text-slate-200 truncate flex items-center space-x-1"
+                      title={
+                        p.id === 'p3_fvg'
+                          ? `${GLOSSARY_TOOLTIPS.FVG} • ${GLOSSARY_TOOLTIPS.CE}`
+                          : p.id === 'p4_ob'
+                          ? GLOSSARY_TOOLTIPS.OB
+                          : undefined
+                      }
+                    >
                       <span>{p.title}</span>
                     </div>
                     <div className="text-[10px] text-slate-400 truncate">{p.desc}</div>

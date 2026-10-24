@@ -1,5 +1,6 @@
 import React from 'react';
 import { Eye, EyeOff, Maximize2, Minimize2 } from 'lucide-react';
+import { GLOSSARY_TOOLTIPS } from '../utils/tooltips';
 
 interface ChartToolbarProps {
   symbol: string;
@@ -83,6 +84,7 @@ export const ChartToolbar: React.FC<ChartToolbarProps> = ({
         {/* FVGs Toggle */}
         <button
           onClick={onToggleFVGs}
+          title={GLOSSARY_TOOLTIPS.FVG}
           className={`flex items-center space-x-1 px-2 py-0.5 rounded border text-[11px] transition ${
             showFVGs
               ? 'bg-purple-smc/15 text-purple-smc border-purple-smc/40 font-semibold'

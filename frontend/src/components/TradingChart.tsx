@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState, useMemo } from 'react';
 import {
   createChart,
   ColorType,
@@ -10,6 +10,7 @@ import {
   IPriceLine,
 } from 'lightweight-charts';
 import { Candle, Indicators } from '../types/market';
+import { formatPrice, getMinMove } from '../utils/formatters';
 
 interface TradingChartProps {
   candles: Candle[];
@@ -40,9 +41,23 @@ export const TradingChart: React.FC<TradingChartProps> = ({
   const rsiSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
   const fvgPriceLinesRef = useRef<IPriceLine[]>([]);
 
+  // Hovered or latest candle for chart tooltip
+  const [hoveredCandle, setHoveredCandle] = useState<Candle | null>(null);
+  const [hoveredEma50, setHoveredEma50] = useState<number | null>(null);
+  const [hoveredEma200, setHoveredEma200] = useState<number | null>(null);
+
+  // Reference price derived from latest price or most recent candle
+  const refPrice = useMemo(() => {
+    if (latestPrice && latestPrice > 0) return latestPrice;
+    if (candles.length > 0) return candles[candles.length - 1].close;
+    return 1000.0;
+  }, [latestPrice, candles]);
+
   // 1. Initialize Main Candlestick Chart
   useEffect(() => {
     if (!chartContainerRef.current) return;
+
+    const formatter = (p: number) => formatPrice(p, refPrice);
 
     const chart = createChart(chartContainerRef.current, {
       layout: {
@@ -50,6 +65,9 @@ export const TradingChart: React.FC<TradingChartProps> = ({
         textColor: '#94a3b8',
         fontFamily: 'ui-monospace, monospace',
         fontSize: 11,
+      },
+      localization: {
+        priceFormatter: formatter,
       },
       grid: {
         vertLines: { color: '#131b2c', style: LineStyle.Dotted },
@@ -71,6 +89,8 @@ export const TradingChart: React.FC<TradingChartProps> = ({
       },
     });
 
+    const minMove = getMinMove(refPrice);
+
     const candleSeries = chart.addCandlestickSeries({
       upColor: '#00e676',
       downColor: '#ff1744',
@@ -78,24 +98,67 @@ export const TradingChart: React.FC<TradingChartProps> = ({
       borderDownColor: '#ff1744',
       wickUpColor: '#00e676',
       wickDownColor: '#ff1744',
+      priceFormat: {
+        type: 'custom',
+        formatter,
+        minMove,
+      },
     });
 
     const ema50Series = chart.addLineSeries({
       color: '#00f2fe',
       lineWidth: 1,
       title: 'EMA 50',
+      priceFormat: {
+        type: 'custom',
+        formatter,
+        minMove,
+      },
     });
 
     const ema200Series = chart.addLineSeries({
       color: '#a855f7',
       lineWidth: 2,
       title: 'EMA 200',
+      priceFormat: {
+        type: 'custom',
+        formatter,
+        minMove,
+      },
     });
 
     chartRef.current = chart;
     candleSeriesRef.current = candleSeries;
     ema50SeriesRef.current = ema50Series;
     ema200SeriesRef.current = ema200Series;
+
+    // Crosshair move listener for interactive tooltip
+    chart.subscribeCrosshairMove((param) => {
+      if (!param || !param.time || !param.seriesData) {
+        setHoveredCandle(null);
+        setHoveredEma50(null);
+        setHoveredEma200(null);
+        return;
+      }
+
+      const cData = param.seriesData.get(candleSeries) as { open: number; high: number; low: number; close: number } | undefined;
+      if (cData) {
+        setHoveredCandle({
+          time: Number(param.time),
+          open: cData.open,
+          high: cData.high,
+          low: cData.low,
+          close: cData.close,
+          volume: 0,
+        });
+      }
+
+      const e50 = param.seriesData.get(ema50Series) as { value: number } | undefined;
+      setHoveredEma50(e50?.value ?? null);
+
+      const e200 = param.seriesData.get(ema200Series) as { value: number } | undefined;
+      setHoveredEma200(e200?.value ?? null);
+    });
 
     // ResizeObserver for main chart
     const resizeObserver = new ResizeObserver((entries) => {
@@ -114,6 +177,26 @@ export const TradingChart: React.FC<TradingChartProps> = ({
       ema200SeriesRef.current = null;
     };
   }, []);
+
+  // Update chart price formatting whenever the symbol reference price changes tier
+  useEffect(() => {
+    if (!chartRef.current || !candleSeriesRef.current) return;
+    const formatter = (p: number) => formatPrice(p, refPrice);
+    const minMove = getMinMove(refPrice);
+
+    chartRef.current.applyOptions({
+      localization: { priceFormatter: formatter },
+    });
+    candleSeriesRef.current.applyOptions({
+      priceFormat: { type: 'custom', formatter, minMove },
+    });
+    ema50SeriesRef.current?.applyOptions({
+      priceFormat: { type: 'custom', formatter, minMove },
+    });
+    ema200SeriesRef.current?.applyOptions({
+      priceFormat: { type: 'custom', formatter, minMove },
+    });
+  }, [refPrice]);
 
   // 2. Initialize RSI Sub-Pane Chart (when showRSI is true)
   useEffect(() => {
@@ -284,7 +367,7 @@ export const TradingChart: React.FC<TradingChartProps> = ({
     }
   }, [candles, showEMAs, showRSI]);
 
-  // 4. Update FVG Price Lines
+  // 4. Update FVG and Bracket Price Lines
   useEffect(() => {
     if (!candleSeriesRef.current) return;
 
@@ -303,7 +386,7 @@ export const TradingChart: React.FC<TradingChartProps> = ({
           color,
           lineWidth: 1,
           lineStyle: LineStyle.Dotted,
-          title: `${box.type} FVG TOP`,
+          title: `${box.type} FVG TOP: ${formatPrice(box.top, refPrice)}`,
           axisLabelVisible: true,
         });
 
@@ -312,7 +395,7 @@ export const TradingChart: React.FC<TradingChartProps> = ({
           color,
           lineWidth: 1,
           lineStyle: LineStyle.Dotted,
-          title: `${box.type} FVG BOT`,
+          title: `${box.type} FVG BOT: ${formatPrice(box.bottom, refPrice)}`,
           axisLabelVisible: true,
         });
 
@@ -324,7 +407,7 @@ export const TradingChart: React.FC<TradingChartProps> = ({
             color: '#f59e0b',
             lineWidth: 1,
             lineStyle: LineStyle.Dashed,
-            title: `FVG 50% CE`,
+            title: `FVG 50% CE: ${formatPrice(box.ce, refPrice)}`,
             axisLabelVisible: true,
           });
           fvgPriceLinesRef.current.push(cePl);
@@ -340,7 +423,7 @@ export const TradingChart: React.FC<TradingChartProps> = ({
           color: setup.side === 'LONG' ? '#38bdf8' : '#fb923c',
           lineWidth: 2,
           lineStyle: LineStyle.Solid,
-          title: `LIMIT ENTRY (${setup.side})`,
+          title: `LIMIT ENTRY (${setup.side} @ ${formatPrice(setup.limit_entry, refPrice)})`,
           axisLabelVisible: true,
         });
 
@@ -350,7 +433,7 @@ export const TradingChart: React.FC<TradingChartProps> = ({
           color: '#ef4444',
           lineWidth: 2,
           lineStyle: LineStyle.Solid,
-          title: `STOP LOSS (-1.0R | -${setup.risk_pct.toFixed(2)}%)`,
+          title: `STOP LOSS (-1.0R @ ${formatPrice(setup.stop_loss, refPrice)} | -${setup.risk_pct.toFixed(2)}%)`,
           axisLabelVisible: true,
         });
 
@@ -360,7 +443,7 @@ export const TradingChart: React.FC<TradingChartProps> = ({
           color: '#10b981',
           lineWidth: 2,
           lineStyle: LineStyle.Dashed,
-          title: `TP1 (+${setup.tp1_r ?? 0.75}R / 50% SCALE)`,
+          title: `TP1 (+${setup.tp1_r ?? 0.75}R @ ${formatPrice(setup.tp1, refPrice)} / 50% SCALE)`,
           axisLabelVisible: true,
         });
 
@@ -371,7 +454,7 @@ export const TradingChart: React.FC<TradingChartProps> = ({
           color: '#06b6d4',
           lineWidth: 1,
           lineStyle: LineStyle.Dotted,
-          title: `BE TRIGGER (+${setup.be_trigger_r ?? 0.85}R ARMED)`,
+          title: `BE TRIGGER (+${setup.be_trigger_r ?? 0.85}R @ ${formatPrice(beTriggerPrice, refPrice)} ARMED)`,
           axisLabelVisible: true,
         });
 
@@ -381,7 +464,7 @@ export const TradingChart: React.FC<TradingChartProps> = ({
           color: '#00e676',
           lineWidth: 2,
           lineStyle: LineStyle.Solid,
-          title: `TP2 RUNNER (+${setup.tp2_r ?? setup.rr_ratio}R FINAL)`,
+          title: `TP2 RUNNER (+${setup.tp2_r ?? setup.rr_ratio}R @ ${formatPrice(setup.tp2, refPrice)} FINAL)`,
           axisLabelVisible: true,
         });
 
@@ -396,7 +479,7 @@ export const TradingChart: React.FC<TradingChartProps> = ({
           color: '#38bdf8',
           lineWidth: 1,
           lineStyle: LineStyle.Dashed,
-          title: '50% EQUILIBRIUM',
+          title: `50% EQUILIBRIUM: ${formatPrice(fibs['0.5'], refPrice)}`,
           axisLabelVisible: true,
         });
 
@@ -405,7 +488,7 @@ export const TradingChart: React.FC<TradingChartProps> = ({
           color: '#f59e0b',
           lineWidth: 1,
           lineStyle: LineStyle.Solid,
-          title: '0.618 OTE BOUND',
+          title: `0.618 OTE BOUND: ${formatPrice(fibs['0.618'], refPrice)}`,
           axisLabelVisible: true,
         });
 
@@ -414,7 +497,7 @@ export const TradingChart: React.FC<TradingChartProps> = ({
           color: '#fbbf24',
           lineWidth: 2,
           lineStyle: LineStyle.Solid,
-          title: '0.705 SWEET SPOT',
+          title: `0.705 SWEET SPOT: ${formatPrice(fibs['0.705'], refPrice)}`,
           axisLabelVisible: true,
         });
 
@@ -423,7 +506,7 @@ export const TradingChart: React.FC<TradingChartProps> = ({
           color: '#f59e0b',
           lineWidth: 1,
           lineStyle: LineStyle.Solid,
-          title: '0.786 OTE BOUND',
+          title: `0.786 OTE BOUND: ${formatPrice(fibs['0.786'], refPrice)}`,
           axisLabelVisible: true,
         });
 
@@ -439,14 +522,14 @@ export const TradingChart: React.FC<TradingChartProps> = ({
             color: isBull ? '#10b981' : '#f43f5e',
             lineWidth: 1,
             lineStyle: LineStyle.Dashed,
-            title: `${isBull ? 'DEMAND' : 'SUPPLY'} OB MT`,
+            title: `${isBull ? 'DEMAND' : 'SUPPLY'} OB MT: ${formatPrice(ob.mean_threshold, refPrice)}`,
             axisLabelVisible: true,
           });
           fvgPriceLinesRef.current.push(obMtPl);
         });
       }
     }
-  }, [indicators, showFVGs]);
+  }, [indicators, showFVGs, refPrice]);
 
   // 5. Real-time Tick update on last candle
   useEffect(() => {
@@ -461,8 +544,36 @@ export const TradingChart: React.FC<TradingChartProps> = ({
     });
   }, [latestPrice, candles]);
 
+  const activeCandle = hoveredCandle || (candles.length > 0 ? candles[candles.length - 1] : null);
+
   return (
-    <div className="w-full h-full flex flex-col bg-dark-bg select-none">
+    <div className="w-full h-full flex flex-col bg-dark-bg select-none relative">
+      {/* Chart Top-Left Tooltip & OHLC Legend */}
+      {activeCandle && (
+        <div className="absolute top-2 left-3 z-10 pointer-events-none flex flex-wrap items-center gap-x-3 gap-y-1 bg-dark-bg/90 backdrop-blur-sm border border-dark-border/60 px-2.5 py-1 rounded text-[11px] font-mono shadow-sm">
+          <div className="flex items-center space-x-1.5 text-slate-300">
+            <span className="text-slate-500 font-semibold">O:</span>
+            <span className="font-bold">{formatPrice(activeCandle.open, refPrice)}</span>
+            <span className="text-slate-500 font-semibold">H:</span>
+            <span className="font-bold text-laser-green">{formatPrice(activeCandle.high, refPrice)}</span>
+            <span className="text-slate-500 font-semibold">L:</span>
+            <span className="font-bold text-crimson-red">{formatPrice(activeCandle.low, refPrice)}</span>
+            <span className="text-slate-500 font-semibold">C:</span>
+            <span className="font-bold">{formatPrice(activeCandle.close, refPrice)}</span>
+          </div>
+          {showEMAs && (
+            <div className="flex items-center space-x-2 text-[10px]">
+              <span className="text-laser-cyan font-semibold">
+                EMA 50: {formatPrice(hoveredEma50 ?? (candles.length >= 50 ? activeCandle.close : null), refPrice)}
+              </span>
+              <span className="text-purple-400 font-semibold">
+                EMA 200: {formatPrice(hoveredEma200 ?? (candles.length >= 200 ? activeCandle.close : null), refPrice)}
+              </span>
+            </div>
+          )}
+        </div>
+      )}
+
       <div ref={chartContainerRef} className="flex-1 w-full min-h-0" />
       {showRSI && (
         <div className="h-28 w-full border-t border-dark-border flex flex-col">

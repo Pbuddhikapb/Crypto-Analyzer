@@ -37,7 +37,6 @@ export function App() {
   // Navigation & Market Universe State
   const [activeSymbol, setActiveSymbol] = useState<string>('BTCUSDT');
   const [activeTimeframe, setActiveTimeframe] = useState<string>('15m');
-  const [mode, setMode] = useState<'SPOT' | 'FUTURES'>('FUTURES');
   const [symbols, setSymbols] = useState<MarketSymbol[]>([]);
   const [latestPrices, setLatestPrices] = useState<Record<string, number>>({});
   const [opportunities, setOpportunities] = useState<ScannerOpportunity[]>([]);
@@ -201,12 +200,8 @@ export function App() {
       <Navbar
         isConnected={isConnected}
         latencyMs={latencyMs}
-        activePositionsCount={portfolio?.active_positions_count || 0}
-        maxPositions={portfolio?.max_open_positions || 3}
         isFuturesOnline={microstructure?.is_futures_online ?? true}
-        mode={mode}
         macroBias={indicators?.trend || 'NEUTRAL'}
-        onModeToggle={() => setMode((m) => (m === 'FUTURES' ? 'SPOT' : 'FUTURES'))}
         dataSource={health?.data_source || 'binance_futures_um'}
         lastUpdateSec={currentLastUpdate}
         candleIntervalSec={candleIntervalSec}
@@ -353,6 +348,7 @@ export function App() {
         indicators={indicators}
         microstructure={microstructure}
         portfolio={portfolio}
+        opportunity={activeOpportunity}
         onOpenCockpit={() => {
           setRightTab('COCKPIT');
           setIsRightPanelCollapsed(false);

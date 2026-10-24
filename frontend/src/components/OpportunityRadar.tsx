@@ -2,6 +2,8 @@ import React, { useEffect, useState } from 'react';
 import { ScannerOpportunity } from '../types/market';
 import { fetchScannerOpportunities } from '../state/api';
 import { Radar, RefreshCw, Zap, AlertCircle } from 'lucide-react';
+import { formatPrice } from '../utils/formatters';
+import { GLOSSARY_TOOLTIPS } from '../utils/tooltips';
 
 interface OpportunityRadarProps {
   activeSymbol: string;
@@ -35,7 +37,7 @@ export const OpportunityRadar: React.FC<OpportunityRadarProps> = ({
       <div className="flex items-center justify-between pb-2 border-b border-dark-border">
         <div className="flex items-center space-x-2">
           <Radar size={15} className="text-laser-cyan animate-pulse" />
-          <span className="font-bold text-slate-200 tracking-wider text-xs md:text-sm">TOP ALPHA SCANNER</span>
+          <span className="font-bold text-slate-200 tracking-wider text-xs md:text-sm">SETUP SCANNER</span>
         </div>
         <button
           onClick={loadData}
@@ -48,7 +50,7 @@ export const OpportunityRadar: React.FC<OpportunityRadarProps> = ({
       </div>
 
       <div className="text-[10px] text-slate-400">
-        Ranked by Confluence, Volume Surge, and SMC Inflection Signals
+        Pattern detections, not predictions. Check the evidence badge.
       </div>
 
       {/* List */}
@@ -83,7 +85,7 @@ export const OpportunityRadar: React.FC<OpportunityRadarProps> = ({
                     : 'bg-dark-card border-dark-border hover:bg-dark-card/80 hover:border-slate-600'
                 }`}
               >
-                {/* Header Row: Symbol, Trend, Confluence Badge */}
+                {/* Header Row: Symbol, Direction, Evidence Badge, Confluence Score */}
                 <div className="flex items-center justify-between">
                   <div className="flex items-center space-x-1.5">
                     <span className="font-bold text-[13px] text-slate-100">{opp.symbol}</span>
@@ -103,46 +105,68 @@ export const OpportunityRadar: React.FC<OpportunityRadarProps> = ({
                     )}
                   </div>
 
-                  <div className={`flex items-center space-x-1 px-1.5 py-0.5 rounded border text-[11px] font-bold ${scoreColor}`}>
-                    <Zap size={11} />
-                    <span>{opp.confluence_score}/100</span>
+                  {/* Evidence badge BEFORE score, equally prominent */}
+                  <div className="flex items-center space-x-1.5">
+                    {baseline ? (
+                      <span
+                        className={`px-1.5 py-0.5 rounded border text-[11px] font-bold ${
+                          baseline.status === 'UNTESTED'
+                            ? 'bg-slate-800/80 text-slate-400 border-slate-600/40'
+                            : baseline.status === 'NO VALIDATED EDGE'
+                            ? 'bg-crimson-red/20 text-crimson-red border-crimson-red/50 shadow-sm'
+                            : 'bg-emerald-500/20 text-emerald-400 border-emerald-500/50'
+                        }`}
+                        title={
+                          baseline.status === 'UNTESTED'
+                            ? `${baseline.pattern}: UNTESTED (No historical evidence)`
+                            : `${baseline.pattern}: ${baseline.sample_trades ?? 0} trades | PF ${baseline.profit_factor ?? 'N/A'} | WR ${baseline.win_rate ?? 'N/A'}% | ${baseline.status}`
+                        }
+                      >
+                        {baseline.status === 'NO VALIDATED EDGE' ? 'NO VALIDATED EDGE' : baseline.status}
+                      </span>
+                    ) : (
+                      <span className="px-1.5 py-0.5 rounded border text-[11px] font-bold bg-slate-800/80 text-slate-400 border-slate-600/40">
+                        UNTESTED
+                      </span>
+                    )}
+
+                    <div
+                      className={`flex items-center space-x-1 px-1.5 py-0.5 rounded border text-[11px] font-bold ${scoreColor}`}
+                      title="Unified Confluence Score (0-100 scale, identical across Terminal)"
+                    >
+                      <Zap size={11} />
+                      <span>{opp.confluence_score}/100</span>
+                    </div>
                   </div>
                 </div>
 
-                {/* Inflection Pattern and Phase 3 Empirical Baseline */}
+                {/* Inflection Pattern and Baseline Detail */}
                 <div className="mt-1.5 flex flex-wrap items-center gap-1">
                   {opp.inflection_pattern && (
-                    <span className="px-1.5 py-0.5 rounded text-[9px] font-semibold bg-sky-500/15 text-sky-300 border border-sky-500/30">
+                    <span
+                      className="px-1.5 py-0.5 rounded text-[9px] font-semibold bg-sky-500/15 text-sky-300 border border-sky-500/30"
+                      title={
+                        opp.inflection_pattern.includes('FVG')
+                          ? GLOSSARY_TOOLTIPS.FVG
+                          : opp.inflection_pattern.includes('OTE')
+                          ? GLOSSARY_TOOLTIPS.OTE
+                          : undefined
+                      }
+                    >
                       {opp.inflection_pattern}
                     </span>
                   )}
-                  {baseline && (
+                  {baseline && baseline.status !== 'UNTESTED' && (
                     <span
-                      className={`px-1.5 py-0.5 rounded text-[9px] font-mono border ${
-                        baseline.status === 'UNTESTED'
-                          ? 'bg-slate-800/80 text-slate-400 border-slate-600/40'
-                          : baseline.status === 'NO VALIDATED EDGE'
-                          ? 'bg-crimson-red/15 text-crimson-red border-crimson-red/40 font-semibold'
-                          : 'bg-dark-bg/80 text-slate-400 border-dark-border'
-                      }`}
-                      title={
-                        baseline.status === 'UNTESTED'
-                          ? `${baseline.pattern}: UNTESTED (No historical evidence)`
-                          : `${baseline.pattern}: ${baseline.sample_trades ?? 0} trades | PF ${baseline.profit_factor ?? 'N/A'} | WR ${baseline.win_rate ?? 'N/A'}% | ${baseline.status}${
-                              baseline.run_timestamp
-                                ? ` | stats are from ${new Date(baseline.run_timestamp).toLocaleDateString()}`
-                                : ''
-                            }`
-                      }
+                      className="px-1.5 py-0.5 rounded text-[9px] font-mono border bg-dark-bg/80 text-slate-400 border-dark-border"
+                      title={GLOSSARY_TOOLTIPS.PF}
                     >
-                      {baseline.status === 'UNTESTED'
-                        ? 'UNTESTED'
-                        : `${baseline.status === 'NO VALIDATED EDGE' ? 'NO EDGE' : baseline.status}: ${baseline.profit_factor ?? 'N/A'} PF`}
+                      PF {baseline.profit_factor ?? 'N/A'} | WR {baseline.win_rate ?? 'N/A'}%
                     </span>
                   )}
                   {baseline?.run_timestamp && (
                     <span className="text-[8px] text-slate-500 font-mono">
-                      stats are from {new Date(baseline.run_timestamp).toLocaleDateString()}
+                      stats from {new Date(baseline.run_timestamp).toLocaleDateString()}
                     </span>
                   )}
                 </div>
@@ -152,7 +176,7 @@ export const OpportunityRadar: React.FC<OpportunityRadarProps> = ({
                   <div>
                     <span className="block text-slate-500 text-[9px]">PRICE</span>
                     <span className="font-semibold text-slate-200">
-                      ${opp.current_price.toLocaleString(undefined, { maximumFractionDigits: 4 })}
+                      ${formatPrice(opp.current_price, opp.current_price)}
                     </span>
                   </div>
                   <div>
@@ -181,12 +205,16 @@ export const OpportunityRadar: React.FC<OpportunityRadarProps> = ({
                 {setup && (
                   <div className="mt-2 text-[10px] flex items-center justify-between bg-dark-bg/60 px-2 py-1 rounded border border-dark-border/60">
                     <span className="text-amber-warn font-semibold">
-                      Limit: ${setup.limit_entry.toLocaleString(undefined, { maximumFractionDigits: 4 })}
+                      Limit: ${formatPrice(setup.limit_entry, opp.current_price)}
                     </span>
                     <div className="flex items-center space-x-1.5">
-                      <span className="text-laser-green">TP1: +0.75R</span>
+                      <span className="text-laser-green" title={GLOSSARY_TOOLTIPS.R}>
+                        TP1: +0.75R
+                      </span>
                       <span className="text-slate-500">|</span>
-                      <span className="text-emerald-400 font-bold">1:{setup.rr_ratio} RR</span>
+                      <span className="text-emerald-400 font-bold" title={GLOSSARY_TOOLTIPS.RR}>
+                        1:{setup.rr_ratio} RR
+                      </span>
                     </div>
                   </div>
                 )}

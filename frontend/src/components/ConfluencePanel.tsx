@@ -1,11 +1,13 @@
 import React, { useMemo } from 'react';
-import { Indicators, MicrostructureSummary, PortfolioSummary } from '../types/market';
+import { Indicators, MicrostructureSummary, PortfolioSummary, ScannerOpportunity } from '../types/market';
 import { Compass, Gauge, Clock, Percent } from 'lucide-react';
+import { GLOSSARY_TOOLTIPS } from '../utils/tooltips';
 
 interface ConfluencePanelProps {
   indicators: Indicators | null;
   microstructure: MicrostructureSummary | null;
   portfolio: PortfolioSummary | null;
+  opportunity?: ScannerOpportunity | null;
   onOpenCockpit?: () => void;
 }
 
@@ -13,60 +15,52 @@ export const ConfluencePanel: React.FC<ConfluencePanelProps> = ({
   indicators,
   microstructure,
   portfolio,
+  opportunity,
   onOpenCockpit,
 }) => {
-  // Compute Unified Confluence Score (0 to 100)
-  const { score, label, colorClass } = useMemo(() => {
-    let pts = 50; // Neutral baseline
+  // Use ONE unified confluence score (0 to 100) and display direction separately
+  const { score, direction, scoreColorClass, directionColorClass } = useMemo(() => {
+    // 1. Authoritative score from scanner opportunity or fallback indicator model
+    let val = opportunity ? opportunity.confluence_score : 50.0;
 
-    if (indicators) {
-      // Trend: +/- 15
-      if (indicators.trend === 'BULLISH') pts += 15;
-      else if (indicators.trend === 'BEARISH') pts -= 15;
+    if (!opportunity && indicators) {
+      // Consistent fallback model matching server logic
+      let pts = 50.0;
+      if (indicators.trend === 'BULLISH') pts += 15.0;
+      else if (indicators.trend === 'BEARISH') pts += 15.0; // Confluence magnitude
 
-      // Momentum / RSI: +/- 10
-      if (indicators.rsi !== null) {
-        if (indicators.rsi < 35) pts += 10; // Oversold recovery
-        else if (indicators.rsi > 65) pts -= 10; // Overbought exhaustion
-      }
-
-      // FVGs: +/- 10
-      if (indicators.has_bullish_fvg) pts += 10;
-      if (indicators.has_bearish_fvg) pts -= 10;
-
-      // Divergences: +/- 15
-      if (indicators.has_bullish_divergence) pts += 15;
-      if (indicators.has_bearish_divergence) pts -= 15;
+      if (indicators.has_bullish_fvg || indicators.has_bearish_fvg) pts += 15.0;
+      if (indicators.pricing_zone && indicators.pricing_zone !== 'EQUILIBRIUM') pts += 10.0;
+      if (indicators.adx_14 && indicators.adx_14 >= 25.0) pts += 10.0;
+      if (indicators.has_bullish_divergence || indicators.has_bearish_divergence) pts += 10.0;
+      val = Math.max(5.0, Math.min(100.0, pts));
     }
 
-    if (microstructure) {
-      // OI Regime: +/- 10
-      if (microstructure.oi_regime === 'LONG_BUILDUP') pts += 10;
-      else if (microstructure.oi_regime === 'SHORT_BUILDUP') pts -= 10;
-      else if (microstructure.oi_regime === 'SHORT_SQUEEZE') pts += 5;
-      else if (microstructure.oi_regime === 'LONG_LIQUIDATION') pts -= 5;
+    const dir = opportunity?.trend || indicators?.trend || 'NEUTRAL';
+
+    let scoreCls = 'text-slate-300 border-slate-600 bg-slate-800/40';
+    if (val >= 80) {
+      scoreCls = 'text-laser-green border-laser-green/50 bg-laser-green/15';
+    } else if (val >= 65) {
+      scoreCls = 'text-laser-cyan border-laser-cyan/50 bg-laser-cyan/15';
+    } else if (val >= 50) {
+      scoreCls = 'text-amber-warn border-amber-warn/50 bg-amber-warn/15';
     }
 
-    const finalScore = Math.max(0, Math.min(100, pts));
-    let lbl = 'NEUTRAL';
-    let cls = 'text-slate-300 border-slate-600 bg-slate-800/40';
-
-    if (finalScore >= 75) {
-      lbl = 'STRONG BULLISH';
-      cls = 'text-laser-green border-laser-green/50 bg-laser-green/15';
-    } else if (finalScore >= 56) {
-      lbl = 'BULLISH';
-      cls = 'text-laser-cyan border-laser-cyan/50 bg-laser-cyan/15';
-    } else if (finalScore <= 25) {
-      lbl = 'STRONG BEARISH';
-      cls = 'text-crimson-red border-crimson-red/50 bg-crimson-red/15';
-    } else if (finalScore <= 45) {
-      lbl = 'BEARISH';
-      cls = 'text-amber-warn border-amber-warn/50 bg-amber-warn/15';
+    let dirCls = 'text-slate-400 border-dark-border bg-dark-card';
+    if (dir === 'BULLISH') {
+      dirCls = 'text-laser-green border-laser-green/40 bg-laser-green/10';
+    } else if (dir === 'BEARISH') {
+      dirCls = 'text-crimson-red border-crimson-red/40 bg-crimson-red/10';
     }
 
-    return { score: finalScore, label: lbl, colorClass: cls };
-  }, [indicators, microstructure]);
+    return {
+      score: Math.round(val),
+      direction: dir,
+      scoreColorClass: scoreCls,
+      directionColorClass: dirCls,
+    };
+  }, [indicators, opportunity]);
 
   const activeTrade = portfolio?.active_trades?.[0];
 
@@ -74,15 +68,26 @@ export const ConfluencePanel: React.FC<ConfluencePanelProps> = ({
     <footer className="h-8 bg-dark-panel border-t border-dark-border px-2 flex items-center justify-between text-xs font-mono select-none overflow-x-auto no-scrollbar">
       {/* Confluence Score & Regime */}
       <div className="flex items-center space-x-4">
-        {/* Confluence Badge */}
+        {/* Unified Confluence Badge with Separate Direction */}
         <div className="flex items-center space-x-2">
           <div className="flex items-center space-x-1 text-slate-400">
             <Gauge size={13} className="text-laser-cyan" />
             <span className="font-semibold">CONFLUENCE:</span>
           </div>
-          <div className={`flex items-center space-x-1.5 px-2 py-0.5 rounded border ${colorClass}`}>
-            <span className="font-bold text-sm">{score}</span>
-            <span className="text-[10px] font-bold tracking-wide">[{label}]</span>
+          <div className="flex items-center space-x-1.5">
+            <div
+              className={`flex items-center space-x-1 px-2 py-0.5 rounded border ${scoreColorClass}`}
+              title="Unified Confluence Score (0-100 scale, identical to Radar)"
+            >
+              <span className="font-bold text-sm">{score}</span>
+              <span className="text-[10px] text-slate-400">/100</span>
+            </div>
+            <div
+              className={`px-1.5 py-0.5 rounded border text-[10px] font-bold tracking-wide ${directionColorClass}`}
+              title={`Setup Direction: ${direction}`}
+            >
+              [{direction}]
+            </div>
           </div>
         </div>
 
@@ -107,6 +112,7 @@ export const ConfluencePanel: React.FC<ConfluencePanelProps> = ({
                   ? 'bg-laser-green/20 text-laser-green border-laser-green/50'
                   : 'bg-crimson-red/20 text-crimson-red border-crimson-red/50'
               }`}
+              title={indicators.pricing_zone === 'OTE' ? GLOSSARY_TOOLTIPS.OTE : undefined}
             >
               {indicators.pricing_zone}
             </span>
@@ -117,7 +123,10 @@ export const ConfluencePanel: React.FC<ConfluencePanelProps> = ({
         {indicators?.order_block_confluence?.has_confluence && (
           <div className="hidden xl:flex items-center space-x-1.5">
             <span className="text-slate-400">BLOCK:</span>
-            <span className="px-1.5 py-0.5 rounded border text-[10px] font-bold bg-laser-cyan/20 text-laser-cyan border-laser-cyan/50">
+            <span
+              className="px-1.5 py-0.5 rounded border text-[10px] font-bold bg-laser-cyan/20 text-laser-cyan border-laser-cyan/50"
+              title={GLOSSARY_TOOLTIPS.OB}
+            >
               {indicators.order_block_confluence.block_type?.replace('_', ' ') || 'ORDER BLOCK'}
             </span>
           </div>

@@ -1,6 +1,8 @@
 import React, { useState, useMemo } from 'react';
 import { TradeSetup, Indicators, ScannerOpportunity } from '../types/market';
 import { ConfirmationChecklist } from './ConfirmationChecklist';
+import { formatPrice } from '../utils/formatters';
+import { GLOSSARY_TOOLTIPS } from '../utils/tooltips';
 import {
   Calculator,
   Copy,
@@ -182,14 +184,14 @@ export const TradeStagingCard: React.FC<TradeStagingCardProps> = ({
 [${symbol} ${setup.side} DISCRETIONARY TRADE ORDER SLIP]
 =========================================
 Order Type:      POST-ONLY LIMIT ORDER
-Limit Entry:     $${setup.limit_entry.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })} (50% CE)
-Stop Loss:       $${setup.stop_loss.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })} (-1.0R | -${setup.risk_pct.toFixed(2)}%)
+Limit Entry:     $${formatPrice(setup.limit_entry, currentPrice)} (50% CE)
+Stop Loss:       $${formatPrice(setup.stop_loss, currentPrice)} (-1.0R | -${setup.risk_pct.toFixed(2)}%)
 -----------------------------------------
 BRACKET EXIT AUTHORITY (Single Exit Engine):
-1. Target 1:     $${bracketGeometry.tp1Price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })} (+${bracketGeometry.tp1R}R | 50% Scale-out)
-2. Breakeven:    Arm when price reaches $${bracketGeometry.beTriggerPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })} (+${bracketGeometry.beTriggerR}R)
-                 -> Move SL to $${bracketGeometry.bePrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })} (+0.05% fee cover)
-3. Target 2:     $${bracketGeometry.tp2Price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })} (+${bracketGeometry.tp2R}R | Remaining 50% Runner)
+1. Target 1:     $${formatPrice(bracketGeometry.tp1Price, currentPrice)} (+${bracketGeometry.tp1R}R | 50% Scale-out)
+2. Breakeven:    Arm when price reaches $${formatPrice(bracketGeometry.beTriggerPrice, currentPrice)} (+${bracketGeometry.beTriggerR}R)
+                 -> Move SL to $${formatPrice(bracketGeometry.bePrice, currentPrice)} (+0.05% fee cover)
+3. Target 2:     $${formatPrice(bracketGeometry.tp2Price, currentPrice)} (+${bracketGeometry.tp2R}R | Remaining 50% Runner)
 4. Time Stop:    Close at market if underwater after ${bracketGeometry.stagnancyBars} candles
 -----------------------------------------
 RISK & SIZING SPECIFICATIONS:
@@ -266,6 +268,7 @@ ${timestampStr ? `Validated:       stats are from ${timestampStr}` : ''}
                 ? 'bg-slate-700/50 text-slate-400 border border-slate-600/30'
                 : 'bg-amber-400/20 text-amber-300 border border-amber-400/30'
             }`}
+            title={GLOSSARY_TOOLTIPS.PF}
           >
             {isUntested
               ? 'UNTESTED'
@@ -414,14 +417,14 @@ ${timestampStr ? `Validated:       stats are from ${timestampStr}` : ''}
             <Target size={11} className="text-laser-green" />
             <span>BRACKET GEOMETRY (Single Exit Authority)</span>
           </span>
-          <span className="text-[9px] text-laser-green font-semibold">1:{setup.rr_ratio} RR</span>
+          <span className="text-[9px] text-laser-green font-semibold" title={GLOSSARY_TOOLTIPS.RR}>1:{setup.rr_ratio} RR</span>
         </div>
 
         {/* Post-Only Limit Entry */}
         <div className="flex items-center justify-between py-1 border-b border-dark-border/40">
-          <span className="text-slate-400 text-[11px]">POST-ONLY LIMIT ENTRY (50% CE):</span>
+          <span className="text-slate-400 text-[11px]" title={GLOSSARY_TOOLTIPS.CE}>POST-ONLY LIMIT ENTRY (50% CE):</span>
           <span className="text-amber-warn font-bold text-[12px]">
-            ${setup.limit_entry.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
+            ${formatPrice(setup.limit_entry, currentPrice)}
           </span>
         </div>
 
@@ -429,44 +432,44 @@ ${timestampStr ? `Validated:       stats are from ${timestampStr}` : ''}
         <div className="flex items-center justify-between py-1 border-b border-dark-border/40">
           <div className="flex items-center space-x-1 text-slate-400 text-[11px]">
             <Target size={12} className="text-crimson-red" />
-            <span>STOP LOSS (-1.0R):</span>
+            <span title={GLOSSARY_TOOLTIPS.R}>STOP LOSS (-1.0R):</span>
           </div>
           <span className="text-crimson-red font-bold text-[12px]">
-            ${setup.stop_loss.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}{' '}
+            ${formatPrice(setup.stop_loss, currentPrice)}{' '}
             <span className="text-[10px] text-slate-400">(-{setup.risk_pct.toFixed(2)}%)</span>
           </span>
         </div>
 
         {/* Target 1 (+0.75R / 50% Scale) */}
         <div className="flex items-center justify-between py-1 border-b border-dark-border/40">
-          <span className="text-slate-400 text-[11px]">TP1 (+{bracketGeometry.tp1R}R / 50% SCALE):</span>
+          <span className="text-slate-400 text-[11px]" title={GLOSSARY_TOOLTIPS.R}>TP1 (+{bracketGeometry.tp1R}R / 50% SCALE):</span>
           <span className="text-laser-green font-bold text-[12px]">
-            ${bracketGeometry.tp1Price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}{' '}
+            ${formatPrice(bracketGeometry.tp1Price, currentPrice)}{' '}
             <span className="text-[10px] text-emerald-400">(+${calculations.tp1Profit.toFixed(1)})</span>
           </span>
         </div>
 
         {/* Breakeven Armed Trigger (+0.85R Excursion) */}
         <div className="flex items-center justify-between py-1 border-b border-dark-border/40 bg-sky-500/5 px-1 rounded">
-          <span className="text-sky-400 text-[10px] font-semibold">
+          <span className="text-sky-400 text-[10px] font-semibold" title={GLOSSARY_TOOLTIPS.R}>
             BE TRIGGER (+{bracketGeometry.beTriggerR}R EXCURSION):
           </span>
           <span className="text-sky-300 font-bold text-[11px]">
-            ${bracketGeometry.beTriggerPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
+            ${formatPrice(bracketGeometry.beTriggerPrice, currentPrice)}
           </span>
         </div>
         <div className="flex items-center justify-between text-[9px] text-slate-400 px-1">
           <span>↳ Move SL to BE price (+0.05% cover):</span>
           <span className="text-slate-300 font-mono">
-            ${bracketGeometry.bePrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
+            ${formatPrice(bracketGeometry.bePrice, currentPrice)}
           </span>
         </div>
 
         {/* Target 2 (+1.33R Final Runner) */}
         <div className="flex items-center justify-between py-1 border-b border-dark-border/40">
-          <span className="text-slate-400 text-[11px]">TP2 (+{bracketGeometry.tp2R}R RUNNER):</span>
+          <span className="text-slate-400 text-[11px]" title={GLOSSARY_TOOLTIPS.R}>TP2 (+{bracketGeometry.tp2R}R RUNNER):</span>
           <span className="text-emerald-400 font-bold text-[12px]">
-            ${bracketGeometry.tp2Price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}{' '}
+            ${formatPrice(bracketGeometry.tp2Price, currentPrice)}{' '}
             <span className="text-[10px] text-emerald-400">(+${calculations.tp2Profit.toFixed(1)})</span>
           </span>
         </div>

@@ -1,16 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import { Volume2, VolumeX, Activity, Radio, ShieldAlert, AlertTriangle } from 'lucide-react';
 import { soundEngine } from '../state/audio';
+import { formatUTCClock } from '../utils/formatters';
 
 interface NavbarProps {
   isConnected: boolean;
   latencyMs: number | null;
-  activePositionsCount: number;
-  maxPositions: number;
   isFuturesOnline: boolean;
-  mode: 'FUTURES' | 'SPOT';
   macroBias?: string;
-  onModeToggle: () => void;
   dataSource?: string;
   lastUpdateSec?: number | null;
   candleIntervalSec?: number;
@@ -20,25 +17,20 @@ interface NavbarProps {
 export const Navbar: React.FC<NavbarProps> = ({
   isConnected,
   latencyMs,
-  activePositionsCount,
-  maxPositions,
   isFuturesOnline,
-  mode,
   macroBias = 'NEUTRAL',
-  onModeToggle,
   dataSource = 'binance_futures_um',
   lastUpdateSec = null,
   candleIntervalSec = 900,
   activeSymbol = 'BTCUSDT',
 }) => {
   const [isMuted, setIsMuted] = useState<boolean>(soundEngine.isMuted());
-  const [currentTime, setCurrentTime] = useState<string>('');
+  const [currentTime, setCurrentTime] = useState<string>(() => formatUTCClock());
   const [nowSec, setNowSec] = useState<number>(() => Math.floor(Date.now() / 1000));
 
   useEffect(() => {
     const updateClock = () => {
-      const now = new Date();
-      setCurrentTime(now.toTimeString().split(' ')[0] + ' UTC');
+      setCurrentTime(formatUTCClock(new Date()));
       setNowSec(Math.floor(Date.now() / 1000));
     };
     updateClock();
@@ -65,7 +57,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             CRYPTO<span className="text-laser-cyan">TERMINAL</span>
           </span>
           <span className="text-[10px] bg-dark-card border border-dark-border px-1.5 py-0.5 rounded text-slate-400 font-mono">
-            v1.0-PRO
+            research build
           </span>
         </div>
 
@@ -96,23 +88,10 @@ export const Navbar: React.FC<NavbarProps> = ({
           )
         )}
 
-        <button
-          onClick={onModeToggle}
-          className="flex items-center space-x-1.5 px-2.5 py-1 bg-dark-card border border-dark-border hover:border-slate-600 rounded transition font-medium"
-        >
-          <span className={mode === 'FUTURES' ? 'text-purple-smc font-semibold' : 'text-slate-400'}>
-            FUTURES
-          </span>
-          <span className="text-slate-600">/</span>
-          <span className={mode === 'SPOT' ? 'text-laser-green font-semibold' : 'text-slate-400'}>
-            SPOT
-          </span>
-        </button>
-
         {!isFuturesOnline && (
           <div className="flex items-center space-x-1 text-amber-warn bg-amber-warn/10 border border-amber-warn/30 px-2 py-0.5 rounded text-[11px]">
             <ShieldAlert size={12} />
-            <span>Futures Prober: Spot Only Mode</span>
+            <span>Futures Prober: Offline</span>
           </div>
         )}
       </div>
@@ -157,14 +136,6 @@ export const Navbar: React.FC<NavbarProps> = ({
           />
           <span className={isConnected ? 'text-slate-200' : 'text-crimson-red'}>
             {isConnected ? 'LIVE' : 'OFFLINE'}
-          </span>
-        </div>
-
-        {/* Active Trades Counter */}
-        <div className="bg-dark-card border border-dark-border px-2 py-0.5 rounded text-slate-300">
-          <span>POSITIONS: </span>
-          <span className={activePositionsCount > 0 ? 'text-laser-cyan font-bold' : 'text-slate-400'}>
-            {activePositionsCount}/{maxPositions}
           </span>
         </div>
 

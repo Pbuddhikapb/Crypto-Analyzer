@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useMemo } from 'react';
 import { MarketSymbol, ScannerOpportunity } from '../types/market';
 import { Flame, Zap } from 'lucide-react';
+import { formatPrice } from '../utils/formatters';
 
 interface TopCoinsBarProps {
   symbols: MarketSymbol[];
@@ -26,13 +27,9 @@ export const TopCoinsBar: React.FC<TopCoinsBarProps> = ({
     return map;
   }, [opportunities]);
 
-  const formatPrice = (price?: number | null): string => {
+  const displayPrice = (price?: number | null): string => {
     if (price === undefined || price === null || isNaN(price)) return '$0.00';
-    const absP = Math.abs(price);
-    if (absP === 0) return '$0.00';
-    if (absP < 0.01) return `$${price.toFixed(6)}`;
-    if (absP < 1.0) return `$${price.toFixed(4)}`;
-    return `$${price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    return `$${formatPrice(price, price)}`;
   };
 
   useEffect(() => {
@@ -64,7 +61,7 @@ export const TopCoinsBar: React.FC<TopCoinsBarProps> = ({
             } ${flashClass}`}
           >
             <span className="font-semibold text-slate-100">{coin.symbol.replace('USDT', '')}</span>
-            <span className="font-mono text-slate-200">{formatPrice(currentPrice)}</span>
+            <span className="font-mono text-slate-200">{displayPrice(currentPrice)}</span>
 
             {/* Live Position Marker */}
             {coin.has_open_position && (
