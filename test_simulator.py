@@ -739,5 +739,152 @@ def test_research_path_skips_zero_volume_and_terminates_on_gap(caplog):
     assert executed_trade.exit_time_ms == t0 + 7 * interval_ms
 
 
+def test_trailing_exit_trade_lasts_300_bars_zero_dropped():
+    """
+    Verify that a synthetic trending series where a trailing-exit trade lasts > 300 bars
+    appears in simulation results without being dropped by a 120-bar window,
+    and assert zero dropped trades.
+    """
+    import numpy as np
+    from engine.exits import ExitConfig
+    from engine.simulator import CandidateSignal, simulate_portfolio_signals
+
+    t0 = 1700000000000
+    interval_ms = 3600 * 1000  # 1h
+    n_bars = 400
+
+    # Build trending price series
+    # Bars 0 to 320: steady uptrend from 100.0 to 132.0 (0.1 per bar)
+    # Bar 321: sharp drop to 110.0 to trigger trailing stop (peak=132, trail_dist_r=10 -> trail_stop=122)
+    # Bars 322 to 399: flat at 110.0
+    bars = []
+    for i in range(n_bars):
+        t = t0 + i * interval_ms
+        if i <= 320:
+            p = 100.0 + i * 0.1
+            high = p + 0.05
+            low = p - 0.05
+            close = p
+        elif i == 321:
+            p = 132.0
+            high = 132.0
+            low = 120.0
+            close = 121.0
+        else:
+            p = 112.0
+            high = 113.0
+            low = 111.0
+            close = 112.0
+        bars.append([p, high, low, close, t, 1000.0])
+
+    arr = np.array(bars, dtype=np.float64)
+    candles_dict = {"BTCUSDT": arr}
+
+    sig = CandidateSignal(
+        symbol="BTCUSDT",
+        side="LONG",
+        entry_price=100.0,
+        stop_loss=90.0,  # risk_dist = 10.0
+        timestamp_ms=t0,
+        volume=1000.0,
+    )
+
+    exit_cfg = ExitConfig(exit_mode="trailing_1r", trail_dist_r=1.0)
+    res = simulate_portfolio_signals(
+        candidates=[sig],
+        candles_dict=candles_dict,
+        exit_config=exit_cfg,
+        bar_interval_ms=interval_ms,
+    )
+
+    assert res.total_trades == 1
+    assert len(res.trades) == 1
+    trade = res.trades[0]
+    assert trade.bars_held >= 300, f"Expected trade to last >= 300 bars, but held {trade.bars_held}"
+    assert trade.exit_reason == "TRAILING_STOP"
+    assert res.dropped_trade_fraction == 0.0
+
+
+def test_end_of_data_trade_closed_with_end_of_data():
+    """Verify that an open trade reaching the end of candles is closed with END_OF_DATA."""
+    import numpy as np
+    from engine.exits import ExitConfig
+    from engine.simulator import CandidateSignal, simulate_portfolio_signals
+
+    t0 = 1700000000000
+    interval_ms = 3600 * 1000  # 1h
+    n_bars = 200
+
+    # Steadily rising series that never retraces, so trailing stop is never hit
+    bars = []
+    for i in range(n_bars):
+        t = t0 + i * interval_ms
+        p = 100.0 + i * 0.2
+        bars.append([p, p + 0.1, p - 0.05, p, t, 1000.0])
+
+    arr = np.array(bars, dtype=np.float64)
+    candles_dict = {"ETHUSDT": arr}
+
+    sig = CandidateSignal(
+        symbol="ETHUSDT",
+        side="LONG",
+        entry_price=100.0,
+        stop_loss=90.0,
+        timestamp_ms=t0,
+        volume=1000.0,
+    )
+
+    exit_cfg = ExitConfig(exit_mode="trailing_1r", trail_dist_r=1.0)
+    res = simulate_portfolio_signals(
+        candidates=[sig],
+        candles_dict=candles_dict,
+        exit_config=exit_cfg,
+        bar_interval_ms=interval_ms,
+    )
+
+    assert res.total_trades == 1
+    trade = res.trades[0]
+    assert trade.exit_reason == "END_OF_DATA"
+    assert res.dropped_trade_fraction == 0.0
+
+
+def test_dropped_trade_fraction_raises_error_above_threshold():
+    """Verify simulate_portfolio_signals raises ValueError when dropped_trade_fraction > 0.5%."""
+    import numpy as np
+    import pytest
+    from engine.simulator import CandidateSignal, simulate_portfolio_signals
+
+    t0 = 1700000000000
+    interval_ms = 3600 * 1000
+
+    bars = [
+        [100.0, 102.0, 99.0, 101.0, t0, 1000.0],
+        [101.0, 103.0, 100.0, 102.0, t0 + interval_ms, 1000.0],
+    ]
+    arr = np.array(bars, dtype=np.float64)
+    candles_dict = {"SOLUSDT": arr}
+
+    # Signal placed at bar index 2 (beyond array length), causing forward_candles to be empty
+    sig = CandidateSignal(
+        symbol="SOLUSDT",
+        side="LONG",
+        entry_price=101.0,
+        stop_loss=95.0,
+        timestamp_ms=t0 + 2 * interval_ms,
+        volume=1000.0,
+    )
+
+    bar_index_map = {"SOLUSDT": {t0 + 2 * interval_ms: len(arr)}}
+
+    with pytest.raises(ValueError, match="dropped trade fraction"):
+        simulate_portfolio_signals(
+            candidates=[sig],
+            candles_dict=candles_dict,
+            bar_index_map=bar_index_map,
+            bar_interval_ms=interval_ms,
+        )
+
+
+
 
 

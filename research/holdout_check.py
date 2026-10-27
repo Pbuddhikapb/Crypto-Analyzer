@@ -21,7 +21,7 @@ from typing import Any, Dict, List, Optional, Tuple, Type
 import numpy as np
 import pandas as pd
 
-from data.loader import DEVELOPMENT_END, load_candles
+from data.loader import DEVELOPMENT_END, candles_to_array, load_candles
 from engine.simulator import CandidateSignal, SimulationResult, simulate_portfolio_signals
 from research.strategies.base import BaseStrategy
 from research.strategies.confluence_threshold import ConfluenceThresholdStrategy
@@ -105,6 +105,27 @@ def is_holdout_run_recorded(
     return False
 
 
+def is_strategy_name_recorded(
+    strategy_name: str,
+    log_path: str = DEFAULT_HOLDOUT_LOG,
+) -> bool:
+    """Verify if any evaluation attempt for this strategy name has been recorded in holdout log."""
+    if not os.path.exists(log_path):
+        return False
+    try:
+        with open(log_path, "r", encoding="utf-8") as f:
+            reader = csv.reader(f)
+            next(reader, None)  # Advance past header row
+            for row in reader:
+                if len(row) >= 1:
+                    strat_recorded = row[0].strip().lower()
+                    if strat_recorded == strategy_name.lower():
+                        return True
+    except Exception as e:
+        logger.warning(f"Error checking holdout log at {log_path}: {e}")
+    return False
+
+
 def record_holdout_run(
     strategy_name: str,
     git_hash: str,
@@ -135,7 +156,7 @@ def run_holdout_check(
     """
     key = strategy_name.strip().lower()
     if key not in STRATEGY_REGISTRY:
-        avail = ", ".join(["TrendPullback", "FVGRetest", "ConfluenceThreshold", "LiquiditySweep"])
+        avail = ", ".join(["TrendPullback", "FVGRetest", "ConfluenceThreshold", "LiquiditySweep", "Donchian4hN20", "Donchian4hN55"])
         raise ValueError(f"Unknown strategy '{strategy_name}'. Available strategies: {avail}")
 
     strat_cls, canonical_name, source_path = STRATEGY_REGISTRY[key]
@@ -149,10 +170,24 @@ def run_holdout_check(
             "Holdout data is strictly one-pass to preserve statistical validity."
         )
 
-    # 2. Ingest holdout candles strictly after DEVELOPMENT_END
+    # Warn when the same strategy name is evaluated again, regardless of source hash
+    if is_strategy_name_recorded(canonical_name, log_path=log_path):
+        msg = (
+            f"WARNING: Strategy '{canonical_name}' has already been evaluated on holdout data previously! "
+            "Evaluating multiple variants on holdout data risks data snooping bias."
+        )
+        logger.warning(msg)
+        import warnings
+        warnings.warn(msg, UserWarning)
+
+    # Record every evaluation attempt in the CSV ledger (append-only)
+    record_holdout_run(canonical_name, git_hash, log_path=log_path)
+
+    # 2. Ingest candles: load full history for indicator warm-up
     syms = symbols or DEFAULT_SYMBOLS
     dev_end_dt = pd.to_datetime(DEVELOPMENT_END, utc=True)
-    logger.info(f"Loading holdout data (> {DEVELOPMENT_END}) for {len(syms)} symbols...")
+    dev_end_ms = int(dev_end_dt.timestamp() * 1000)
+    logger.info(f"Loading full history (for indicator warm-up) and holdout data (> {DEVELOPMENT_END}) for {len(syms)} symbols...")
 
     df_1h_dict: Dict[str, pd.DataFrame] = {}
     df_4h_dict: Dict[str, pd.DataFrame] = {}
@@ -162,18 +197,17 @@ def run_holdout_check(
 
     for sym in syms:
         raw_1h = load_candles(sym, "1h", data_dir=data_dir, allow_holdout=True)
-        holdout_1h = raw_1h[raw_1h["datetime"] > dev_end_dt].reset_index(drop=True)
-
         raw_4h = load_candles(sym, "4h", data_dir=data_dir, allow_holdout=True)
-        holdout_4h = raw_4h[raw_4h["datetime"] > dev_end_dt].reset_index(drop=True)
 
-        if holdout_1h.empty:
+        holdout_count = (raw_1h["datetime"] > dev_end_dt).sum()
+        if holdout_count == 0:
             raise ValueError(f"No holdout data available for {sym} 1h past {DEVELOPMENT_END}")
 
-        df_1h_dict[sym] = holdout_1h
-        df_4h_dict[sym] = holdout_4h
+        df_1h_dict[sym] = raw_1h
+        df_4h_dict[sym] = raw_4h
 
-        arr = holdout_1h[["open", "high", "low", "close", "open_time"]].to_numpy(dtype=np.float64)
+        # (b) build candle arrays with data.loader.candles_to_array (volume included)
+        arr = candles_to_array(raw_1h)
         candles_dict[sym] = arr
         bar_index_map[sym] = {int(arr[idx, 4]): idx for idx in range(len(arr))}
         if len(arr) > 0 and int(arr[-1, 4]) > max_ts:
@@ -181,25 +215,25 @@ def run_holdout_check(
 
     max_holdout_str = datetime.fromtimestamp(max_ts / 1000.0, tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
-    # 3. Generate candidate signals on holdout bars
+    # 3. Generate candidate signals with indicator warm-up on full history, but only allow entries/signals after DEVELOPMENT_END
     strat = strat_cls()
+    strat_cfg = getattr(strat, "exit_config", None)
     all_candidates: List[CandidateSignal] = []
     for sym in syms:
         sym_sigs = strat.generate_signals(sym, df_1h_dict[sym], df_4h_dict[sym])
-        all_candidates.extend(sym_sigs)
+        holdout_sigs = [s for s in sym_sigs if s.timestamp_ms > dev_end_ms]
+        all_candidates.extend(holdout_sigs)
 
-    # 4. Simulate portfolio execution across holdout
+    # 4. Simulate portfolio execution across holdout passing strategy's exit_config
     sim_res: SimulationResult = simulate_portfolio_signals(
         candidates=all_candidates,
         candles_dict=candles_dict,
         bar_index_map=bar_index_map,
         sizing_mode=sizing_mode,
+        exit_config=strat_cfg,
     )
 
-    # 5. Append audit line to holdout log
-    record_holdout_run(canonical_name, git_hash, log_path=log_path)
-
-    # 6. Print summary
+    # 5. Print summary
     print("\n" + "=" * 80)
     print(f"HOLDOUT VALIDATION EXECUTION: {canonical_name}")
     print("=" * 80)

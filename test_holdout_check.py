@@ -105,11 +105,12 @@ def test_holdout_check_allows_new_run_if_hash_differs():
 
         # Mock git hash to "2222..." (simulating source code edit)
         with patch("research.holdout_check.get_source_file_git_hash", return_value="2" * 40):
-            res = run_holdout_check(
-                strategy_name="TrendPullback",
-                symbols=["BTCUSDT"],
-                log_path=log_path,
-            )
+            with pytest.warns(UserWarning, match="has already been evaluated on holdout data previously"):
+                res = run_holdout_check(
+                    strategy_name="TrendPullback",
+                    symbols=["BTCUSDT"],
+                    log_path=log_path,
+                )
             assert res["git_hash"] == "2" * 40
 
         # Now both runs are recorded in log
@@ -119,3 +120,64 @@ def test_holdout_check_allows_new_run_if_hash_differs():
 
     finally:
         shutil.rmtree(temp_dir)
+
+
+def test_holdout_check_applies_strategy_exit_config_donchian_trailing():
+    """
+    Verify holdout_check passes the strategy's exit_config to simulate_portfolio_signals,
+    confirming Donchian4hN20 uses trailing_1r exit mode rather than stepped.
+    """
+    temp_dir = tempfile.mkdtemp()
+    try:
+        log_path = os.path.join(temp_dir, "holdout_log.csv")
+
+        captured_kwargs = {}
+        from engine.simulator import simulate_portfolio_signals as real_sim
+
+        def mock_simulate(*args, **kwargs):
+            captured_kwargs.update(kwargs)
+            return real_sim(*args, **kwargs)
+
+        with patch("research.holdout_check.simulate_portfolio_signals", side_effect=mock_simulate):
+            res = run_holdout_check(
+                strategy_name="Donchian4hN20",
+                symbols=["BTCUSDT"],
+                log_path=log_path,
+            )
+
+        assert "exit_config" in captured_kwargs
+        passed_cfg = captured_kwargs["exit_config"]
+        assert passed_cfg is not None
+        assert passed_cfg.exit_mode == "trailing_1r", f"Expected exit_mode='trailing_1r', got '{passed_cfg.exit_mode}'"
+        assert passed_cfg.trail_dist_r == 1.0
+
+        # Confirm that executed trades do NOT exit via stepped take-profit rules (TP1 or TP2)
+        sim_res = res["sim_result"]
+        for trade in sim_res.trades:
+            assert trade.exit_reason not in ("TAKE_PROFIT_1", "TAKE_PROFIT_2"), (
+                f"Trade {trade.trade_id} exited with {trade.exit_reason}, but stepped TPs are forbidden in trailing mode"
+            )
+    finally:
+        shutil.rmtree(temp_dir)
+
+
+def test_holdout_check_warns_on_repeat_strategy_name():
+    """Verify warning is emitted when evaluating the same strategy name again, regardless of source hash."""
+    temp_dir = tempfile.mkdtemp()
+    try:
+        log_path = os.path.join(temp_dir, "holdout_log.csv")
+
+        # First run with hash '1111...'
+        record_holdout_run("Donchian4hN20", "1" * 40, log_path=log_path)
+
+        # Second run with different hash '2222...' should emit a warning
+        with patch("research.holdout_check.get_source_file_git_hash", return_value="2" * 40):
+            with pytest.warns(UserWarning, match="has already been evaluated on holdout data previously"):
+                run_holdout_check(
+                    strategy_name="Donchian4hN20",
+                    symbols=["BTCUSDT"],
+                    log_path=log_path,
+                )
+    finally:
+        shutil.rmtree(temp_dir)
+

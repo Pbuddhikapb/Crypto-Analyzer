@@ -374,6 +374,9 @@ class StrategyEvaluator:
             # Fallback to analytical max(p_pf, p_ev) when no matched baseline is provided
             p_composite = max(p_pf, p_ev)
 
+        if hasattr(sim_result, "dropped_trade_fraction") and sim_result.dropped_trade_fraction > 0:
+            dropped_trade_fraction = max(dropped_trade_fraction, float(getattr(sim_result, "dropped_trade_fraction", 0.0)))
+
         if matched_p is not None and matched_iterations > 0:
             floor_p = 1.0 / (matched_iterations + 1.0)
             if abs(matched_p - floor_p) < 1e-4:

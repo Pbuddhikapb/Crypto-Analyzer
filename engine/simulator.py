@@ -116,6 +116,7 @@ class SimulationResult:
     max_drawdown_r: float = 0.0
     days_evaluated: float = 0.0
     pct_of_dataset_evaluated: float = 100.0
+    dropped_trade_fraction: float = 0.0
 
 
 class SimulationEngine:
@@ -170,6 +171,7 @@ class SimulationEngine:
         self.completed_trades: List[ExecutedTrade] = []
         # Equity curve: (timestamp_ms, equity)
         self.equity_curve: List[Tuple[int, float]] = []
+        self.dropped_trade_fraction: float = 0.0
 
     def can_open_position(
         self,
@@ -610,6 +612,7 @@ class SimulationEngine:
                 max_drawdown_r=0.0,
                 days_evaluated=0.0,
                 pct_of_dataset_evaluated=100.0,
+                dropped_trade_fraction=self.dropped_trade_fraction,
             )
 
         wins = [t for t in trades if t.net_pnl_usd > 0]
@@ -750,6 +753,7 @@ class SimulationEngine:
             max_drawdown_r=round(max_dd_r, 4),
             days_evaluated=round(days_eval, 1),
             pct_of_dataset_evaluated=pct_eval,
+            dropped_trade_fraction=self.dropped_trade_fraction,
         )
 
 
@@ -901,6 +905,7 @@ def simulate_portfolio_signals(
 
     sorted_signals = sorted(candidates, key=lambda s: s.timestamp_ms)
     active_open: List[Dict[str, Any]] = []
+    unfinished_trades = 0
 
     if sorted_signals:
         engine.equity_curve.append((sorted_signals[0].timestamp_ms, engine.initial_equity_usd))
@@ -965,9 +970,9 @@ def simulate_portfolio_signals(
             continue
 
         # 4. Slicing forward candles and executing single trade lifecycle
-        max_k = min(entry_bar_idx + 120, len(arr))
-        forward_candles = [tuple(arr[k]) for k in range(entry_bar_idx, max_k)]
+        forward_candles = [tuple(arr[k]) for k in range(entry_bar_idx, len(arr))]
         if not forward_candles:
+            unfinished_trades += 1
             continue
 
         sizing_equity = engine.initial_equity_usd if engine.sizing_mode == "fixed_risk" else engine.equity_usd
@@ -985,9 +990,11 @@ def simulate_portfolio_signals(
             exit_config=cfg,
             bar_interval_ms=eff_interval,
             entry_volume=vol,
+            close_at_end_of_data=True,
         )
 
         if trade is None:
+            unfinished_trades += 1
             continue
 
         # Update cooldown tracker in engine
@@ -1011,8 +1018,19 @@ def simulate_portfolio_signals(
         else:
             engine.equity_curve.append((pos["exit_ts_ms"], round(engine.equity_usd, 2)))
 
+    total_attempted = len(engine.completed_trades) + unfinished_trades
+    dropped_trade_fraction = (unfinished_trades / total_attempted) if total_attempted > 0 else 0.0
+    engine.dropped_trade_fraction = round(dropped_trade_fraction, 6)
+
+    if dropped_trade_fraction > 0.005:
+        raise ValueError(
+            f"simulate_portfolio_signals: dropped trade fraction {dropped_trade_fraction:.4%} "
+            f"exceeds 0.5% threshold ({unfinished_trades}/{total_attempted} trades dropped)"
+        )
+
     # Compute days evaluated if candles_dict has timestamps
     summary = engine.compute_summary()
+    summary.dropped_trade_fraction = round(dropped_trade_fraction, 6)
     if candles_dict:
         try:
             min_ts = min(int(arr[0, 4]) for arr in candles_dict.values() if len(arr) > 0)

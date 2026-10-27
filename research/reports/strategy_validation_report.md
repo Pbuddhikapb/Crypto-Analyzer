@@ -1,6 +1,6 @@
 # Strategy Validation Dossier: Evidence Before Infrastructure
-**Generated:** 2026-10-22 06:14 UTC  
-**Git Commit:** `7c5fc36c62321e300e8e1942d46535d6a25837bb+dirty`  
+**Generated:** 2026-10-27 21:30 UTC  
+**Git Commit:** `97c8a0ab65bf343b019fafa699e32d2860363cd3+dirty`  
 **Dataset Hash:** `61d0448603612d76`  
 **Architecture Doctrine:** Claude's Option B (Discretionary Human Trading Terminal)  
 **Null Hypothesis ($H_0$):** Phase 2 1,000-pass Monte Carlo Baseline Hurdle  
@@ -34,12 +34,12 @@ In Phase 2, we established the empirical null hypothesis ($H_0$) across 1,000 Mo
 
 | Strategy | Trades | Win Rate | Net PF (Gross) | Net EV (Gross EV) | Max DD (R) | Bootstrap 95% CI | Matched Median EV | Matched Rank $p$-value | Dropped Null % | Days Evaluated | Sizing | Ruined? | Alpha Verdict |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| **TrendPullback** | 6625 | 49.2% | **0.78** (0.89) | **-0.1099R** (-0.0497R) | 732.51R | [-0.1323, -0.0876]R | -0.1030R | `p = 0.7373` | 0.00% | 1933d (100.0%) | `fixed_risk` | ⚠️ Ruined (2022-02-07) | 🔴 **REJECTED** |
-| **FVGRetest** | 7856 | 46.9% | **0.84** (0.93) | **-0.0718R** (-0.0285R) | 597.04R | [-0.0911, -0.0523]R | -0.0675R | `p = 0.6633` | 0.00% | 1933d (100.0%) | `fixed_risk` | ⚠️ Ruined (2022-05-24) | 🔴 **REJECTED** |
-| **ConfluenceThreshold** | 17166 | 47.0% | **0.71** (0.80) | **-0.1513R** (-0.0940R) | 2606.85R | [-0.1654, -0.1373]R | -0.0969R | `p = 1.0000` | 0.00% | 1933d (100.0%) | `fixed_risk` | ⚠️ Ruined (2021-03-23) | 🔴 **REJECTED** |
-| **LiquiditySweep** | 22462 | 46.9% | **0.62** (0.75) | **-0.2157R** (-0.1239R) | 4846.73R | [-0.2285, -0.2029]R | -0.1654R | `p = 1.0000` | 0.00% | 1933d (100.0%) | `fixed_risk` | ⚠️ Ruined (2021-01-27) | 🔴 **REJECTED** |
-| **Donchian4hN20** | 1317 | 33.7% | **0.87** (0.93) | **-0.0522R** (-0.0271R) | 93.90R | [-0.1072, +0.0066]R | +0.0058R | `p = 0.9703` | 0.00% | 1933d (100.0%) | `fixed_risk` | No | 🔴 **REJECTED** |
-| **Donchian4hN55** | 916 | 34.1% | **0.96** (1.02) | **-0.0153R** (+0.0078R) | 49.19R | [-0.0832, +0.0580]R | +0.0074R | `p = 0.6535` | 0.00% | 1933d (100.0%) | `fixed_risk` | No | 🔴 **REJECTED** |
+| **TrendPullback** | 6627 | 49.3% | **0.78** (0.89) | **-0.1097R** (-0.0496R) | 732.51R | [-0.1320, -0.0875]R | -0.1018R | `p = 0.7742` | 0.00% | 1933d (100.0%) | `fixed_risk` | ⚠️ Ruined (2022-02-07) | 🔴 **REJECTED** |
+| **FVGRetest** | 7828 | 46.9% | **0.84** (0.93) | **-0.0715R** (-0.0283R) | 594.76R | [-0.0908, -0.0519]R | -0.0660R | `p = 0.7073` | 0.00% | 1933d (100.0%) | `fixed_risk` | ⚠️ Ruined (2022-05-24) | 🔴 **REJECTED** |
+| **ConfluenceThreshold** | 17171 | 47.0% | **0.71** (0.80) | **-0.1513R** (-0.0940R) | 2606.85R | [-0.1657, -0.1375]R | -0.0966R | `p = 1.0000` | 0.00% | 1933d (100.0%) | `fixed_risk` | ⚠️ Ruined (2021-03-23) | 🔴 **REJECTED** |
+| **LiquiditySweep** | 22464 | 46.9% | **0.62** (0.75) | **-0.2157R** (-0.1239R) | 4846.73R | [-0.2286, -0.2031]R | -0.1758R | `p = 1.0000` | 0.00% | 1933d (100.0%) | `fixed_risk` | ⚠️ Ruined (2021-01-27) | 🔴 **REJECTED** |
+| **Donchian4hN20** | 1055 | 38.3% | **1.14** (1.23) | **+0.0495R** (+0.0774R) | 24.59R | [-0.0162, +0.1187]R | +0.0027R | `p = 0.0669` | 0.00% | 1933d (100.0%) | `fixed_risk` | No | 🔴 **REJECTED** |
+| **Donchian4hN55** | 832 | 37.6% | **1.22** (1.31) | **+0.0788R** (+0.1047R) | 16.69R | [+0.0021, +0.1590]R | -0.0012R | `p = 0.0240` | 0.00% | 1933d (100.0%) | `fixed_risk` | No | 🟢 **VALIDATED** |
 
 ---
 
@@ -49,48 +49,48 @@ In Phase 2, we established the empirical null hypothesis ($H_0$) across 1,000 Mo
 **Concept:** 4h Macro Trend + 1h EMA 50 Pullback + RSI Momentum Recovery
 
 > **Statistical Verdict**: **`REJECTED (p >= 0.05)`**  
-> Matched Rank $p$-value: **`p = 0.7373`** (Empirical rank within 1,000 matched null passes)  
+> Matched Rank $p$-value: **`p = 0.7742`** (Empirical rank within 1,000 matched null passes)  
 > Matched Null Dropped Trade Share: **`0.00%`**  
-> Total Candidate Signals: `33501` | Executed Trades: `6625`  
+> Total Candidate Signals: `33501` | Executed Trades: `6627`  
 > Net Profit Factor: **`0.78`** (Gross: `0.89`)  
-> Net Expectancy: **`-0.1099R`** (Gross: `-0.0497R`)  
-> Max Drawdown (R): **`732.51R`** | Cumulative Net R: **`-727.94R`**  
+> Net Expectancy: **`-0.1097R`** (Gross: `-0.0496R`)  
+> Max Drawdown (R): **`732.51R`** | Cumulative Net R: **`-727.28R`**  
 > Days Evaluated: **`1933 days (100.0% of dataset)`**  
-> Bootstrap 95% CI (Mean Net R): **`[-0.1323R, -0.0876R]`** (10,000 resamples)  
-> Matched Baseline Median Net EV: **`-0.1030R`** (Matched 95th Pct Hurdle: `-0.0773R`)  
+> Bootstrap 95% CI (Mean Net R): **`[-0.1320R, -0.0875R]`** (10,000 resamples)  
+> Matched Baseline Median Net EV: **`-0.1018R`** (Matched 95th Pct Hurdle: `-0.0852R`)  
 > Sizing Mode: `fixed_risk` | Account Ruined: `YES (at 2022-02-07 03:00 UTC)`
 
 #### Alpha Validation Requirements:
 **Passed:**
-- ✅ Sample size 6625 >= 100 trades
+- ✅ Sample size 6627 >= 100 trades
 
 **Failed / Unmet:**
-- ❌ Mean Net Expectancy -0.1099R <= 0.0R
-- ❌ Bootstrap 95% CI lower bound -0.1323R <= 0.0R
-- ❌ Matched Rank p-value 0.7373 >= 0.05
+- ❌ Mean Net Expectancy -0.1097R <= 0.0R
+- ❌ Bootstrap 95% CI lower bound -0.1320R <= 0.0R
+- ❌ Matched Rank p-value 0.7742 >= 0.05
 
 #### Diagnostics:
 - ℹ️ Net Profit Factor: 0.78 (Null p95 Hurdle: 1.04, p=0.6783)
-- ℹ️ Net Win Rate: 49.25% (Null p95 Hurdle: 52.40%, p=0.2663)
+- ℹ️ Net Win Rate: 49.27% (Null p95 Hurdle: 52.40%, p=0.2643)
 - ℹ️ Max Drawdown (R): 732.51R
 - ℹ️ Sharpe Ratio: -1.66 (p=0.5983)
 - ℹ️ Median Stop % of Price: 1.72%
 - ℹ️ Cost Drag in R per Trade: +0.0602R
 - ℹ️ Median Holding Time: 6 bars (6h)
-- ℹ️ Trades per Symbol: ADAUSDT: 594, AVAXUSDT: 582, BNBUSDT: 741, BTCUSDT: 826, DOGEUSDT: 641, ETHUSDT: 784, LINKUSDT: 566, SOLUSDT: 817, SUIUSDT: 327, XRPUSDT: 747
-- ℹ️ Per-Year Net R: 2021: -79.17R, 2022: -121.55R, 2023: -139.07R, 2024: -182.68R, 2025: -139.56R, 2026: -65.91R
+- ℹ️ Trades per Symbol: ADAUSDT: 595, AVAXUSDT: 582, BNBUSDT: 741, BTCUSDT: 826, DOGEUSDT: 641, ETHUSDT: 784, LINKUSDT: 566, SOLUSDT: 818, SUIUSDT: 327, XRPUSDT: 747
+- ℹ️ Per-Year Net R: 2021: -79.17R, 2022: -121.55R, 2023: -139.07R, 2024: -182.68R, 2025: -139.56R, 2026: -65.25R
 
 #### Per-Symbol Performance:
 | Symbol | Trades | Win Rate | Net PF (Gross) | Net PnL (USD) | Net R (Gross R) |
 | :--- | :---: | :---: | :---: | :---: | :---: |
-| `ADAUSDT` | 594 | 50.5% | 0.81 (0.92) | $-5,286.59 | -0.0890R (-0.0361R) |
+| `ADAUSDT` | 595 | 50.6% | 0.82 (0.92) | $-5,224.24 | -0.0878R (-0.0349R) |
 | `AVAXUSDT` | 582 | 46.4% | 0.69 (0.77) | $-9,280.86 | -0.1595R (-0.1110R) |
 | `BNBUSDT` | 741 | 51.3% | 0.82 (0.98) | $-6,233.33 | -0.0841R (-0.0093R) |
 | `BTCUSDT` | 826 | 49.9% | 0.79 (0.96) | $-8,156.06 | -0.0987R (-0.0152R) |
 | `DOGEUSDT` | 641 | 48.0% | 0.73 (0.82) | $-8,912.00 | -0.1390R (-0.0854R) |
 | `ETHUSDT` | 784 | 52.4% | 0.89 (1.03) | $-4,034.52 | -0.0515R (+0.0137R) |
 | `LINKUSDT` | 566 | 46.5% | 0.72 (0.81) | $-8,111.92 | -0.1433R (-0.0903R) |
-| `SOLUSDT` | 817 | 48.7% | 0.77 (0.85) | $-9,166.58 | -0.1122R (-0.0659R) |
+| `SOLUSDT` | 818 | 48.8% | 0.77 (0.85) | $-9,162.67 | -0.1120R (-0.0657R) |
 | `SUIUSDT` | 327 | 45.9% | 0.70 (0.77) | $-5,094.92 | -0.1558R (-0.1107R) |
 | `XRPUSDT` | 747 | 49.7% | 0.76 (0.88) | $-8,517.45 | -0.1140R (-0.0515R) |
 
@@ -100,50 +100,50 @@ In Phase 2, we established the empirical null hypothesis ($H_0$) across 1,000 Mo
 **Concept:** HTF Trend + SMC Fair Value Gap Retest & Mitigation Rejection
 
 > **Statistical Verdict**: **`REJECTED (p >= 0.05)`**  
-> Matched Rank $p$-value: **`p = 0.6633`** (Empirical rank within 1,000 matched null passes)  
+> Matched Rank $p$-value: **`p = 0.7073`** (Empirical rank within 1,000 matched null passes)  
 > Matched Null Dropped Trade Share: **`0.00%`**  
-> Total Candidate Signals: `28990` | Executed Trades: `7856`  
+> Total Candidate Signals: `28990` | Executed Trades: `7828`  
 > Net Profit Factor: **`0.84`** (Gross: `0.93`)  
-> Net Expectancy: **`-0.0718R`** (Gross: `-0.0285R`)  
-> Max Drawdown (R): **`597.04R`** | Cumulative Net R: **`-563.77R`**  
+> Net Expectancy: **`-0.0715R`** (Gross: `-0.0283R`)  
+> Max Drawdown (R): **`594.76R`** | Cumulative Net R: **`-559.69R`**  
 > Days Evaluated: **`1933 days (100.0% of dataset)`**  
-> Bootstrap 95% CI (Mean Net R): **`[-0.0911R, -0.0523R]`** (10,000 resamples)  
-> Matched Baseline Median Net EV: **`-0.0675R`** (Matched 95th Pct Hurdle: `-0.0431R`)  
+> Bootstrap 95% CI (Mean Net R): **`[-0.0908R, -0.0519R]`** (10,000 resamples)  
+> Matched Baseline Median Net EV: **`-0.0660R`** (Matched 95th Pct Hurdle: `-0.0507R`)  
 > Sizing Mode: `fixed_risk` | Account Ruined: `YES (at 2022-05-24 09:00 UTC)`
 
 #### Alpha Validation Requirements:
 **Passed:**
-- ✅ Sample size 7856 >= 100 trades
+- ✅ Sample size 7828 >= 100 trades
 
 **Failed / Unmet:**
-- ❌ Mean Net Expectancy -0.0718R <= 0.0R
-- ❌ Bootstrap 95% CI lower bound -0.0911R <= 0.0R
-- ❌ Matched Rank p-value 0.6633 >= 0.05
+- ❌ Mean Net Expectancy -0.0715R <= 0.0R
+- ❌ Bootstrap 95% CI lower bound -0.0908R <= 0.0R
+- ❌ Matched Rank p-value 0.7073 >= 0.05
 
 #### Diagnostics:
 - ℹ️ Net Profit Factor: 0.84 (Null p95 Hurdle: 1.04, p=0.4768)
-- ℹ️ Net Win Rate: 46.92% (Null p95 Hurdle: 52.40%, p=0.5443)
-- ℹ️ Max Drawdown (R): 597.04R
+- ℹ️ Net Win Rate: 46.93% (Null p95 Hurdle: 52.40%, p=0.5430)
+- ℹ️ Max Drawdown (R): 594.76R
 - ℹ️ Sharpe Ratio: -1.18 (p=0.4105)
 - ℹ️ Median Stop % of Price: 2.22%
 - ℹ️ Cost Drag in R per Trade: +0.0432R
 - ℹ️ Median Holding Time: 7 bars (7h)
-- ℹ️ Trades per Symbol: ADAUSDT: 739, AVAXUSDT: 714, BNBUSDT: 902, BTCUSDT: 947, DOGEUSDT: 710, ETHUSDT: 999, LINKUSDT: 638, SOLUSDT: 967, SUIUSDT: 397, XRPUSDT: 843
-- ℹ️ Per-Year Net R: 2021: -27.74R, 2022: -151.85R, 2023: -117.39R, 2024: -115.11R, 2025: -106.31R, 2026: -45.38R
+- ℹ️ Trades per Symbol: ADAUSDT: 737, AVAXUSDT: 713, BNBUSDT: 902, BTCUSDT: 948, DOGEUSDT: 701, ETHUSDT: 995, LINKUSDT: 633, SOLUSDT: 967, SUIUSDT: 394, XRPUSDT: 838
+- ℹ️ Per-Year Net R: 2021: -27.74R, 2022: -151.85R, 2023: -115.28R, 2024: -113.80R, 2025: -107.63R, 2026: -43.38R
 
 #### Per-Symbol Performance:
 | Symbol | Trades | Win Rate | Net PF (Gross) | Net PnL (USD) | Net R (Gross R) |
 | :--- | :---: | :---: | :---: | :---: | :---: |
-| `ADAUSDT` | 739 | 47.4% | 0.78 (0.87) | $-7,293.57 | -0.0987R (-0.0561R) |
-| `AVAXUSDT` | 714 | 50.8% | 0.94 (1.02) | $-1,960.88 | -0.0275R (+0.0098R) |
-| `BNBUSDT` | 902 | 44.1% | 0.86 (0.97) | $-5,282.56 | -0.0586R (-0.0108R) |
-| `BTCUSDT` | 947 | 42.8% | 0.80 (0.93) | $-7,384.18 | -0.0780R (-0.0265R) |
-| `DOGEUSDT` | 710 | 47.5% | 0.78 (0.86) | $-7,118.06 | -0.1003R (-0.0591R) |
-| `ETHUSDT` | 999 | 48.8% | 0.95 (1.06) | $-2,055.32 | -0.0206R (+0.0238R) |
-| `LINKUSDT` | 638 | 47.3% | 0.81 (0.90) | $-5,474.03 | -0.0858R (-0.0453R) |
-| `SOLUSDT` | 967 | 46.3% | 0.73 (0.80) | $-12,743.11 | -0.1318R (-0.0919R) |
-| `SUIUSDT` | 397 | 48.1% | 0.82 (0.90) | $-3,342.31 | -0.0842R (-0.0450R) |
-| `XRPUSDT` | 843 | 47.9% | 0.90 (1.00) | $-3,723.26 | -0.0442R (-0.0012R) |
+| `ADAUSDT` | 737 | 47.5% | 0.79 (0.87) | $-7,203.39 | -0.0977R (-0.0553R) |
+| `AVAXUSDT` | 713 | 51.1% | 0.94 (1.03) | $-1,773.70 | -0.0249R (+0.0123R) |
+| `BNBUSDT` | 902 | 44.2% | 0.86 (0.98) | $-5,152.66 | -0.0571R (-0.0093R) |
+| `BTCUSDT` | 948 | 42.6% | 0.80 (0.93) | $-7,349.95 | -0.0775R (-0.0260R) |
+| `DOGEUSDT` | 701 | 46.9% | 0.77 (0.85) | $-7,596.64 | -0.1084R (-0.0671R) |
+| `ETHUSDT` | 995 | 48.9% | 0.95 (1.07) | $-1,984.35 | -0.0199R (+0.0244R) |
+| `LINKUSDT` | 633 | 47.7% | 0.82 (0.91) | $-5,105.14 | -0.0806R (-0.0403R) |
+| `SOLUSDT` | 967 | 46.3% | 0.73 (0.80) | $-12,830.70 | -0.1327R (-0.0928R) |
+| `SUIUSDT` | 394 | 48.5% | 0.84 (0.92) | $-3,018.06 | -0.0766R (-0.0376R) |
+| `XRPUSDT` | 838 | 47.7% | 0.89 (0.99) | $-3,954.61 | -0.0472R (-0.0042R) |
 
 ---
 
@@ -153,34 +153,34 @@ In Phase 2, we established the empirical null hypothesis ($H_0$) across 1,000 Mo
 > **Statistical Verdict**: **`REJECTED (p >= 0.05)`**  
 > Matched Rank $p$-value: **`p = 1.0000`** (Empirical rank within 1,000 matched null passes)  
 > Matched Null Dropped Trade Share: **`0.00%`**  
-> Total Candidate Signals: `187951` | Executed Trades: `17166`  
+> Total Candidate Signals: `187951` | Executed Trades: `17171`  
 > Net Profit Factor: **`0.71`** (Gross: `0.80`)  
 > Net Expectancy: **`-0.1513R`** (Gross: `-0.0940R`)  
-> Max Drawdown (R): **`2606.85R`** | Cumulative Net R: **`-2597.26R`**  
+> Max Drawdown (R): **`2606.85R`** | Cumulative Net R: **`-2597.83R`**  
 > Days Evaluated: **`1933 days (100.0% of dataset)`**  
-> Bootstrap 95% CI (Mean Net R): **`[-0.1654R, -0.1373R]`** (10,000 resamples)  
-> Matched Baseline Median Net EV: **`-0.0969R`** (Matched 95th Pct Hurdle: `-0.0750R`)  
+> Bootstrap 95% CI (Mean Net R): **`[-0.1657R, -0.1375R]`** (10,000 resamples)  
+> Matched Baseline Median Net EV: **`-0.0966R`** (Matched 95th Pct Hurdle: `-0.0851R`)  
 > Sizing Mode: `fixed_risk` | Account Ruined: `YES (at 2021-03-23 20:00 UTC)`
 
 #### Alpha Validation Requirements:
 **Passed:**
-- ✅ Sample size 17166 >= 100 trades
+- ✅ Sample size 17171 >= 100 trades
 
 **Failed / Unmet:**
 - ❌ Mean Net Expectancy -0.1513R <= 0.0R
-- ❌ Bootstrap 95% CI lower bound -0.1654R <= 0.0R
+- ❌ Bootstrap 95% CI lower bound -0.1657R <= 0.0R
 - ❌ Matched Rank p-value 1.0000 >= 0.05
 
 #### Diagnostics:
 - ℹ️ Net Profit Factor: 0.71 (Null p95 Hurdle: 1.04, p=0.8580)
-- ℹ️ Net Win Rate: 46.97% (Null p95 Hurdle: 52.40%, p=0.5380)
+- ℹ️ Net Win Rate: 46.96% (Null p95 Hurdle: 52.40%, p=0.5393)
 - ℹ️ Max Drawdown (R): 2606.85R
 - ℹ️ Sharpe Ratio: -2.40 (p=0.8368)
 - ℹ️ Median Stop % of Price: 1.82%
 - ℹ️ Cost Drag in R per Trade: +0.0573R
 - ℹ️ Median Holding Time: 4 bars (4h)
-- ℹ️ Trades per Symbol: ADAUSDT: 1555, AVAXUSDT: 1527, BNBUSDT: 1865, BTCUSDT: 2294, DOGEUSDT: 1721, ETHUSDT: 2285, LINKUSDT: 1232, SOLUSDT: 2168, SUIUSDT: 747, XRPUSDT: 1772
-- ℹ️ Per-Year Net R: 2021: -504.47R, 2022: -416.65R, 2023: -546.25R, 2024: -480.77R, 2025: -449.06R, 2026: -200.05R
+- ℹ️ Trades per Symbol: ADAUSDT: 1555, AVAXUSDT: 1527, BNBUSDT: 1865, BTCUSDT: 2295, DOGEUSDT: 1722, ETHUSDT: 2285, LINKUSDT: 1233, SOLUSDT: 2169, SUIUSDT: 748, XRPUSDT: 1772
+- ℹ️ Per-Year Net R: 2021: -504.47R, 2022: -416.65R, 2023: -546.25R, 2024: -480.77R, 2025: -449.06R, 2026: -200.63R
 
 #### Per-Symbol Performance:
 | Symbol | Trades | Win Rate | Net PF (Gross) | Net PnL (USD) | Net R (Gross R) |
@@ -188,12 +188,12 @@ In Phase 2, we established the empirical null hypothesis ($H_0$) across 1,000 Mo
 | `ADAUSDT` | 1555 | 47.7% | 0.73 (0.82) | $-21,371.05 | -0.1374R (-0.0854R) |
 | `AVAXUSDT` | 1527 | 44.9% | 0.67 (0.74) | $-27,276.82 | -0.1786R (-0.1310R) |
 | `BNBUSDT` | 1865 | 46.2% | 0.67 (0.78) | $-34,000.28 | -0.1823R (-0.1105R) |
-| `BTCUSDT` | 2294 | 47.2% | 0.70 (0.84) | $-34,934.43 | -0.1523R (-0.0738R) |
-| `DOGEUSDT` | 1721 | 45.5% | 0.67 (0.75) | $-30,316.31 | -0.1762R (-0.1252R) |
+| `BTCUSDT` | 2295 | 47.2% | 0.70 (0.84) | $-34,965.50 | -0.1524R (-0.0738R) |
+| `DOGEUSDT` | 1722 | 45.5% | 0.67 (0.75) | $-30,331.02 | -0.1761R (-0.1252R) |
 | `ETHUSDT` | 2285 | 48.7% | 0.77 (0.88) | $-26,047.88 | -0.1140R (-0.0521R) |
-| `LINKUSDT` | 1232 | 42.7% | 0.61 (0.67) | $-27,596.97 | -0.2240R (-0.1754R) |
-| `SOLUSDT` | 2168 | 48.4% | 0.76 (0.84) | $-26,137.88 | -0.1206R (-0.0770R) |
-| `SUIUSDT` | 747 | 48.2% | 0.79 (0.86) | $-8,000.31 | -0.1071R (-0.0657R) |
+| `LINKUSDT` | 1233 | 42.7% | 0.61 (0.67) | $-27,602.36 | -0.2239R (-0.1752R) |
+| `SOLUSDT` | 2169 | 48.5% | 0.76 (0.84) | $-26,133.54 | -0.1205R (-0.0769R) |
+| `SUIUSDT` | 748 | 48.1% | 0.79 (0.86) | $-8,010.86 | -0.1071R (-0.0657R) |
 | `XRPUSDT` | 1772 | 48.6% | 0.73 (0.83) | $-24,043.98 | -0.1357R (-0.0779R) |
 
 ---
@@ -204,22 +204,22 @@ In Phase 2, we established the empirical null hypothesis ($H_0$) across 1,000 Mo
 > **Statistical Verdict**: **`REJECTED (p >= 0.05)`**  
 > Matched Rank $p$-value: **`p = 1.0000`** (Empirical rank within 1,000 matched null passes)  
 > Matched Null Dropped Trade Share: **`0.00%`**  
-> Total Candidate Signals: `73577` | Executed Trades: `22462`  
+> Total Candidate Signals: `73577` | Executed Trades: `22464`  
 > Net Profit Factor: **`0.62`** (Gross: `0.75`)  
 > Net Expectancy: **`-0.2157R`** (Gross: `-0.1239R`)  
-> Max Drawdown (R): **`4846.73R`** | Cumulative Net R: **`-4845.14R`**  
+> Max Drawdown (R): **`4846.73R`** | Cumulative Net R: **`-4845.32R`**  
 > Days Evaluated: **`1933 days (100.0% of dataset)`**  
-> Bootstrap 95% CI (Mean Net R): **`[-0.2285R, -0.2029R]`** (10,000 resamples)  
-> Matched Baseline Median Net EV: **`-0.1654R`** (Matched 95th Pct Hurdle: `-0.1350R`)  
+> Bootstrap 95% CI (Mean Net R): **`[-0.2286R, -0.2031R]`** (10,000 resamples)  
+> Matched Baseline Median Net EV: **`-0.1758R`** (Matched 95th Pct Hurdle: `-0.1653R`)  
 > Sizing Mode: `fixed_risk` | Account Ruined: `YES (at 2021-01-27 10:00 UTC)`
 
 #### Alpha Validation Requirements:
 **Passed:**
-- ✅ Sample size 22462 >= 100 trades
+- ✅ Sample size 22464 >= 100 trades
 
 **Failed / Unmet:**
 - ❌ Mean Net Expectancy -0.2157R <= 0.0R
-- ❌ Bootstrap 95% CI lower bound -0.2285R <= 0.0R
+- ❌ Bootstrap 95% CI lower bound -0.2286R <= 0.0R
 - ❌ Matched Rank p-value 1.0000 >= 0.05
 
 #### Diagnostics:
@@ -230,8 +230,8 @@ In Phase 2, we established the empirical null hypothesis ($H_0$) across 1,000 Mo
 - ℹ️ Median Stop % of Price: 0.88%
 - ℹ️ Cost Drag in R per Trade: +0.0919R
 - ℹ️ Median Holding Time: 2 bars (2h)
-- ℹ️ Trades per Symbol: ADAUSDT: 2165, AVAXUSDT: 2061, BNBUSDT: 2349, BTCUSDT: 2523, DOGEUSDT: 2413, ETHUSDT: 2658, LINKUSDT: 2110, SOLUSDT: 2567, SUIUSDT: 1187, XRPUSDT: 2429
-- ℹ️ Per-Year Net R: 2021: -1031.82R, 2022: -808.11R, 2023: -825.46R, 2024: -972.91R, 2025: -920.41R, 2026: -286.42R
+- ℹ️ Trades per Symbol: ADAUSDT: 2165, AVAXUSDT: 2061, BNBUSDT: 2349, BTCUSDT: 2524, DOGEUSDT: 2413, ETHUSDT: 2658, LINKUSDT: 2110, SOLUSDT: 2567, SUIUSDT: 1187, XRPUSDT: 2430
+- ℹ️ Per-Year Net R: 2021: -1031.82R, 2022: -808.11R, 2023: -825.46R, 2024: -972.91R, 2025: -920.41R, 2026: -286.61R
 
 #### Per-Symbol Performance:
 | Symbol | Trades | Win Rate | Net PF (Gross) | Net PnL (USD) | Net R (Gross R) |
@@ -239,13 +239,13 @@ In Phase 2, we established the empirical null hypothesis ($H_0$) across 1,000 Mo
 | `ADAUSDT` | 2165 | 47.3% | 0.63 (0.75) | $-47,313.01 | -0.2185R (-0.1278R) |
 | `AVAXUSDT` | 2061 | 44.8% | 0.60 (0.71) | $-49,668.52 | -0.2410R (-0.1563R) |
 | `BNBUSDT` | 2349 | 47.3% | 0.63 (0.78) | $-48,383.08 | -0.2060R (-0.1066R) |
-| `BTCUSDT` | 2523 | 47.2% | 0.63 (0.79) | $-51,041.03 | -0.2023R (-0.0991R) |
+| `BTCUSDT` | 2524 | 47.2% | 0.63 (0.79) | $-51,044.08 | -0.2022R (-0.0990R) |
 | `DOGEUSDT` | 2413 | 45.5% | 0.58 (0.70) | $-59,664.68 | -0.2473R (-0.1570R) |
 | `ETHUSDT` | 2658 | 47.4% | 0.63 (0.76) | $-55,844.87 | -0.2101R (-0.1157R) |
 | `LINKUSDT` | 2110 | 45.8% | 0.60 (0.72) | $-49,872.42 | -0.2364R (-0.1456R) |
 | `SOLUSDT` | 2567 | 47.9% | 0.65 (0.77) | $-50,393.32 | -0.1963R (-0.1138R) |
 | `SUIUSDT` | 1187 | 48.1% | 0.67 (0.80) | $-21,772.00 | -0.1834R (-0.0983R) |
-| `XRPUSDT` | 2429 | 47.8% | 0.63 (0.77) | $-50,560.61 | -0.2082R (-0.1152R) |
+| `XRPUSDT` | 2430 | 47.8% | 0.63 (0.77) | $-50,576.37 | -0.2081R (-0.1152R) |
 
 ---
 
@@ -253,114 +253,116 @@ In Phase 2, we established the empirical null hypothesis ($H_0$) across 1,000 Mo
 **Concept:** 4h Donchian Breakout N=20 + ATR(14) 3R Trailing Stop (H1a)
 
 > **Statistical Verdict**: **`REJECTED (p >= 0.025)`**  
-> Matched Rank $p$-value: **`p = 0.9703`** (Empirical rank within 1,000 matched null passes)  
+> Matched Rank $p$-value: **`p = 0.0669`** (Empirical rank within 1,000 matched null passes)  
 > Matched Null Dropped Trade Share: **`0.00%`**  
-> Total Candidate Signals: `9755` | Executed Trades: `1317`  
-> Net Profit Factor: **`0.87`** (Gross: `0.93`)  
-> Net Expectancy: **`-0.0522R`** (Gross: `-0.0271R`)  
-> Max Drawdown (R): **`93.90R`** | Cumulative Net R: **`-68.70R`**  
+> Total Candidate Signals: `9755` | Executed Trades: `1055`  
+> Net Profit Factor: **`1.14`** (Gross: `1.23`)  
+> Net Expectancy: **`+0.0495R`** (Gross: `+0.0774R`)  
+> Max Drawdown (R): **`24.59R`** | Cumulative Net R: **`+52.17R`**  
 > Days Evaluated: **`1933 days (100.0% of dataset)`**  
-> Bootstrap 95% CI (Mean Net R): **`[-0.1072R, +0.0066R]`** (10,000 resamples)  
-> Matched Baseline Median Net EV: **`+0.0058R`** (Matched 95th Pct Hurdle: `+0.0450R`)  
+> Bootstrap 95% CI (Mean Net R): **`[-0.0162R, +0.1187R]`** (10,000 resamples)  
+> Matched Baseline Median Net EV: **`+0.0027R`** (Matched 95th Pct Hurdle: `+0.0553R`)  
 > Sizing Mode: `fixed_risk` | Account Ruined: `NO`
 
 #### Alpha Validation Requirements:
 **Passed:**
-- ✅ Sample size 1317 >= 100 trades
+- ✅ Sample size 1055 >= 100 trades
+- ✅ Mean Net Expectancy +0.0495R > 0.0R
 
 **Failed / Unmet:**
-- ❌ Mean Net Expectancy -0.0522R <= 0.0R
-- ❌ Bootstrap 95% CI lower bound -0.1072R <= 0.0R
-- ❌ Matched Rank p-value 0.9703 >= 0.025
+- ❌ Bootstrap 95% CI lower bound -0.0162R <= 0.0R
+- ❌ Matched Rank p-value 0.0669 >= 0.025
 
 #### Diagnostics:
-- ℹ️ Net Profit Factor: 0.87 (Null p95 Hurdle: 1.04, p=0.3749)
-- ℹ️ Net Win Rate: 33.71% (Null p95 Hurdle: 52.40%, p=0.9999)
-- ℹ️ Max Drawdown (R): 93.90R
-- ℹ️ Sharpe Ratio: -1.39 (p=0.4927)
-- ℹ️ Median Stop % of Price: 7.26%
-- ℹ️ Cost Drag in R per Trade: +0.0252R
-- ℹ️ Median Holding Time: 51 bars (51h)
-- ℹ️ Trades per Symbol: ADAUSDT: 104, AVAXUSDT: 139, BNBUSDT: 145, BTCUSDT: 203, DOGEUSDT: 104, ETHUSDT: 161, LINKUSDT: 100, SOLUSDT: 178, SUIUSDT: 62, XRPUSDT: 121
-- ℹ️ Per-Year Net R: 2021: -36.29R, 2022: -12.26R, 2023: -2.24R, 2024: +2.04R, 2025: -8.43R, 2026: -11.52R
+- ℹ️ Net Profit Factor: 1.14 (Null p95 Hurdle: 1.04, p=0.0039)
+- ℹ️ Net Win Rate: 38.29% (Null p95 Hurdle: 52.40%, p=0.9977)
+- ℹ️ Max Drawdown (R): 24.59R
+- ℹ️ Sharpe Ratio: -0.19 (p=0.1138)
+- ℹ️ Median Stop % of Price: 7.60%
+- ℹ️ Cost Drag in R per Trade: +0.0288R
+- ℹ️ Median Holding Time: 60 bars (60h)
+- ℹ️ Trades per Symbol: ADAUSDT: 81, AVAXUSDT: 83, BNBUSDT: 105, BTCUSDT: 185, DOGEUSDT: 86, ETHUSDT: 145, LINKUSDT: 78, SOLUSDT: 138, SUIUSDT: 57, XRPUSDT: 97
+- ℹ️ Per-Year Net R: 2021: -9.34R, 2022: +10.19R, 2023: +22.55R, 2024: +12.99R, 2025: +22.88R, 2026: -7.08R
 
 #### Per-Symbol Performance:
 | Symbol | Trades | Win Rate | Net PF (Gross) | Net PnL (USD) | Net R (Gross R) |
 | :--- | :---: | :---: | :---: | :---: | :---: |
-| `ADAUSDT` | 104 | 38.5% | 1.19 (1.27) | $+694.03 | +0.0667R (+0.0906R) |
-| `AVAXUSDT` | 139 | 32.4% | 0.85 (0.89) | $-812.69 | -0.0585R (-0.0394R) |
-| `BNBUSDT` | 145 | 31.7% | 0.91 (0.99) | $-546.37 | -0.0377R (-0.0033R) |
-| `BTCUSDT` | 203 | 33.0% | 0.76 (0.85) | $-1,916.32 | -0.0944R (-0.0561R) |
-| `DOGEUSDT` | 104 | 32.7% | 0.87 (0.91) | $-561.32 | -0.0540R (-0.0366R) |
-| `ETHUSDT` | 161 | 36.0% | 1.13 (1.21) | $+810.87 | +0.0504R (+0.0767R) |
-| `LINKUSDT` | 100 | 35.0% | 0.55 (0.59) | $-1,805.42 | -0.1805R (-0.1591R) |
-| `SOLUSDT` | 178 | 34.3% | 0.65 (0.69) | $-2,417.76 | -0.1358R (-0.1167R) |
-| `SUIUSDT` | 62 | 32.3% | 0.93 (0.97) | $-190.27 | -0.0307R (-0.0140R) |
-| `XRPUSDT` | 121 | 31.4% | 0.97 (1.03) | $-124.27 | -0.0103R (+0.0122R) |
+| `ADAUSDT` | 81 | 38.3% | 1.15 (1.24) | $+416.98 | +0.0515R (+0.0770R) |
+| `AVAXUSDT` | 83 | 37.3% | 1.11 (1.17) | $+338.68 | +0.0408R (+0.0604R) |
+| `BNBUSDT` | 105 | 38.1% | 1.19 (1.31) | $+692.30 | +0.0659R (+0.1026R) |
+| `BTCUSDT` | 185 | 39.5% | 1.17 (1.32) | $+1,123.95 | +0.0608R (+0.1045R) |
+| `DOGEUSDT` | 86 | 39.5% | 1.23 (1.29) | $+750.21 | +0.0872R (+0.1069R) |
+| `ETHUSDT` | 145 | 39.3% | 1.49 (1.60) | $+2,569.63 | +0.1772R (+0.2064R) |
+| `LINKUSDT` | 78 | 43.6% | 0.99 (1.07) | $-31.23 | -0.0040R (+0.0209R) |
+| `SOLUSDT` | 138 | 39.1% | 0.90 (0.96) | $-457.67 | -0.0332R (-0.0120R) |
+| `SUIUSDT` | 57 | 35.1% | 1.21 (1.28) | $+490.93 | +0.0861R (+0.1075R) |
+| `XRPUSDT` | 97 | 30.9% | 0.83 (0.89) | $-676.39 | -0.0697R (-0.0420R) |
 
 ---
 
 ### Hypothesis: Donchian4hN55
 **Concept:** 4h Donchian Breakout N=55 + ATR(14) 3R Trailing Stop (H1b)
 
-> **Statistical Verdict**: **`REJECTED (p >= 0.025)`**  
-> Matched Rank $p$-value: **`p = 0.6535`** (Empirical rank within 1,000 matched null passes)  
+> **Statistical Verdict**: **`VALIDATED (p < 0.025)`**  
+> Matched Rank $p$-value: **`p = 0.0240`** (Empirical rank within 1,000 matched null passes)  
 > Matched Null Dropped Trade Share: **`0.00%`**  
-> Total Candidate Signals: `5274` | Executed Trades: `916`  
-> Net Profit Factor: **`0.96`** (Gross: `1.02`)  
-> Net Expectancy: **`-0.0153R`** (Gross: `+0.0078R`)  
-> Max Drawdown (R): **`49.19R`** | Cumulative Net R: **`-14.06R`**  
+> Total Candidate Signals: `5274` | Executed Trades: `832`  
+> Net Profit Factor: **`1.22`** (Gross: `1.31`)  
+> Net Expectancy: **`+0.0788R`** (Gross: `+0.1047R`)  
+> Max Drawdown (R): **`16.69R`** | Cumulative Net R: **`+65.56R`**  
 > Days Evaluated: **`1933 days (100.0% of dataset)`**  
-> Bootstrap 95% CI (Mean Net R): **`[-0.0832R, +0.0580R]`** (10,000 resamples)  
-> Matched Baseline Median Net EV: **`+0.0074R`** (Matched 95th Pct Hurdle: `+0.0510R`)  
+> Bootstrap 95% CI (Mean Net R): **`[+0.0021R, +0.1590R]`** (10,000 resamples)  
+> Matched Baseline Median Net EV: **`-0.0012R`** (Matched 95th Pct Hurdle: `+0.0620R`)  
 > Sizing Mode: `fixed_risk` | Account Ruined: `NO`
 
 #### Alpha Validation Requirements:
 **Passed:**
-- ✅ Sample size 916 >= 100 trades
+- ✅ Sample size 832 >= 100 trades
+- ✅ Mean Net Expectancy +0.0788R > 0.0R
+- ✅ Bootstrap 95% CI lower bound +0.0021R > 0.0R
+- ✅ Matched Rank p-value 0.0240 < 0.025
 
 **Failed / Unmet:**
-- ❌ Mean Net Expectancy -0.0153R <= 0.0R
-- ❌ Bootstrap 95% CI lower bound -0.0832R <= 0.0R
-- ❌ Matched Rank p-value 0.6535 >= 0.025
+- None
 
 #### Diagnostics:
-- ℹ️ Net Profit Factor: 0.96 (Null p95 Hurdle: 1.04, p=0.1355)
-- ℹ️ Net Win Rate: 34.06% (Null p95 Hurdle: 52.40%, p=0.9999)
-- ℹ️ Max Drawdown (R): 49.19R
-- ℹ️ Sharpe Ratio: -0.64 (p=0.2233)
-- ℹ️ Median Stop % of Price: 7.52%
-- ℹ️ Cost Drag in R per Trade: +0.0236R
-- ℹ️ Median Holding Time: 46 bars (46h)
-- ℹ️ Trades per Symbol: ADAUSDT: 78, AVAXUSDT: 100, BNBUSDT: 95, BTCUSDT: 119, DOGEUSDT: 78, ETHUSDT: 119, LINKUSDT: 75, SOLUSDT: 124, SUIUSDT: 48, XRPUSDT: 80
-- ℹ️ Per-Year Net R: 2021: -17.88R, 2022: -5.22R, 2023: +20.39R, 2024: -4.29R, 2025: -1.39R, 2026: -5.67R
+- ℹ️ Net Profit Factor: 1.22 (Null p95 Hurdle: 1.04, p=0.0004)
+- ℹ️ Net Win Rate: 37.62% (Null p95 Hurdle: 52.40%, p=0.9988)
+- ℹ️ Max Drawdown (R): 16.69R
+- ℹ️ Sharpe Ratio: 0.47 (p=0.0314)
+- ℹ️ Median Stop % of Price: 7.55%
+- ℹ️ Cost Drag in R per Trade: +0.0264R
+- ℹ️ Median Holding Time: 52 bars (52h)
+- ℹ️ Trades per Symbol: ADAUSDT: 66, AVAXUSDT: 77, BNBUSDT: 84, BTCUSDT: 129, DOGEUSDT: 75, ETHUSDT: 107, LINKUSDT: 66, SOLUSDT: 109, SUIUSDT: 46, XRPUSDT: 73
+- ℹ️ Per-Year Net R: 2021: +10.25R, 2022: +3.83R, 2023: +23.21R, 2024: +13.11R, 2025: +18.11R, 2026: -2.94R
 
 #### Per-Symbol Performance:
 | Symbol | Trades | Win Rate | Net PF (Gross) | Net PnL (USD) | Net R (Gross R) |
 | :--- | :---: | :---: | :---: | :---: | :---: |
-| `ADAUSDT` | 78 | 39.7% | 1.36 (1.44) | $+963.32 | +0.1235R (+0.1455R) |
-| `AVAXUSDT` | 100 | 36.0% | 1.22 (1.27) | $+811.94 | +0.0812R (+0.0987R) |
-| `BNBUSDT` | 95 | 36.8% | 1.36 (1.48) | $+1,247.17 | +0.1313R (+0.1646R) |
-| `BTCUSDT` | 119 | 30.3% | 0.85 (0.94) | $-750.35 | -0.0631R (-0.0255R) |
-| `DOGEUSDT` | 78 | 35.9% | 1.05 (1.10) | $+167.22 | +0.0214R (+0.0373R) |
-| `ETHUSDT` | 119 | 34.5% | 0.73 (0.78) | $-1,351.24 | -0.1135R (-0.0868R) |
-| `LINKUSDT` | 75 | 28.0% | 0.72 (0.76) | $-910.41 | -0.1214R (-0.1019R) |
-| `SOLUSDT` | 124 | 34.7% | 0.78 (0.82) | $-1,044.30 | -0.0842R (-0.0666R) |
-| `SUIUSDT` | 48 | 22.9% | 0.71 (0.74) | $-652.40 | -0.1359R (-0.1195R) |
-| `XRPUSDT` | 80 | 37.5% | 1.04 (1.09) | $+113.01 | +0.0141R (+0.0354R) |
+| `ADAUSDT` | 66 | 42.4% | 1.49 (1.60) | $+1,070.79 | +0.1622R (+0.1872R) |
+| `AVAXUSDT` | 77 | 36.4% | 1.31 (1.37) | $+895.02 | +0.1162R (+0.1338R) |
+| `BNBUSDT` | 84 | 44.0% | 1.82 (1.99) | $+2,249.96 | +0.2679R (+0.3035R) |
+| `BTCUSDT` | 129 | 34.9% | 1.19 (1.32) | $+894.14 | +0.0693R (+0.1115R) |
+| `DOGEUSDT` | 75 | 42.7% | 1.41 (1.48) | $+1,056.30 | +0.1408R (+0.1597R) |
+| `ETHUSDT` | 107 | 38.3% | 1.11 (1.19) | $+412.53 | +0.0386R (+0.0667R) |
+| `LINKUSDT` | 66 | 31.8% | 0.98 (1.03) | $-52.38 | -0.0079R (+0.0126R) |
+| `SOLUSDT` | 109 | 37.6% | 0.92 (0.97) | $-299.49 | -0.0275R (-0.0084R) |
+| `SUIUSDT` | 46 | 28.3% | 1.05 (1.10) | $+93.54 | +0.0203R (+0.0404R) |
+| `XRPUSDT` | 73 | 37.0% | 1.09 (1.16) | $+235.19 | +0.0322R (+0.0560R) |
 
 ---
 
 ## 4. Strategic Implications for Discretionary Terminal
 
-1. **Evidence-Based Discretionary Radar Filtering**:
-   No strategy passed; no pattern in this report has validated edge. Under rigorous institutional friction, all tested hypotheses exhibit negative net expectancy or fail to exceed random-entry baseline distributions at the statistical significance threshold. Consequently, the Discretionary Trading Terminal must not display unverified automated trade recommendations.
+1. **Validated Setups (1/6)**:
+   The following strategies met all alpha validation criteria ($p < 0.05$, positive bootstrap CI lower bound):
+   - **Donchian4hN55**: Net EV = `+0.0788R` (Gross: `+0.1047R`), Net PF = `1.22`, Bootstrap 95% CI = `[+0.0021, +0.1590]R`, Matched Rank $p$-value = `0.0240`
 
-2. **Fee and Slippage Drag Reality**:
-   Execution friction (0.05% taker fee, 0.03% slippage, and 0.01% 8h funding drag) decisively turns gross-positive or marginal setups into net losses. Identifying patterns that possess zero predictive edge under real market conditions prevents capital destruction from retail chart illusions.
+2. **Unvalidated Patterns**:
+   The following strategies failed validation: **TrendPullback**, **FVGRetest**, **ConfluenceThreshold**, **LiquiditySweep**, **Donchian4hN20**. These setups show no validated edge under institutional friction and will display warning banners.
 
-3. **Capital Preservation Protocol**:
-   Because no setup demonstrates a statistically validated edge against matched noise, the terminal operates in evidence-status and risk-calculator mode only, providing trade structure and sizing analytics without directional endorsement.
+3. **Evidence-Backed Radar Screening**:
+   Only configurations meeting strict statistical criteria are highlighted as candidate setups on the Discretionary Radar.
 
 ---
 
@@ -369,12 +371,12 @@ In Phase 2, we established the empirical null hypothesis ($H_0$) across 1,000 Mo
 1. **Position Sizing Mode (`fixed_risk`)**:
    Evaluations are performed under `fixed_risk` position sizing. In fixed-risk mode, risk is calibrated to initial equity without compounding, ensuring trade-level statistical edge is measured uniformly across the full dataset period without sample truncation from ruin guards.
 2. **Sample Size Evaluated Per Strategy**:
-   - **TrendPullback**: 6,625 executed trades (1933 days evaluated, 100.0% of dataset)
-   - **FVGRetest**: 7,856 executed trades (1933 days evaluated, 100.0% of dataset)
-   - **ConfluenceThreshold**: 17,166 executed trades (1933 days evaluated, 100.0% of dataset)
-   - **LiquiditySweep**: 22,462 executed trades (1933 days evaluated, 100.0% of dataset)
-   - **Donchian4hN20**: 1,317 executed trades (1933 days evaluated, 100.0% of dataset)
-   - **Donchian4hN55**: 916 executed trades (1933 days evaluated, 100.0% of dataset)
+   - **TrendPullback**: 6,627 executed trades (1933 days evaluated, 100.0% of dataset)
+   - **FVGRetest**: 7,828 executed trades (1933 days evaluated, 100.0% of dataset)
+   - **ConfluenceThreshold**: 17,171 executed trades (1933 days evaluated, 100.0% of dataset)
+   - **LiquiditySweep**: 22,464 executed trades (1933 days evaluated, 100.0% of dataset)
+   - **Donchian4hN20**: 1,055 executed trades (1933 days evaluated, 100.0% of dataset)
+   - **Donchian4hN55**: 832 executed trades (1933 days evaluated, 100.0% of dataset)
 3. **No Out-of-Sample Holdout**:
    No holdout dataset has been used yet. All metrics reflect in-sample backtesting across the complete historical timeline.
 4. **Gross vs. Net Metrics**:
