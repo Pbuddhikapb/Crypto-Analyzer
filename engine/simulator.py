@@ -138,6 +138,7 @@ class SimulationEngine:
         ruin_threshold_usd: Optional[float] = None,
         sizing_mode: str = "fixed_risk",
         bar_interval_ms: Optional[int] = None,
+        track_equity_curve: bool = True,
     ):
         self.initial_equity_usd = float(initial_equity_usd)
         self.equity_usd = float(initial_equity_usd)
@@ -155,6 +156,7 @@ class SimulationEngine:
         )
         self.sizing_mode = sizing_mode
         self.bar_interval_ms = bar_interval_ms
+        self.track_equity_curve = track_equity_curve
         self.ruined = False
         self.ruin_time_ms: Optional[int] = None
 
@@ -446,10 +448,11 @@ class SimulationEngine:
                         self.cooldown_tracker[sym] = current_bar_idx
 
                 if closed_trades:
-                    if self.equity_curve and self.equity_curve[-1][0] == timestamp_ms:
-                        self.equity_curve[-1] = (timestamp_ms, round(self.equity_usd, 2))
-                    else:
-                        self.equity_curve.append((timestamp_ms, round(self.equity_usd, 2)))
+                    if self.track_equity_curve:
+                        if self.equity_curve and self.equity_curve[-1][0] == timestamp_ms:
+                            self.equity_curve[-1] = (timestamp_ms, round(self.equity_usd, 2))
+                        else:
+                            self.equity_curve.append((timestamp_ms, round(self.equity_usd, 2)))
                     return closed_trades
 
         for trade_id, pos in self.active_positions.items():
@@ -467,7 +470,7 @@ class SimulationEngine:
                 pos["last_funding_period"] = current_funding_period
 
             # 2. Evaluate exit authority pure logic
-            candle_4 = (candle[0], candle[1], candle[2], candle[3])
+            candle_4 = candle if len(candle) == 4 else (candle[0], candle[1], candle[2], candle[3])
             decision = evaluate_trade_exit(state, candle_4, self.exit_config)
 
             if decision.action == "PARTIAL_TP1":
@@ -567,10 +570,11 @@ class SimulationEngine:
             del self.active_positions[tid]
 
         # Record equity curve point (update existing point if same timestamp to avoid multi-symbol inflation)
-        if self.equity_curve and self.equity_curve[-1][0] == timestamp_ms:
-            self.equity_curve[-1] = (timestamp_ms, round(self.equity_usd, 2))
-        else:
-            self.equity_curve.append((timestamp_ms, round(self.equity_usd, 2)))
+        if self.track_equity_curve:
+            if self.equity_curve and self.equity_curve[-1][0] == timestamp_ms:
+                self.equity_curve[-1] = (timestamp_ms, round(self.equity_usd, 2))
+            else:
+                self.equity_curve.append((timestamp_ms, round(self.equity_usd, 2)))
         return closed_trades
 
     def compute_summary(self) -> SimulationResult:
@@ -789,6 +793,7 @@ def simulate_single_trade_lifecycle(
         exit_config=exit_config,
         bar_interval_ms=bar_interval_ms,
         sizing_mode="fixed_risk",
+        track_equity_curve=False,
     )
 
     sig = CandidateSignal(
@@ -806,34 +811,25 @@ def simulate_single_trade_lifecycle(
 
     if isinstance(candles_forward, np.ndarray) and candles_forward.ndim == 2 and candles_forward.shape[1] >= 4:
         has_ts = candles_forward.shape[1] > 4
-        c_opens = candles_forward[:, 0]
-        c_highs = candles_forward[:, 1]
-        c_lows = candles_forward[:, 2]
-        c_closes = candles_forward[:, 3]
-        c_tss = candles_forward[:, 4] if has_ts else None
         eff_interval = bar_interval_ms or 3600000
 
         if has_ts:
-            for idx, (c_open, c_high, c_low, c_close, c_ts) in enumerate(
-                zip(c_opens, c_highs, c_lows, c_closes, c_tss)
-            ):
+            for idx, row in enumerate(candles_forward):
                 closed = engine.process_bar(
                     symbol=symbol,
-                    candle=(float(c_open), float(c_high), float(c_low), float(c_close)),
-                    timestamp_ms=int(c_ts),
+                    candle=(float(row[0]), float(row[1]), float(row[2]), float(row[3])),
+                    timestamp_ms=int(row[4]),
                     current_bar_idx=idx + 1,
                     bar_interval_ms=eff_interval,
                 )
                 if closed:
                     return closed[0]
         else:
-            for idx, (c_open, c_high, c_low, c_close) in enumerate(
-                zip(c_opens, c_highs, c_lows, c_closes)
-            ):
+            for idx, row in enumerate(candles_forward):
                 c_ts = entry_ts_ms + (idx + 1) * eff_interval
                 closed = engine.process_bar(
                     symbol=symbol,
-                    candle=(float(c_open), float(c_high), float(c_low), float(c_close)),
+                    candle=(float(row[0]), float(row[1]), float(row[2]), float(row[3])),
                     timestamp_ms=c_ts,
                     current_bar_idx=idx + 1,
                     bar_interval_ms=bar_interval_ms,

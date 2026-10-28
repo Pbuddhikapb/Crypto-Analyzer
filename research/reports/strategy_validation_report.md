@@ -39,7 +39,7 @@ In Phase 2, we established the empirical null hypothesis ($H_0$) across 10 Monte
 | **ConfluenceThreshold** | 17171 | 47.0% | **0.71** (0.80) | **-0.1513R** (-0.0940R) | 2606.85R | [-0.1657, -0.1375]R | +0.0000R | `p = 1.0000` | 0.00% | 1933d (100.0%) | `fixed_risk` | ⚠️ Ruined (2021-03-23) | 🔴 **REJECTED** |
 | **LiquiditySweep** | 22464 | 46.9% | **0.62** (0.75) | **-0.2157R** (-0.1239R) | 4846.73R | [-0.2286, -0.2031]R | +0.0000R | `p = 1.0000` | 0.00% | 1933d (100.0%) | `fixed_risk` | ⚠️ Ruined (2021-01-27) | 🔴 **REJECTED** |
 | **Donchian4hN20** | 1055 | 38.3% | **1.14** (1.23) | **+0.0495R** (+0.0774R) | 24.59R | [-0.0162, +0.1187]R | +0.0000R | `p = 0.0669` | 0.00% | 1933d (100.0%) | `fixed_risk` | No | 🔴 **REJECTED** |
-| **Donchian4hN55** | 832 | 37.6% | **1.22** (1.31) | **+0.0788R** (+0.1047R) | 16.69R | [+0.0021, +0.1590]R | +0.0000R | `p = 0.0240` | 0.00% | 1933d (100.0%) | `fixed_risk` | No | 🟢 **PASSED DEV GATE (see robustness)** |
+| **Donchian4hN55** | 832 | 37.6% | **1.22** (1.31) | **+0.0788R** (+0.1047R) | 16.69R | [+0.0021, +0.1590]R | +0.0003R | `p = 0.0195` | 0.00% | 1933d (100.0%) | `fixed_risk` | No | 🟢 **PASSED DEV GATE (see robustness)** |
 
 ---
 
@@ -439,7 +439,7 @@ In Phase 2, we established the empirical null hypothesis ($H_0$) across 10 Monte
 **Concept:** 4h Donchian Breakout N=55 + ATR(14) 3R Trailing Stop (H1b)
 
 > **Statistical Verdict**: **`PASSED DEV GATE (see robustness) (p < 0.025)`**  
-> Matched Rank $p$-value: **`p = 0.0240`** (Empirical rank within 1,000 matched null passes)  
+> Matched Rank $p$-value: **`p = 0.0195`** (Empirical rank within 10,000 matched null passes)  
 > Matched Null Dropped Trade Share: **`0.00%`**  
 > Total Candidate Signals: `5274` | Executed Trades: `832`  
 > Net Profit Factor: **`1.22`** (Gross: `1.31`)  
@@ -447,7 +447,7 @@ In Phase 2, we established the empirical null hypothesis ($H_0$) across 10 Monte
 > Max Drawdown (R): **`16.69R`** | Cumulative Net R: **`+65.56R`**  
 > Days Evaluated: **`1933 days (100.0% of dataset)`**  
 > Bootstrap 95% CI (Mean Net R): **`[+0.0021R, +0.1590R]`** (10,000 resamples)  
-> Matched Baseline Median Net EV: **`+0.0000R`** (Matched 95th Pct Hurdle: `+0.0000R`)  
+> Matched Baseline Median Net EV: **`+0.0003R`** (Matched 95th Pct Hurdle: `+0.0000R`)  
 > Sizing Mode: `fixed_risk` | Account Ruined: `NO`
 
 #### Alpha Validation Requirements:
@@ -455,7 +455,7 @@ In Phase 2, we established the empirical null hypothesis ($H_0$) across 10 Monte
 - ✅ Sample size 832 >= 100 trades
 - ✅ Mean Net Expectancy +0.0788R > 0.0R
 - ✅ Bootstrap 95% CI lower bound +0.0021R > 0.0R
-- ✅ Matched Rank p-value 0.0240 < 0.025
+- ✅ Matched Rank p-value 0.0195 < 0.025
 
 **Failed / Unmet:**
 - None
@@ -490,9 +490,9 @@ In Phase 2, we established the empirical null hypothesis ($H_0$) across 10 Monte
 
 | Diagnostic Metric | Value | Reference / Standard |
 | :--- | :--- | :--- |
-| **Matched $p$-value** | `0.0240` (N=1,000) | Gate threshold $\alpha = 0.025$ |
-| **Monte Carlo Standard Error** | `SE = 0.0048` | $\sqrt{p(1-p)/N}$ |
-| **Threshold within 2 SE?** | ⚠️ **YES (p is within 2 MC SE of threshold)** | $|p - \alpha| \le 2 \times SE$ |
+| **Matched $p$-value** | `0.0195` (N=10,000) | Gate threshold $\alpha = 0.025$ |
+| **Monte Carlo Standard Error** | `SE = 0.0014` | $\sqrt{p(1-p)/N}$ |
+| **Threshold within 2 SE?** | No | $|p - \alpha| \le 2 \times SE$ |
 | **iid Bootstrap 2.5% Bound (30 seeds)** | **`93.3%`** above zero | Min: `-0.0018R`, Max: `+0.0078R` |
 | **Week-Block Bootstrap 95% CI** | `[-0.0151, +0.1796]R` | 7-day block temporal resampling |
 | **Top-10 Outlier Share of Total R** | **`82.0%`** (`+53.76R` / `+65.56R`) | Lower indicates broader distribution |
@@ -518,7 +518,7 @@ In Phase 2, we established the empirical null hypothesis ($H_0$) across 10 Monte
 
 1. **Passed Dev Gate (see robustness) (1/6)**:
    The following strategies met all pre-registered dev gate criteria ($p < 0.05$, positive bootstrap CI lower bound):
-   - **Donchian4hN55**: Net EV = `+0.0788R` (Gross: `+0.1047R`), Net PF = `1.22`, Bootstrap 95% CI = `[+0.0021, +0.1590]R`, Matched Rank $p$-value = `0.0240`
+   - **Donchian4hN55**: Net EV = `+0.0788R` (Gross: `+0.1047R`), Net PF = `1.22`, Bootstrap 95% CI = `[+0.0021, +0.1590]R`, Matched Rank $p$-value = `0.0195` (N=10,000)
 
 2. **Unvalidated Patterns**:
    The following strategies failed validation: **TrendPullback**, **FVGRetest**, **ConfluenceThreshold**, **LiquiditySweep**, **Donchian4hN20**. These setups show no validated edge under institutional friction and will display warning banners.

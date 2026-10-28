@@ -433,3 +433,61 @@ def test_guardrail_p_value_at_floor_warning():
     assert "Null-sanity check required" in rep
     assert "equals minimum floor 1/(N+1)" in rep
 
+
+def test_matched_baseline_worker_invariance_and_identical_p_value(tmp_path):
+    """
+    Assert 1 worker and 2 workers give the exact same null distribution and rank p-value
+    for the same seed, and verify chunked resumable execution from checkpoint.
+    """
+    candles = {
+        "BTCUSDT": _make_dummy_candles(300, 100.0),
+        "ETHUSDT": _make_dummy_candles(300, 50.0),
+    }
+    trades = [
+        _make_mock_trade("BTCUSDT", net_r=-0.5, risk_usd=100.0, notional=5000.0),
+        _make_mock_trade("BTCUSDT", net_r=1.2, risk_usd=100.0, notional=4000.0),
+        _make_mock_trade("ETHUSDT", net_r=-1.1, risk_usd=100.0, notional=5000.0),
+        _make_mock_trade("ETHUSDT", net_r=0.8, risk_usd=100.0, notional=2500.0),
+    ]
+
+    # Run with 1 worker
+    res_w1 = run_matched_baseline(trades, candles, iterations=30, seed=123, workers=1)
+
+    # Run with 2 workers
+    res_w2 = run_matched_baseline(trades, candles, iterations=30, seed=123, workers=2)
+
+    # Must be 100% identical distribution and p-value
+    assert res_w1.null_expectancy_r_distribution == res_w2.null_expectancy_r_distribution
+    assert res_w1.empirical_p_value == res_w2.empirical_p_value
+    assert res_w1.median_expectancy_r == res_w2.median_expectancy_r
+    assert res_w1.mean_expectancy_r == res_w2.mean_expectancy_r
+    assert res_w1.std_expectancy_r == res_w2.std_expectancy_r
+
+    # Resumable chunked run
+    ckpt_file = str(tmp_path / "matched_ckpt.json")
+    res_chunked = run_matched_baseline(
+        trades,
+        candles,
+        iterations=30,
+        seed=123,
+        workers=2,
+        checkpoint_path=ckpt_file,
+        chunk_size=10,
+    )
+    assert os.path.exists(ckpt_file)
+    assert res_chunked.null_expectancy_r_distribution == res_w1.null_expectancy_r_distribution
+    assert res_chunked.empirical_p_value == res_w1.empirical_p_value
+
+    # Resume from completed checkpoint (should load existing results without re-simulating)
+    res_resumed = run_matched_baseline(
+        trades,
+        candles,
+        iterations=30,
+        seed=123,
+        workers=1,
+        checkpoint_path=ckpt_file,
+    )
+    assert res_resumed.null_expectancy_r_distribution == res_w1.null_expectancy_r_distribution
+    assert res_resumed.empirical_p_value == res_w1.empirical_p_value
+
+

@@ -264,7 +264,8 @@ def _simulate_single_matched_pass(
 
 
 def _worker_matched_chunk(
-    seeds: List[int],
+    pass_indices: List[int],
+    base_seed: int,
     trade_profiles: List[Tuple[str, float]],
     candles_dict: Dict[str, np.ndarray],
     friction: SimulationFriction,
@@ -272,13 +273,17 @@ def _worker_matched_chunk(
     initial_equity_usd: float,
     risk_per_trade_pct: float,
     max_leverage: float,
-) -> List[Tuple[float, int, int]]:
-    """Worker function to process a batch of matched passes across multiprocessing workers."""
+) -> List[Tuple[int, float, int, int]]:
+    """Worker function to process a batch of matched passes across multiprocessing workers.
+
+    Each pass is seeded strictly as base_seed + pass_idx, guaranteeing invariance to worker count.
+    Returns: List of (pass_idx, pass_ev, completed_trades_count, dropped_trades_count).
+    """
     logging.getLogger("simulator").setLevel(logging.ERROR)
-    chunk_results: List[Tuple[float, int, int]] = []
-    for s in seeds:
-        iter_rng = np.random.default_rng(s)
-        res = _simulate_single_matched_pass(
+    chunk_results: List[Tuple[int, float, int, int]] = []
+    for pass_idx in pass_indices:
+        iter_rng = np.random.default_rng(base_seed + pass_idx)
+        pass_ev, comp_cnt, drop_cnt = _simulate_single_matched_pass(
             trade_profiles=trade_profiles,
             candles_dict=candles_dict,
             rng=iter_rng,
@@ -288,7 +293,7 @@ def _worker_matched_chunk(
             risk_per_trade_pct=risk_per_trade_pct,
             max_leverage=max_leverage,
         )
-        chunk_results.append(res)
+        chunk_results.append((pass_idx, pass_ev, comp_cnt, drop_cnt))
     return chunk_results
 
 
@@ -302,14 +307,19 @@ def run_matched_baseline(
     initial_equity_usd: float = 10000.0,
     risk_per_trade_pct: float = 1.0,
     max_leverage: float = 3.0,
+    workers: Optional[int] = None,
+    checkpoint_path: Optional[str] = None,
+    chunk_size: int = 250,
 ) -> MatchedBaselineResult:
-    """
-    Execute N matched random-entry passes against a strategy result.
+    """Execute N matched random-entry passes against a strategy result.
+
     Each pass has:
     1. The EXACT SAME number of trades as the strategy.
     2. The EXACT SAME symbol mix as the strategy.
     3. The EXACT SAME per-trade stop distance (in percent) distribution.
     4. Evaluated through Single Exit Authority with identical exit rules and friction.
+    5. Seeded independently as seed + pass_index, ensuring results are identical regardless of workers.
+    6. Chunked and resumable via checkpoint_path.
 
     Computes empirical rank-based p-value:
     p = (count(null_ev >= strategy_ev) + 1) / (N + 1)
@@ -339,6 +349,14 @@ def run_matched_baseline(
             dropped_trade_fraction=0.0,
         )
 
+    # Determine worker count
+    if workers is None:
+        num_workers = os.cpu_count() or 1
+    elif workers <= 0:
+        num_workers = 1
+    else:
+        num_workers = workers
+
     # Per-trade profile: (symbol, stop_dist_pct)
     trade_profiles: List[Tuple[str, float]] = []
     for t in strategy_trades:
@@ -350,57 +368,157 @@ def run_matched_baseline(
         dist_pct = max(0.001, min(dist_pct, 0.20))
         trade_profiles.append((sym, dist_pct))
 
-    master_rng = np.random.default_rng(seed)
-    iter_seeds = [int(master_rng.integers(0, 100000000)) for _ in range(iterations)]
+    completed_passes: Dict[int, Tuple[float, int, int]] = {}
 
-    null_ev_dist: List[float] = []
-    total_dropped = 0
-    total_simulated = 0
-
-    workers = min(os.cpu_count() or 4, 4)
-    if iterations >= 50 and workers > 1:
-        logger.info(f"    Executing {iterations:,} matched passes in parallel using {workers} workers...")
-        chunks = np.array_split(iter_seeds, workers)
-        with ProcessPoolExecutor(max_workers=workers) as ex:
-            futures = [
-                ex.submit(
-                    _worker_matched_chunk,
-                    chunk.tolist(),
-                    trade_profiles,
-                    candles_dict,
-                    fric,
-                    cfg,
-                    initial_equity_usd,
-                    risk_per_trade_pct,
-                    max_leverage,
+    # Load existing checkpoint if available and matching
+    if checkpoint_path and os.path.exists(checkpoint_path):
+        try:
+            with open(checkpoint_path, "r", encoding="utf-8") as f:
+                ckpt_data = json.load(f)
+            if (
+                ckpt_data.get("seed") == seed
+                and ckpt_data.get("strategy_trade_count") == n_trades
+                and ckpt_data.get("iterations") == iterations
+            ):
+                raw_passes = ckpt_data.get("completed_passes", {})
+                for k, v in raw_passes.items():
+                    completed_passes[int(k)] = (float(v[0]), int(v[1]), int(v[2]))
+                logger.info(
+                    f"    Resuming from checkpoint {checkpoint_path}: "
+                    f"{len(completed_passes)}/{iterations} passes already completed."
                 )
-                for chunk in chunks
-                if len(chunk) > 0
-            ]
-            for f in futures:
-                for pass_ev, comp_cnt, drop_cnt in f.result():
-                    null_ev_dist.append(round(pass_ev, 4))
-                    total_dropped += drop_cnt
-                    total_simulated += comp_cnt
-    else:
-        step = max(50, iterations // 10)
-        for it, it_seed in enumerate(iter_seeds):
-            if (it + 1) % step == 0 or it == 0 or (it + 1) == iterations:
-                logger.info(f"    Matched pass {it + 1}/{iterations} ({(it + 1) / iterations * 100:.0f}%)")
-            iter_rng = np.random.default_rng(it_seed)
-            pass_ev, comp_cnt, drop_cnt = _simulate_single_matched_pass(
-                trade_profiles=trade_profiles,
-                candles_dict=candles_dict,
-                rng=iter_rng,
-                friction=fric,
-                exit_config=cfg,
-                initial_equity_usd=initial_equity_usd,
-                risk_per_trade_pct=risk_per_trade_pct,
-                max_leverage=max_leverage,
-            )
-            null_ev_dist.append(round(pass_ev, 4))
-            total_dropped += drop_cnt
-            total_simulated += comp_cnt
+            else:
+                logger.warning(
+                    f"    Checkpoint {checkpoint_path} metadata does not match current run; starting fresh."
+                )
+        except Exception as e:
+            logger.warning(f"    Failed to read checkpoint {checkpoint_path}: {e}; starting fresh.")
+
+    remaining_indices = [i for i in range(iterations) if i not in completed_passes]
+
+    if remaining_indices:
+        eff_chunk_size = max(1, chunk_size)
+        chunks = [
+            remaining_indices[i : i + eff_chunk_size]
+            for i in range(0, len(remaining_indices), eff_chunk_size)
+        ]
+        logger.info(
+            f"    Executing {len(remaining_indices):,} matched passes across {len(chunks)} chunks "
+            f"using {num_workers} workers (seed={seed} + pass_index)..."
+        )
+
+        if num_workers > 1:
+            with ProcessPoolExecutor(max_workers=num_workers) as ex:
+                for chunk in chunks:
+                    if len(chunk) > 1:
+                        batch_count = min(num_workers, len(chunk))
+                        worker_batches = [
+                            b.tolist() for b in np.array_split(chunk, batch_count) if len(b) > 0
+                        ]
+                        futures = [
+                            ex.submit(
+                                _worker_matched_chunk,
+                                batch,
+                                seed,
+                                trade_profiles,
+                                candles_dict,
+                                fric,
+                                cfg,
+                                initial_equity_usd,
+                                risk_per_trade_pct,
+                                max_leverage,
+                            )
+                            for batch in worker_batches
+                        ]
+                        for f in futures:
+                            for pass_idx, pass_ev, comp_cnt, drop_cnt in f.result():
+                                completed_passes[pass_idx] = (pass_ev, comp_cnt, drop_cnt)
+                    else:
+                        for pass_idx in chunk:
+                            iter_rng = np.random.default_rng(seed + pass_idx)
+                            pass_ev, comp_cnt, drop_cnt = _simulate_single_matched_pass(
+                                trade_profiles=trade_profiles,
+                                candles_dict=candles_dict,
+                                rng=iter_rng,
+                                friction=fric,
+                                exit_config=cfg,
+                                initial_equity_usd=initial_equity_usd,
+                                risk_per_trade_pct=risk_per_trade_pct,
+                                max_leverage=max_leverage,
+                            )
+                            completed_passes[pass_idx] = (pass_ev, comp_cnt, drop_cnt)
+
+                    # Write partial null results to file after each chunk
+                    if checkpoint_path:
+                        os.makedirs(os.path.dirname(os.path.abspath(checkpoint_path)), exist_ok=True)
+                        tmp_checkpoint = checkpoint_path + ".tmp"
+                        payload = {
+                            "iterations": iterations,
+                            "seed": seed,
+                            "strategy_trade_count": n_trades,
+                            "strategy_net_ev_r": round(strategy_ev_r, 4),
+                            "chunk_size": eff_chunk_size,
+                            "completed_passes": {
+                                str(k): [float(v[0]), int(v[1]), int(v[2])]
+                                for k, v in sorted(completed_passes.items())
+                            },
+                        }
+                        with open(tmp_checkpoint, "w", encoding="utf-8") as f:
+                            json.dump(payload, f)
+                        os.replace(tmp_checkpoint, checkpoint_path)
+
+                    pct = (len(completed_passes) / iterations) * 100.0
+                    logger.info(
+                        f"    Matched progress: {len(completed_passes):,}/{iterations:,} passes ({pct:.1f}%)"
+                        + (f" [checkpoint: {checkpoint_path}]" if checkpoint_path else "")
+                    )
+        else:
+            for chunk in chunks:
+                for pass_idx in chunk:
+                    iter_rng = np.random.default_rng(seed + pass_idx)
+                    pass_ev, comp_cnt, drop_cnt = _simulate_single_matched_pass(
+                        trade_profiles=trade_profiles,
+                        candles_dict=candles_dict,
+                        rng=iter_rng,
+                        friction=fric,
+                        exit_config=cfg,
+                        initial_equity_usd=initial_equity_usd,
+                        risk_per_trade_pct=risk_per_trade_pct,
+                        max_leverage=max_leverage,
+                    )
+                    completed_passes[pass_idx] = (pass_ev, comp_cnt, drop_cnt)
+
+                # Write partial null results to file after each chunk
+                if checkpoint_path:
+                    os.makedirs(os.path.dirname(os.path.abspath(checkpoint_path)), exist_ok=True)
+                    tmp_checkpoint = checkpoint_path + ".tmp"
+                    payload = {
+                        "iterations": iterations,
+                        "seed": seed,
+                        "strategy_trade_count": n_trades,
+                        "strategy_net_ev_r": round(strategy_ev_r, 4),
+                        "chunk_size": eff_chunk_size,
+                        "completed_passes": {
+                            str(k): [float(v[0]), int(v[1]), int(v[2])]
+                            for k, v in sorted(completed_passes.items())
+                        },
+                    }
+                    with open(tmp_checkpoint, "w", encoding="utf-8") as f:
+                        json.dump(payload, f)
+                    os.replace(tmp_checkpoint, checkpoint_path)
+
+                pct = (len(completed_passes) / iterations) * 100.0
+                logger.info(
+                    f"    Matched progress: {len(completed_passes):,}/{iterations:,} passes ({pct:.1f}%)"
+                    + (f" [checkpoint: {checkpoint_path}]" if checkpoint_path else "")
+                )
+
+    # Assemble distribution in deterministic pass_idx order
+    null_ev_dist: List[float] = [
+        round(completed_passes[i][0], 4) for i in range(iterations)
+    ]
+    _total_simulated = sum(completed_passes[i][1] for i in range(iterations))
+    total_dropped = sum(completed_passes[i][2] for i in range(iterations))
 
     total_planned = iterations * n_trades
     dropped_trade_fraction = total_dropped / total_planned if total_planned > 0 else 0.0
@@ -418,9 +536,9 @@ def run_matched_baseline(
 
     median_ev = round(float(np.median(null_ev_dist)), 4)
     mean_ev = round(float(np.mean(null_ev_dist)), 4)
-    std_ev = round(float(np.std(null_ev_dist)), 4)
-    p5_ev = round(float(np.percentile(null_ev_dist, 5)), 4)
-    p95_ev = round(float(np.percentile(null_ev_dist, 95)), 4)
+    std_ev = round(float(np.std(null_ev_dist, ddof=1)), 4)
+    p5_ev = round(float(np.percentile(null_ev_dist, 5.0)), 4)
+    p95_ev = round(float(np.percentile(null_ev_dist, 95.0)), 4)
 
     return MatchedBaselineResult(
         iterations=iterations,
