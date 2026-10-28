@@ -3,17 +3,14 @@ Unit Tests for Named Universe System and Strategy Runner --only / --passes optio
 """
 
 import json
-import os
 import pytest
 
 from research.universes import (
-    DEFAULT_UNIVERSE,
     UNIVERSES,
     get_universe_symbols,
     validate_universe_data,
 )
 from research.strategy_runner import (
-    StrategyRunResult,
     generate_markdown_report,
     run_strategy_evidence_validation,
     strategy_run_result_from_dict,
