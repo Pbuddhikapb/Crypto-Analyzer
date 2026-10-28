@@ -1,9 +1,10 @@
 # Strategy Validation Dossier: Evidence Before Infrastructure
-**Generated:** 2026-10-27 23:47 UTC  
-**Git Commit:** `2fc38be31f36e62c8d4b0423a88aac7358893f02+dirty`  
+**Generated:** 2026-10-28 10:19 UTC  
+**Git Commit:** `90691ff04c0c38b487c3325807326330853d5605+dirty`  
 **Dataset Hash:** `61d0448603612d76`  
+**Universe:** U10  
 **Architecture Doctrine:** Claude's Option B (Discretionary Human Trading Terminal)  
-**Null Hypothesis ($H_0$):** Phase 2 10-pass Monte Carlo Baseline Hurdle  
+**Null Hypothesis ($H_0$):** Phase 2 1,000-pass Monte Carlo Baseline Hurdle  
 **Dataset:** 10 Major Pairs (`BTCUSDT, ETHUSDT, SOLUSDT, BNBUSDT, XRPUSDT, DOGEUSDT, ADAUSDT, AVAXUSDT, LINKUSDT, SUIUSDT`), 5.3 Years (Binance USD-M Futures 1h candles)  
 * **Per-Symbol 1h Bar Counts:** BTCUSDT: 46,393, ETHUSDT: 46,393, SOLUSDT: 46,273, BNBUSDT: 46,393, XRPUSDT: 46,273, DOGEUSDT: 46,393, ADAUSDT: 46,393, AVAXUSDT: 46,393, LINKUSDT: 46,393, SUIUSDT: 25,929  
 * **Data Continuity & Coverage Notes:**
@@ -19,12 +20,12 @@
 
 Under Claude's doctrine (*"Evidence before infrastructure"*), no trading signal or indicator rule is permitted to enter the Discretionary Trading Terminal without empirical proof that it outperforms random noise ($p < 0.05$).
 
-In Phase 2, we established the empirical null hypothesis ($H_0$) across 10 Monte Carlo runs on Binance USD-M Futures under full institutional friction:
-* **Profit Factor Hurdle ($p_{95}$):** `> 0.00` (Median noise: `0.00`)
-* **Win Rate Hurdle ($p_{95}$):** `> 0.00%` (Median noise: `0.00%`)
-* **Expectancy Hurdle ($p_{95}$):** `> -0.0318R` (Median noise: `-0.0339R`)
-* **Sharpe Ratio Hurdle ($p_{95}$):** `> -19.09` (Median noise: `-30.37`)
-* **Max Drawdown Hurdle ($p_{50}$):** `< 8.50%` (Worst 5% noise: `8.87%`)
+In Phase 2, we established the empirical null hypothesis ($H_0$) across 1,000 Monte Carlo runs on Binance USD-M Futures under full institutional friction:
+* **Profit Factor Hurdle ($p_{95}$):** `> 1.04` (Median noise: `0.83`)
+* **Win Rate Hurdle ($p_{95}$):** `> 52.40%` (Median noise: `47.27%`)
+* **Expectancy Hurdle ($p_{95}$):** `> +0.0152R` (Median noise: `-0.0773R`)
+* **Sharpe Ratio Hurdle ($p_{95}$):** `> 0.27` (Median noise: `-1.41`)
+* **Max Drawdown Hurdle ($p_{50}$):** `< 25.53%` (Worst 5% noise: `45.12%`)
 
 6 core discretionary trading hypotheses were codified with strict zero lookahead (signal at bar $i$ close $\rightarrow$ entry at bar $i+1$ open) and simulated across all 10 coins.
 
@@ -447,7 +448,7 @@ In Phase 2, we established the empirical null hypothesis ($H_0$) across 10 Monte
 > Max Drawdown (R): **`16.69R`** | Cumulative Net R: **`+65.56R`**  
 > Days Evaluated: **`1933 days (100.0% of dataset)`**  
 > Bootstrap 95% CI (Mean Net R): **`[+0.0021R, +0.1590R]`** (10,000 resamples)  
-> Matched Baseline Median Net EV: **`+0.0003R`** (Matched 95th Pct Hurdle: `+0.0000R`)  
+> Matched Baseline Median Net EV: **`+0.0003R`** (Matched 95th Pct Hurdle: `+0.0630R`)  
 > Sizing Mode: `fixed_risk` | Account Ruined: `NO`
 
 #### Alpha Validation Requirements:
@@ -461,10 +462,10 @@ In Phase 2, we established the empirical null hypothesis ($H_0$) across 10 Monte
 - None
 
 #### Diagnostics:
-- ℹ️ Net Profit Factor: 1.22 (Null p95 Hurdle: 0.00, p=0.5000)
-- ℹ️ Net Win Rate: 37.62% (Null p95 Hurdle: 0.00%, p=0.5000)
+- ℹ️ Net Profit Factor: 1.22 (Null p95 Hurdle: 1.04, p=0.0004)
+- ℹ️ Net Win Rate: 37.62% (Null p95 Hurdle: 52.40%, p=0.9988)
 - ℹ️ Max Drawdown (R): 16.69R
-- ℹ️ Sharpe Ratio: 0.47 (p=0.0060)
+- ℹ️ Sharpe Ratio: 0.47 (p=0.0314)
 - ℹ️ Median Stop % of Price: 7.55%
 - ℹ️ Cost Drag in R per Trade: +0.0264R
 - ℹ️ Median Holding Time: 52 bars (52h)
@@ -492,7 +493,7 @@ In Phase 2, we established the empirical null hypothesis ($H_0$) across 10 Monte
 | :--- | :--- | :--- |
 | **Matched $p$-value** | `0.0195` (N=10,000) | Gate threshold $\alpha = 0.025$ |
 | **Monte Carlo Standard Error** | `SE = 0.0014` | $\sqrt{p(1-p)/N}$ |
-| **Threshold within 2 SE?** | No | $|p - \alpha| \le 2 \times SE$ |
+| **Threshold within 2 SE?** | No (threshold outside 2 SE) | $|p - \alpha| \le 2 \times SE$ |
 | **iid Bootstrap 2.5% Bound (30 seeds)** | **`93.3%`** above zero | Min: `-0.0018R`, Max: `+0.0078R` |
 | **Week-Block Bootstrap 95% CI** | `[-0.0151, +0.1796]R` | 7-day block temporal resampling |
 | **Top-10 Outlier Share of Total R** | **`82.0%`** (`+53.76R` / `+65.56R`) | Lower indicates broader distribution |
@@ -518,7 +519,7 @@ In Phase 2, we established the empirical null hypothesis ($H_0$) across 10 Monte
 
 1. **Passed Dev Gate (see robustness) (1/6)**:
    The following strategies met all pre-registered dev gate criteria ($p < 0.05$, positive bootstrap CI lower bound):
-   - **Donchian4hN55**: Net EV = `+0.0788R` (Gross: `+0.1047R`), Net PF = `1.22`, Bootstrap 95% CI = `[+0.0021, +0.1590]R`, Matched Rank $p$-value = `0.0195` (N=10,000)
+   - **Donchian4hN55**: Net EV = `+0.0788R` (Gross: `+0.1047R`), Net PF = `1.22`, Bootstrap 95% CI = `[+0.0021, +0.1590]R`, Matched Rank $p$-value = `0.0195`
 
 2. **Unvalidated Patterns**:
    The following strategies failed validation: **TrendPullback**, **FVGRetest**, **ConfluenceThreshold**, **LiquiditySweep**, **Donchian4hN20**. These setups show no validated edge under institutional friction and will display warning banners.

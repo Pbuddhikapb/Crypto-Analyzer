@@ -1,8 +1,9 @@
 {
   "metadata": {
-    "run_timestamp": "2026-10-27T23:47:09.814501+00:00",
-    "git_commit": "2fc38be31f36e62c8d4b0423a88aac7358893f02+dirty",
+    "run_timestamp": "2026-10-28T10:19:52.615098+00:00",
+    "git_commit": "90691ff04c0c38b487c3325807326330853d5605+dirty",
     "dataset_hash": "61d0448603612d76",
+    "universe": "U10",
     "data_date_range": "2021-01-01 to 2026-04-18",
     "start_time_ms": 1609459200000,
     "end_time_ms": 1776470400000,
@@ -48,9 +49,9 @@
       "net_profit_pct": -727.28,
       "start_time_ms": 1609459200000,
       "end_time_ms": 1776470400000,
-      "run_timestamp": "2026-10-27T23:47:09.814501+00:00",
+      "run_timestamp": "2026-10-28T10:19:52.615098+00:00",
       "data_date_range": "2021-01-01 to 2026-04-18",
-      "git_commit": "2fc38be31f36e62c8d4b0423a88aac7358893f02+dirty",
+      "git_commit": "90691ff04c0c38b487c3325807326330853d5605+dirty",
       "significance_level": 0.05,
       "median_stop_pct": 1.72,
       "cost_drag_r": 0.0602,
@@ -171,7 +172,122 @@
         "std_net_r": 0.9207,
         "trades_needed_80_power_onesided": null,
         "trades_needed_80_power_twosided": null
-      }
+      },
+      "per_symbol_metrics": {
+        "ADAUSDT": {
+          "trades": 595,
+          "win_rate": 50.6,
+          "profit_factor": 0.82,
+          "gross_profit_factor": 0.92,
+          "net_pnl": -5224.24,
+          "avg_r": -0.0878,
+          "gross_avg_r": -0.0349
+        },
+        "AVAXUSDT": {
+          "trades": 582,
+          "win_rate": 46.4,
+          "profit_factor": 0.69,
+          "gross_profit_factor": 0.77,
+          "net_pnl": -9280.86,
+          "avg_r": -0.1595,
+          "gross_avg_r": -0.111
+        },
+        "BNBUSDT": {
+          "trades": 741,
+          "win_rate": 51.3,
+          "profit_factor": 0.82,
+          "gross_profit_factor": 0.98,
+          "net_pnl": -6233.33,
+          "avg_r": -0.0841,
+          "gross_avg_r": -0.0093
+        },
+        "BTCUSDT": {
+          "trades": 826,
+          "win_rate": 49.9,
+          "profit_factor": 0.79,
+          "gross_profit_factor": 0.96,
+          "net_pnl": -8156.06,
+          "avg_r": -0.0987,
+          "gross_avg_r": -0.0152
+        },
+        "DOGEUSDT": {
+          "trades": 641,
+          "win_rate": 48.0,
+          "profit_factor": 0.73,
+          "gross_profit_factor": 0.82,
+          "net_pnl": -8912.0,
+          "avg_r": -0.139,
+          "gross_avg_r": -0.0854
+        },
+        "ETHUSDT": {
+          "trades": 784,
+          "win_rate": 52.4,
+          "profit_factor": 0.89,
+          "gross_profit_factor": 1.03,
+          "net_pnl": -4034.52,
+          "avg_r": -0.0515,
+          "gross_avg_r": 0.0137
+        },
+        "LINKUSDT": {
+          "trades": 566,
+          "win_rate": 46.5,
+          "profit_factor": 0.72,
+          "gross_profit_factor": 0.81,
+          "net_pnl": -8111.92,
+          "avg_r": -0.1433,
+          "gross_avg_r": -0.0903
+        },
+        "SOLUSDT": {
+          "trades": 818,
+          "win_rate": 48.8,
+          "profit_factor": 0.77,
+          "gross_profit_factor": 0.85,
+          "net_pnl": -9162.67,
+          "avg_r": -0.112,
+          "gross_avg_r": -0.0657
+        },
+        "SUIUSDT": {
+          "trades": 327,
+          "win_rate": 45.9,
+          "profit_factor": 0.7,
+          "gross_profit_factor": 0.77,
+          "net_pnl": -5094.92,
+          "avg_r": -0.1558,
+          "gross_avg_r": -0.1107
+        },
+        "XRPUSDT": {
+          "trades": 747,
+          "win_rate": 49.7,
+          "profit_factor": 0.76,
+          "gross_profit_factor": 0.88,
+          "net_pnl": -8517.45,
+          "avg_r": -0.114,
+          "gross_avg_r": -0.0515
+        }
+      },
+      "total_signals_generated": 33501,
+      "hurdles_passed": [
+        "Sample size 6627 >= 100 trades"
+      ],
+      "hurdles_failed": [
+        "Mean Net Expectancy -0.1097R <= 0.0R",
+        "Bootstrap 95% CI lower bound -0.1320R <= 0.0R",
+        "Matched Rank p-value 0.7742 >= 0.05"
+      ],
+      "diagnostics": [
+        "Net Profit Factor: 0.78 (Null p95 Hurdle: 0.00, p=0.5000)",
+        "Net Win Rate: 49.27% (Null p95 Hurdle: 0.00%, p=0.5000)",
+        "Max Drawdown (R): 732.51R",
+        "Sharpe Ratio: -1.66 (p=0.0097)",
+        "Median Stop % of Price: 1.72%",
+        "Cost Drag in R per Trade: +0.0602R",
+        "Median Holding Time: 6 bars (6h)",
+        "Trades per Symbol: ADAUSDT: 595, AVAXUSDT: 582, BNBUSDT: 741, BTCUSDT: 826, DOGEUSDT: 641, ETHUSDT: 784, LINKUSDT: 566, SOLUSDT: 818, SUIUSDT: 327, XRPUSDT: 747",
+        "Per-Year Net R: 2021: -79.17R, 2022: -121.55R, 2023: -139.07R, 2024: -182.68R, 2025: -139.56R, 2026: -65.25R"
+      ],
+      "matched_median_expectancy_r": 0.0,
+      "matched_p95_expectancy_r": 0.0,
+      "matched_std_expectancy_r": 0.0
     },
     "FVGRetest": {
       "strategy_name": "FVGRetest",
@@ -200,9 +316,9 @@
       "net_profit_pct": -559.69,
       "start_time_ms": 1609459200000,
       "end_time_ms": 1776470400000,
-      "run_timestamp": "2026-10-27T23:47:09.814501+00:00",
+      "run_timestamp": "2026-10-28T10:19:52.615098+00:00",
       "data_date_range": "2021-01-01 to 2026-04-18",
-      "git_commit": "2fc38be31f36e62c8d4b0423a88aac7358893f02+dirty",
+      "git_commit": "90691ff04c0c38b487c3325807326330853d5605+dirty",
       "significance_level": 0.05,
       "median_stop_pct": 2.22,
       "cost_drag_r": 0.0432,
@@ -323,7 +439,122 @@
         "std_net_r": 0.8713,
         "trades_needed_80_power_onesided": null,
         "trades_needed_80_power_twosided": null
-      }
+      },
+      "per_symbol_metrics": {
+        "ADAUSDT": {
+          "trades": 737,
+          "win_rate": 47.5,
+          "profit_factor": 0.79,
+          "gross_profit_factor": 0.87,
+          "net_pnl": -7203.39,
+          "avg_r": -0.0977,
+          "gross_avg_r": -0.0553
+        },
+        "AVAXUSDT": {
+          "trades": 713,
+          "win_rate": 51.1,
+          "profit_factor": 0.94,
+          "gross_profit_factor": 1.03,
+          "net_pnl": -1773.7,
+          "avg_r": -0.0249,
+          "gross_avg_r": 0.0123
+        },
+        "BNBUSDT": {
+          "trades": 902,
+          "win_rate": 44.2,
+          "profit_factor": 0.86,
+          "gross_profit_factor": 0.98,
+          "net_pnl": -5152.66,
+          "avg_r": -0.0571,
+          "gross_avg_r": -0.0093
+        },
+        "BTCUSDT": {
+          "trades": 948,
+          "win_rate": 42.6,
+          "profit_factor": 0.8,
+          "gross_profit_factor": 0.93,
+          "net_pnl": -7349.95,
+          "avg_r": -0.0775,
+          "gross_avg_r": -0.026
+        },
+        "DOGEUSDT": {
+          "trades": 701,
+          "win_rate": 46.9,
+          "profit_factor": 0.77,
+          "gross_profit_factor": 0.85,
+          "net_pnl": -7596.64,
+          "avg_r": -0.1084,
+          "gross_avg_r": -0.0671
+        },
+        "ETHUSDT": {
+          "trades": 995,
+          "win_rate": 48.9,
+          "profit_factor": 0.95,
+          "gross_profit_factor": 1.07,
+          "net_pnl": -1984.35,
+          "avg_r": -0.0199,
+          "gross_avg_r": 0.0244
+        },
+        "LINKUSDT": {
+          "trades": 633,
+          "win_rate": 47.7,
+          "profit_factor": 0.82,
+          "gross_profit_factor": 0.91,
+          "net_pnl": -5105.14,
+          "avg_r": -0.0806,
+          "gross_avg_r": -0.0403
+        },
+        "SOLUSDT": {
+          "trades": 967,
+          "win_rate": 46.3,
+          "profit_factor": 0.73,
+          "gross_profit_factor": 0.8,
+          "net_pnl": -12830.7,
+          "avg_r": -0.1327,
+          "gross_avg_r": -0.0928
+        },
+        "SUIUSDT": {
+          "trades": 394,
+          "win_rate": 48.5,
+          "profit_factor": 0.84,
+          "gross_profit_factor": 0.92,
+          "net_pnl": -3018.06,
+          "avg_r": -0.0766,
+          "gross_avg_r": -0.0376
+        },
+        "XRPUSDT": {
+          "trades": 838,
+          "win_rate": 47.7,
+          "profit_factor": 0.89,
+          "gross_profit_factor": 0.99,
+          "net_pnl": -3954.61,
+          "avg_r": -0.0472,
+          "gross_avg_r": -0.0042
+        }
+      },
+      "total_signals_generated": 28990,
+      "hurdles_passed": [
+        "Sample size 7828 >= 100 trades"
+      ],
+      "hurdles_failed": [
+        "Mean Net Expectancy -0.0715R <= 0.0R",
+        "Bootstrap 95% CI lower bound -0.0908R <= 0.0R",
+        "Matched Rank p-value 0.7073 >= 0.05"
+      ],
+      "diagnostics": [
+        "Net Profit Factor: 0.84 (Null p95 Hurdle: 0.00, p=0.5000)",
+        "Net Win Rate: 46.93% (Null p95 Hurdle: 0.00%, p=0.5000)",
+        "Max Drawdown (R): 594.76R",
+        "Sharpe Ratio: -1.18 (p=0.0087)",
+        "Median Stop % of Price: 2.22%",
+        "Cost Drag in R per Trade: +0.0432R",
+        "Median Holding Time: 7 bars (7h)",
+        "Trades per Symbol: ADAUSDT: 737, AVAXUSDT: 713, BNBUSDT: 902, BTCUSDT: 948, DOGEUSDT: 701, ETHUSDT: 995, LINKUSDT: 633, SOLUSDT: 967, SUIUSDT: 394, XRPUSDT: 838",
+        "Per-Year Net R: 2021: -27.74R, 2022: -151.85R, 2023: -115.28R, 2024: -113.80R, 2025: -107.63R, 2026: -43.38R"
+      ],
+      "matched_median_expectancy_r": 0.0,
+      "matched_p95_expectancy_r": 0.0,
+      "matched_std_expectancy_r": 0.0
     },
     "ConfluenceThreshold": {
       "strategy_name": "ConfluenceThreshold",
@@ -352,9 +583,9 @@
       "net_profit_pct": -2597.83,
       "start_time_ms": 1609459200000,
       "end_time_ms": 1776470400000,
-      "run_timestamp": "2026-10-27T23:47:09.814501+00:00",
+      "run_timestamp": "2026-10-28T10:19:52.615098+00:00",
       "data_date_range": "2021-01-01 to 2026-04-18",
-      "git_commit": "2fc38be31f36e62c8d4b0423a88aac7358893f02+dirty",
+      "git_commit": "90691ff04c0c38b487c3325807326330853d5605+dirty",
       "significance_level": 0.05,
       "median_stop_pct": 1.82,
       "cost_drag_r": 0.0573,
@@ -475,7 +706,122 @@
         "std_net_r": 0.9333,
         "trades_needed_80_power_onesided": null,
         "trades_needed_80_power_twosided": null
-      }
+      },
+      "per_symbol_metrics": {
+        "ADAUSDT": {
+          "trades": 1555,
+          "win_rate": 47.7,
+          "profit_factor": 0.73,
+          "gross_profit_factor": 0.82,
+          "net_pnl": -21371.05,
+          "avg_r": -0.1374,
+          "gross_avg_r": -0.0854
+        },
+        "AVAXUSDT": {
+          "trades": 1527,
+          "win_rate": 44.9,
+          "profit_factor": 0.67,
+          "gross_profit_factor": 0.74,
+          "net_pnl": -27276.82,
+          "avg_r": -0.1786,
+          "gross_avg_r": -0.131
+        },
+        "BNBUSDT": {
+          "trades": 1865,
+          "win_rate": 46.2,
+          "profit_factor": 0.67,
+          "gross_profit_factor": 0.78,
+          "net_pnl": -34000.28,
+          "avg_r": -0.1823,
+          "gross_avg_r": -0.1105
+        },
+        "BTCUSDT": {
+          "trades": 2295,
+          "win_rate": 47.2,
+          "profit_factor": 0.7,
+          "gross_profit_factor": 0.84,
+          "net_pnl": -34965.5,
+          "avg_r": -0.1524,
+          "gross_avg_r": -0.0738
+        },
+        "DOGEUSDT": {
+          "trades": 1722,
+          "win_rate": 45.5,
+          "profit_factor": 0.67,
+          "gross_profit_factor": 0.75,
+          "net_pnl": -30331.02,
+          "avg_r": -0.1761,
+          "gross_avg_r": -0.1252
+        },
+        "ETHUSDT": {
+          "trades": 2285,
+          "win_rate": 48.7,
+          "profit_factor": 0.77,
+          "gross_profit_factor": 0.88,
+          "net_pnl": -26047.88,
+          "avg_r": -0.114,
+          "gross_avg_r": -0.0521
+        },
+        "LINKUSDT": {
+          "trades": 1233,
+          "win_rate": 42.7,
+          "profit_factor": 0.61,
+          "gross_profit_factor": 0.67,
+          "net_pnl": -27602.36,
+          "avg_r": -0.2239,
+          "gross_avg_r": -0.1752
+        },
+        "SOLUSDT": {
+          "trades": 2169,
+          "win_rate": 48.5,
+          "profit_factor": 0.76,
+          "gross_profit_factor": 0.84,
+          "net_pnl": -26133.54,
+          "avg_r": -0.1205,
+          "gross_avg_r": -0.0769
+        },
+        "SUIUSDT": {
+          "trades": 748,
+          "win_rate": 48.1,
+          "profit_factor": 0.79,
+          "gross_profit_factor": 0.86,
+          "net_pnl": -8010.86,
+          "avg_r": -0.1071,
+          "gross_avg_r": -0.0657
+        },
+        "XRPUSDT": {
+          "trades": 1772,
+          "win_rate": 48.6,
+          "profit_factor": 0.73,
+          "gross_profit_factor": 0.83,
+          "net_pnl": -24043.98,
+          "avg_r": -0.1357,
+          "gross_avg_r": -0.0779
+        }
+      },
+      "total_signals_generated": 187951,
+      "hurdles_passed": [
+        "Sample size 17171 >= 100 trades"
+      ],
+      "hurdles_failed": [
+        "Mean Net Expectancy -0.1513R <= 0.0R",
+        "Bootstrap 95% CI lower bound -0.1657R <= 0.0R",
+        "Matched Rank p-value 1.0000 >= 0.05"
+      ],
+      "diagnostics": [
+        "Net Profit Factor: 0.71 (Null p95 Hurdle: 0.00, p=0.5000)",
+        "Net Win Rate: 46.96% (Null p95 Hurdle: 0.00%, p=0.5000)",
+        "Max Drawdown (R): 2606.85R",
+        "Sharpe Ratio: -2.40 (p=0.0114)",
+        "Median Stop % of Price: 1.82%",
+        "Cost Drag in R per Trade: +0.0573R",
+        "Median Holding Time: 4 bars (4h)",
+        "Trades per Symbol: ADAUSDT: 1555, AVAXUSDT: 1527, BNBUSDT: 1865, BTCUSDT: 2295, DOGEUSDT: 1722, ETHUSDT: 2285, LINKUSDT: 1233, SOLUSDT: 2169, SUIUSDT: 748, XRPUSDT: 1772",
+        "Per-Year Net R: 2021: -504.47R, 2022: -416.65R, 2023: -546.25R, 2024: -480.77R, 2025: -449.06R, 2026: -200.63R"
+      ],
+      "matched_median_expectancy_r": 0.0,
+      "matched_p95_expectancy_r": 0.0,
+      "matched_std_expectancy_r": 0.0
     },
     "LiquiditySweep": {
       "strategy_name": "LiquiditySweep",
@@ -504,9 +850,9 @@
       "net_profit_pct": -4845.32,
       "start_time_ms": 1609459200000,
       "end_time_ms": 1776470400000,
-      "run_timestamp": "2026-10-27T23:47:09.814501+00:00",
+      "run_timestamp": "2026-10-28T10:19:52.615098+00:00",
       "data_date_range": "2021-01-01 to 2026-04-18",
-      "git_commit": "2fc38be31f36e62c8d4b0423a88aac7358893f02+dirty",
+      "git_commit": "90691ff04c0c38b487c3325807326330853d5605+dirty",
       "significance_level": 0.05,
       "median_stop_pct": 0.88,
       "cost_drag_r": 0.0919,
@@ -627,7 +973,122 @@
         "std_net_r": 0.963,
         "trades_needed_80_power_onesided": null,
         "trades_needed_80_power_twosided": null
-      }
+      },
+      "per_symbol_metrics": {
+        "ADAUSDT": {
+          "trades": 2165,
+          "win_rate": 47.3,
+          "profit_factor": 0.63,
+          "gross_profit_factor": 0.75,
+          "net_pnl": -47313.01,
+          "avg_r": -0.2185,
+          "gross_avg_r": -0.1278
+        },
+        "AVAXUSDT": {
+          "trades": 2061,
+          "win_rate": 44.8,
+          "profit_factor": 0.6,
+          "gross_profit_factor": 0.71,
+          "net_pnl": -49668.52,
+          "avg_r": -0.241,
+          "gross_avg_r": -0.1563
+        },
+        "BNBUSDT": {
+          "trades": 2349,
+          "win_rate": 47.3,
+          "profit_factor": 0.63,
+          "gross_profit_factor": 0.78,
+          "net_pnl": -48383.08,
+          "avg_r": -0.206,
+          "gross_avg_r": -0.1066
+        },
+        "BTCUSDT": {
+          "trades": 2524,
+          "win_rate": 47.2,
+          "profit_factor": 0.63,
+          "gross_profit_factor": 0.79,
+          "net_pnl": -51044.08,
+          "avg_r": -0.2022,
+          "gross_avg_r": -0.099
+        },
+        "DOGEUSDT": {
+          "trades": 2413,
+          "win_rate": 45.5,
+          "profit_factor": 0.58,
+          "gross_profit_factor": 0.7,
+          "net_pnl": -59664.68,
+          "avg_r": -0.2473,
+          "gross_avg_r": -0.157
+        },
+        "ETHUSDT": {
+          "trades": 2658,
+          "win_rate": 47.4,
+          "profit_factor": 0.63,
+          "gross_profit_factor": 0.76,
+          "net_pnl": -55844.87,
+          "avg_r": -0.2101,
+          "gross_avg_r": -0.1157
+        },
+        "LINKUSDT": {
+          "trades": 2110,
+          "win_rate": 45.8,
+          "profit_factor": 0.6,
+          "gross_profit_factor": 0.72,
+          "net_pnl": -49872.42,
+          "avg_r": -0.2364,
+          "gross_avg_r": -0.1456
+        },
+        "SOLUSDT": {
+          "trades": 2567,
+          "win_rate": 47.9,
+          "profit_factor": 0.65,
+          "gross_profit_factor": 0.77,
+          "net_pnl": -50393.32,
+          "avg_r": -0.1963,
+          "gross_avg_r": -0.1138
+        },
+        "SUIUSDT": {
+          "trades": 1187,
+          "win_rate": 48.1,
+          "profit_factor": 0.67,
+          "gross_profit_factor": 0.8,
+          "net_pnl": -21772.0,
+          "avg_r": -0.1834,
+          "gross_avg_r": -0.0983
+        },
+        "XRPUSDT": {
+          "trades": 2430,
+          "win_rate": 47.8,
+          "profit_factor": 0.63,
+          "gross_profit_factor": 0.77,
+          "net_pnl": -50576.37,
+          "avg_r": -0.2081,
+          "gross_avg_r": -0.1152
+        }
+      },
+      "total_signals_generated": 73577,
+      "hurdles_passed": [
+        "Sample size 22464 >= 100 trades"
+      ],
+      "hurdles_failed": [
+        "Mean Net Expectancy -0.2157R <= 0.0R",
+        "Bootstrap 95% CI lower bound -0.2286R <= 0.0R",
+        "Matched Rank p-value 1.0000 >= 0.05"
+      ],
+      "diagnostics": [
+        "Net Profit Factor: 0.62 (Null p95 Hurdle: 0.00, p=0.5000)",
+        "Net Win Rate: 46.90% (Null p95 Hurdle: 0.00%, p=0.5000)",
+        "Max Drawdown (R): 4846.73R",
+        "Sharpe Ratio: -2.64 (p=0.0119)",
+        "Median Stop % of Price: 0.88%",
+        "Cost Drag in R per Trade: +0.0919R",
+        "Median Holding Time: 2 bars (2h)",
+        "Trades per Symbol: ADAUSDT: 2165, AVAXUSDT: 2061, BNBUSDT: 2349, BTCUSDT: 2524, DOGEUSDT: 2413, ETHUSDT: 2658, LINKUSDT: 2110, SOLUSDT: 2567, SUIUSDT: 1187, XRPUSDT: 2430",
+        "Per-Year Net R: 2021: -1031.82R, 2022: -808.11R, 2023: -825.46R, 2024: -972.91R, 2025: -920.41R, 2026: -286.61R"
+      ],
+      "matched_median_expectancy_r": 0.0,
+      "matched_p95_expectancy_r": 0.0,
+      "matched_std_expectancy_r": 0.0
     },
     "Donchian4hN20": {
       "strategy_name": "Donchian4hN20",
@@ -656,9 +1117,9 @@
       "net_profit_pct": 52.17,
       "start_time_ms": 1609459200000,
       "end_time_ms": 1776470400000,
-      "run_timestamp": "2026-10-27T23:47:09.814501+00:00",
+      "run_timestamp": "2026-10-28T10:19:52.615098+00:00",
       "data_date_range": "2021-01-01 to 2026-04-18",
-      "git_commit": "2fc38be31f36e62c8d4b0423a88aac7358893f02+dirty",
+      "git_commit": "90691ff04c0c38b487c3325807326330853d5605+dirty",
       "significance_level": 0.025,
       "median_stop_pct": 7.6,
       "cost_drag_r": 0.0288,
@@ -779,7 +1240,122 @@
         "std_net_r": 1.1281,
         "trades_needed_80_power_onesided": 4077,
         "trades_needed_80_power_twosided": 4937
-      }
+      },
+      "per_symbol_metrics": {
+        "ADAUSDT": {
+          "trades": 81,
+          "win_rate": 38.3,
+          "profit_factor": 1.15,
+          "gross_profit_factor": 1.24,
+          "net_pnl": 416.98,
+          "avg_r": 0.0515,
+          "gross_avg_r": 0.077
+        },
+        "AVAXUSDT": {
+          "trades": 83,
+          "win_rate": 37.3,
+          "profit_factor": 1.11,
+          "gross_profit_factor": 1.17,
+          "net_pnl": 338.68,
+          "avg_r": 0.0408,
+          "gross_avg_r": 0.0604
+        },
+        "BNBUSDT": {
+          "trades": 105,
+          "win_rate": 38.1,
+          "profit_factor": 1.19,
+          "gross_profit_factor": 1.31,
+          "net_pnl": 692.3,
+          "avg_r": 0.0659,
+          "gross_avg_r": 0.1026
+        },
+        "BTCUSDT": {
+          "trades": 185,
+          "win_rate": 39.5,
+          "profit_factor": 1.17,
+          "gross_profit_factor": 1.32,
+          "net_pnl": 1123.95,
+          "avg_r": 0.0608,
+          "gross_avg_r": 0.1045
+        },
+        "DOGEUSDT": {
+          "trades": 86,
+          "win_rate": 39.5,
+          "profit_factor": 1.23,
+          "gross_profit_factor": 1.29,
+          "net_pnl": 750.21,
+          "avg_r": 0.0872,
+          "gross_avg_r": 0.1069
+        },
+        "ETHUSDT": {
+          "trades": 145,
+          "win_rate": 39.3,
+          "profit_factor": 1.49,
+          "gross_profit_factor": 1.6,
+          "net_pnl": 2569.63,
+          "avg_r": 0.1772,
+          "gross_avg_r": 0.2064
+        },
+        "LINKUSDT": {
+          "trades": 78,
+          "win_rate": 43.6,
+          "profit_factor": 0.99,
+          "gross_profit_factor": 1.07,
+          "net_pnl": -31.23,
+          "avg_r": -0.004,
+          "gross_avg_r": 0.0209
+        },
+        "SOLUSDT": {
+          "trades": 138,
+          "win_rate": 39.1,
+          "profit_factor": 0.9,
+          "gross_profit_factor": 0.96,
+          "net_pnl": -457.67,
+          "avg_r": -0.0332,
+          "gross_avg_r": -0.012
+        },
+        "SUIUSDT": {
+          "trades": 57,
+          "win_rate": 35.1,
+          "profit_factor": 1.21,
+          "gross_profit_factor": 1.28,
+          "net_pnl": 490.93,
+          "avg_r": 0.0861,
+          "gross_avg_r": 0.1075
+        },
+        "XRPUSDT": {
+          "trades": 97,
+          "win_rate": 30.9,
+          "profit_factor": 0.83,
+          "gross_profit_factor": 0.89,
+          "net_pnl": -676.39,
+          "avg_r": -0.0697,
+          "gross_avg_r": -0.042
+        }
+      },
+      "total_signals_generated": 9755,
+      "hurdles_passed": [
+        "Sample size 1055 >= 100 trades",
+        "Mean Net Expectancy +0.0495R > 0.0R"
+      ],
+      "hurdles_failed": [
+        "Bootstrap 95% CI lower bound -0.0162R <= 0.0R",
+        "Matched Rank p-value 0.0669 >= 0.025"
+      ],
+      "diagnostics": [
+        "Net Profit Factor: 1.14 (Null p95 Hurdle: 0.00, p=0.5000)",
+        "Net Win Rate: 38.29% (Null p95 Hurdle: 0.00%, p=0.5000)",
+        "Max Drawdown (R): 24.59R",
+        "Sharpe Ratio: -0.19 (p=0.0070)",
+        "Median Stop % of Price: 7.60%",
+        "Cost Drag in R per Trade: +0.0288R",
+        "Median Holding Time: 60 bars (60h)",
+        "Trades per Symbol: ADAUSDT: 81, AVAXUSDT: 83, BNBUSDT: 105, BTCUSDT: 185, DOGEUSDT: 86, ETHUSDT: 145, LINKUSDT: 78, SOLUSDT: 138, SUIUSDT: 57, XRPUSDT: 97",
+        "Per-Year Net R: 2021: -9.34R, 2022: +10.19R, 2023: +22.55R, 2024: +12.99R, 2025: +22.88R, 2026: -7.08R"
+      ],
+      "matched_median_expectancy_r": 0.0,
+      "matched_p95_expectancy_r": 0.0,
+      "matched_std_expectancy_r": 0.0
     },
     "Donchian4hN55": {
       "strategy_name": "Donchian4hN55",
@@ -808,9 +1384,9 @@
       "net_profit_pct": 65.56,
       "start_time_ms": 1609459200000,
       "end_time_ms": 1776470400000,
-      "run_timestamp": "2026-10-28T03:47:42.462668+00:00",
+      "run_timestamp": "2026-10-28T10:19:52.615098+00:00",
       "data_date_range": "2021-01-01 to 2026-04-18",
-      "git_commit": "2fc38be31f36e62c8d4b0423a88aac7358893f02+dirty",
+      "git_commit": "90691ff04c0c38b487c3325807326330853d5605+dirty",
       "significance_level": 0.025,
       "median_stop_pct": 7.55,
       "cost_drag_r": 0.0264,
@@ -931,7 +1507,121 @@
         "std_net_r": 1.1415,
         "trades_needed_80_power_onesided": 1648,
         "trades_needed_80_power_twosided": 1995
-      }
+      },
+      "per_symbol_metrics": {
+        "ETHUSDT": {
+          "trades": 107,
+          "win_rate": 38.3,
+          "profit_factor": 1.11,
+          "gross_profit_factor": 1.19,
+          "net_pnl": 412.53,
+          "avg_r": 0.0386,
+          "gross_avg_r": 0.0667
+        },
+        "BNBUSDT": {
+          "trades": 84,
+          "win_rate": 44.0,
+          "profit_factor": 1.82,
+          "gross_profit_factor": 1.99,
+          "net_pnl": 2249.96,
+          "avg_r": 0.2679,
+          "gross_avg_r": 0.3035
+        },
+        "AVAXUSDT": {
+          "trades": 77,
+          "win_rate": 36.4,
+          "profit_factor": 1.31,
+          "gross_profit_factor": 1.37,
+          "net_pnl": 895.02,
+          "avg_r": 0.1162,
+          "gross_avg_r": 0.1338
+        },
+        "LINKUSDT": {
+          "trades": 66,
+          "win_rate": 31.8,
+          "profit_factor": 0.98,
+          "gross_profit_factor": 1.03,
+          "net_pnl": -52.38,
+          "avg_r": -0.0079,
+          "gross_avg_r": 0.0126
+        },
+        "BTCUSDT": {
+          "trades": 129,
+          "win_rate": 34.9,
+          "profit_factor": 1.19,
+          "gross_profit_factor": 1.32,
+          "net_pnl": 894.14,
+          "avg_r": 0.0693,
+          "gross_avg_r": 0.1115
+        },
+        "DOGEUSDT": {
+          "trades": 75,
+          "win_rate": 42.7,
+          "profit_factor": 1.41,
+          "gross_profit_factor": 1.48,
+          "net_pnl": 1056.3,
+          "avg_r": 0.1408,
+          "gross_avg_r": 0.1597
+        },
+        "XRPUSDT": {
+          "trades": 73,
+          "win_rate": 37.0,
+          "profit_factor": 1.09,
+          "gross_profit_factor": 1.16,
+          "net_pnl": 235.19,
+          "avg_r": 0.0322,
+          "gross_avg_r": 0.056
+        },
+        "ADAUSDT": {
+          "trades": 66,
+          "win_rate": 42.4,
+          "profit_factor": 1.49,
+          "gross_profit_factor": 1.6,
+          "net_pnl": 1070.79,
+          "avg_r": 0.1622,
+          "gross_avg_r": 0.1872
+        },
+        "SOLUSDT": {
+          "trades": 109,
+          "win_rate": 37.6,
+          "profit_factor": 0.92,
+          "gross_profit_factor": 0.97,
+          "net_pnl": -299.49,
+          "avg_r": -0.0275,
+          "gross_avg_r": -0.0084
+        },
+        "SUIUSDT": {
+          "trades": 46,
+          "win_rate": 28.3,
+          "profit_factor": 1.05,
+          "gross_profit_factor": 1.1,
+          "net_pnl": 93.54,
+          "avg_r": 0.0203,
+          "gross_avg_r": 0.0404
+        }
+      },
+      "total_signals_generated": 5274,
+      "hurdles_passed": [
+        "Sample size 832 >= 100 trades",
+        "Mean Net Expectancy +0.0788R > 0.0R",
+        "Bootstrap 95% CI lower bound +0.0021R > 0.0R",
+        "Matched Rank p-value 0.0195 < 0.025"
+      ],
+      "hurdles_failed": [],
+      "diagnostics": [
+        "Net Profit Factor: 1.22 (Null p95 Hurdle: 1.04, p=0.0004)",
+        "Net Win Rate: 37.62% (Null p95 Hurdle: 52.40%, p=0.9988)",
+        "Max Drawdown (R): 16.69R",
+        "Sharpe Ratio: 0.47 (p=0.0314)",
+        "Median Stop % of Price: 7.55%",
+        "Cost Drag in R per Trade: +0.0264R",
+        "Median Holding Time: 52 bars (52h)",
+        "Trades per Symbol: ADAUSDT: 66, AVAXUSDT: 77, BNBUSDT: 84, BTCUSDT: 129, DOGEUSDT: 75, ETHUSDT: 107, LINKUSDT: 66, SOLUSDT: 109, SUIUSDT: 46, XRPUSDT: 73",
+        "Per-Year Net R: 2021: +10.25R, 2022: +3.83R, 2023: +23.21R, 2024: +13.11R, 2025: +18.11R, 2026: -2.94R"
+      ],
+      "matched_median_expectancy_r": 0.0003,
+      "matched_p95_expectancy_r": 0.063,
+      "matched_std_expectancy_r": 0.0372
     }
   }
 }

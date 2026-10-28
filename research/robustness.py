@@ -60,6 +60,42 @@ class RobustnessPanel:
         d["annual_breakdown"] = {str(k): v for k, v in self.annual_breakdown.items()}
         return d
 
+    @classmethod
+    def from_dict(cls, d: Dict[str, Any]) -> "RobustnessPanel":
+        """Reconstruct a RobustnessPanel instance from a dictionary."""
+        annual = {}
+        for k, v in d.get("annual_breakdown", {}).items():
+            try:
+                annual[int(k)] = v
+            except (ValueError, TypeError):
+                annual[k] = v
+        wb_ci_raw = d.get("week_block_ci", [0.0, 0.0])
+        wb_ci = (float(wb_ci_raw[0]), float(wb_ci_raw[1]))
+        return cls(
+            strategy_name=d["strategy_name"],
+            total_trades=int(d["total_trades"]),
+            mean_net_r=float(d["mean_net_r"]),
+            matched_p=float(d["matched_p"]) if d.get("matched_p") is not None else None,
+            mc_iterations=int(d.get("mc_iterations", 1000)),
+            mc_se=float(d["mc_se"]) if d.get("mc_se") is not None else None,
+            significance_threshold=float(d.get("significance_threshold", 0.05)),
+            threshold_within_2se=bool(d.get("threshold_within_2se", False)),
+            iid_boot_share_above_zero=float(d.get("iid_boot_share_above_zero", 0.0)),
+            iid_boot_min_bound_2_5pct=float(d.get("iid_boot_min_bound_2_5pct", 0.0)),
+            iid_boot_max_bound_2_5pct=float(d.get("iid_boot_max_bound_2_5pct", 0.0)),
+            iid_boot_mean_bound_2_5pct=float(d.get("iid_boot_mean_bound_2_5pct", 0.0)),
+            iid_boot_bounds_30_seeds=[float(x) for x in d.get("iid_boot_bounds_30_seeds", [])],
+            week_block_ci=wb_ci,
+            annual_breakdown=annual,
+            total_net_r=float(d.get("total_net_r", 0.0)),
+            top10_share_pct=float(d.get("top10_share_pct", 0.0)),
+            top10_total_r=float(d.get("top10_total_r", 0.0)),
+            mean_net_r_without_top10=float(d.get("mean_net_r_without_top10", 0.0)),
+            std_net_r=float(d.get("std_net_r", 0.0)),
+            trades_needed_80_power_onesided=int(d["trades_needed_80_power_onesided"]) if d.get("trades_needed_80_power_onesided") is not None else None,
+            trades_needed_80_power_twosided=int(d["trades_needed_80_power_twosided"]) if d.get("trades_needed_80_power_twosided") is not None else None,
+        )
+
     def format_markdown(self) -> str:
         """Format the robustness panel as a clean GitHub-flavored markdown block."""
         mc_se_str = f"{self.mc_se:.4f}" if self.mc_se is not None else "N/A"

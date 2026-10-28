@@ -49,22 +49,16 @@ from research.strategies import (
     LiquiditySweepStrategy,
     TrendPullbackStrategy,
 )
+from research.universes import (
+    DEFAULT_UNIVERSE,
+    get_universe_symbols,
+    validate_universe_data,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("strategy_runner")
 
-DEFAULT_SYMBOLS = [
-    "BTCUSDT",
-    "ETHUSDT",
-    "SOLUSDT",
-    "BNBUSDT",
-    "XRPUSDT",
-    "DOGEUSDT",
-    "ADAUSDT",
-    "AVAXUSDT",
-    "LINKUSDT",
-    "SUIUSDT",
-]
+DEFAULT_SYMBOLS = get_universe_symbols(DEFAULT_UNIVERSE)
 
 
 @dataclass
@@ -81,6 +75,179 @@ class StrategyRunResult:
     matched_baseline: Optional[MatchedBaselineResult] = None
     bootstrap_ci: Optional[Tuple[float, float]] = None
     robustness_panel: Optional[RobustnessPanel] = None
+
+
+def strategy_run_result_from_dict(strat_data: Dict[str, Any]) -> StrategyRunResult:
+    """Reconstruct a StrategyRunResult from serialized strategy_results.json entry."""
+    s_name = strat_data["strategy_name"]
+    s_desc = strat_data.get("description", "")
+    trade_count = int(strat_data.get("trade_count", 0))
+    verdict = strat_data.get("verdict", "REJECTED")
+    is_validated = "PASSED" in verdict
+
+    sim_res = SimulationResult(
+        initial_equity_usd=10000.0,
+        final_equity_usd=10000.0,
+        net_profit_usd=0.0,
+        net_profit_pct=float(strat_data.get("net_profit_pct", 0.0)),
+        total_trades=trade_count,
+        winning_trades=int(round(trade_count * float(strat_data.get("net_win_rate", 0.0)) / 100.0)),
+        losing_trades=trade_count - int(round(trade_count * float(strat_data.get("net_win_rate", 0.0)) / 100.0)),
+        win_rate_pct=float(strat_data.get("net_win_rate", 0.0)),
+        gross_profit_usd=0.0,
+        gross_loss_usd=0.0,
+        profit_factor=float(strat_data.get("net_profit_factor", 0.0)),
+        expectancy_usd=0.0,
+        expectancy_r=float(strat_data.get("net_expectancy_r", 0.0)),
+        avg_r_multiple=float(strat_data.get("net_expectancy_r", 0.0)),
+        max_drawdown_pct=float(strat_data.get("max_drawdown_pct", 0.0)),
+        max_drawdown_duration_bars=0,
+        sharpe_ratio=float(strat_data.get("sharpe_ratio", 0.0)),
+        sortino_ratio=0.0,
+        total_fees_usd=0.0,
+        total_slippage_usd=0.0,
+        total_funding_cost_usd=0.0,
+        trades=[],
+        equity_curve=[],
+        ruined=bool(strat_data.get("ruined", False)),
+        ruin_time_ms=strat_data.get("ruin_time_ms"),
+        sizing_mode=strat_data.get("sizing_mode", "fixed_risk"),
+        gross_profit_factor=float(strat_data.get("gross_profit_factor", 0.0)),
+        gross_expectancy_r=float(strat_data.get("gross_expectancy_r", 0.0)),
+        cumulative_r=float(strat_data.get("cumulative_r", 0.0)),
+        max_drawdown_r=float(strat_data.get("max_drawdown_r", 0.0)),
+        days_evaluated=float(strat_data.get("days_evaluated", 0.0)),
+        pct_of_dataset_evaluated=float(strat_data.get("pct_of_dataset_evaluated", 100.0)),
+        dropped_trade_fraction=float(strat_data.get("dropped_trade_fraction", 0.0)),
+    )
+
+    ev = StrategyEvaluation(
+        strategy_name=s_name,
+        description=s_desc,
+        total_trades=trade_count,
+        win_rate=float(strat_data.get("net_win_rate", 0.0)),
+        profit_factor=float(strat_data.get("net_profit_factor", 0.0)),
+        expectancy_r=float(strat_data.get("net_expectancy_r", 0.0)),
+        expectancy_usd=0.0,
+        avg_r=float(strat_data.get("net_expectancy_r", 0.0)),
+        sharpe_ratio=float(strat_data.get("sharpe_ratio", 0.0)),
+        sortino_ratio=0.0,
+        max_drawdown_pct=float(strat_data.get("max_drawdown_pct", 0.0)),
+        net_profit_pct=float(strat_data.get("net_profit_pct", 0.0)),
+        p_profit_factor=0.0,
+        p_win_rate=0.0,
+        p_expectancy_r=0.0,
+        p_sharpe=0.0,
+        p_composite=float(strat_data.get("matched_p_value", 1.0) if strat_data.get("matched_p_value") is not None else 1.0),
+        matched_p_value=float(strat_data.get("matched_p_value")) if strat_data.get("matched_p_value") is not None else None,
+        is_validated=is_validated,
+        verdict=verdict,
+        hurdles_passed=strat_data.get("hurdles_passed", []),
+        hurdles_failed=strat_data.get("hurdles_failed", []),
+        diagnostics=strat_data.get("diagnostics", []),
+        significance_level=float(strat_data.get("significance_level", 0.05)),
+        dropped_trade_fraction=float(strat_data.get("dropped_trade_fraction", 0.0)),
+        p_value_at_floor=bool(strat_data.get("p_value_at_floor", False)),
+        med_stop_pct=strat_data.get("median_stop_pct"),
+        cost_drag_r=strat_data.get("cost_drag_r"),
+        med_holding_bars=strat_data.get("median_holding_bars"),
+        trades_per_symbol=strat_data.get("trades_per_symbol"),
+        per_year_net_r=strat_data.get("per_year_net_r"),
+    )
+
+    rob_panel = None
+    if "robustness_panel" in strat_data and strat_data["robustness_panel"]:
+        rob_panel = RobustnessPanel.from_dict(strat_data["robustness_panel"])
+
+    matched_passes_n = rob_panel.mc_iterations if rob_panel else 1000
+    matched_baseline = MatchedBaselineResult(
+        iterations=matched_passes_n,
+        strategy_trade_count=trade_count,
+        strategy_net_ev_r=float(strat_data.get("net_expectancy_r", 0.0)),
+        null_expectancy_r_distribution=[],
+        median_expectancy_r=float(strat_data.get("matched_median_expectancy_r", 0.0)),
+        mean_expectancy_r=0.0,
+        std_expectancy_r=float(strat_data.get("matched_std_expectancy_r", 0.0)),
+        p5_expectancy_r=0.0,
+        p95_expectancy_r=float(strat_data.get("matched_p95_expectancy_r", 0.0)),
+        empirical_p_value=float(strat_data.get("matched_p_value", 1.0) if strat_data.get("matched_p_value") is not None else 1.0),
+        bootstrap_ci=tuple(strat_data["bootstrap_ci"]) if strat_data.get("bootstrap_ci") else (0.0, 0.0),
+        dropped_trade_fraction=float(strat_data.get("dropped_trade_fraction", 0.0)),
+    )
+
+    boot_ci = tuple(strat_data["bootstrap_ci"]) if strat_data.get("bootstrap_ci") else None
+    per_symbol = strat_data.get("per_symbol_metrics", {})
+    total_signals = int(strat_data.get("total_signals_generated", trade_count))
+
+    return StrategyRunResult(
+        strategy_name=s_name,
+        description=s_desc,
+        sim_result=sim_res,
+        evaluation=ev,
+        per_symbol_metrics=per_symbol,
+        total_signals_generated=total_signals,
+        signals_executed=trade_count,
+        matched_baseline=matched_baseline,
+        bootstrap_ci=boot_ci,
+        robustness_panel=rob_panel,
+    )
+
+
+def update_log_md(
+    log_path: str,
+    matched_p: float,
+    mc_se: float,
+    null_median: float,
+    null_std: float,
+    is_passed: bool,
+    threshold_within_2se: bool,
+    strategy_name: str = "Donchian4hN55",
+    iterations: int = 10000,
+) -> None:
+    """Append the definitive outcome for a strategy evaluation to research/preregistration/LOG.md."""
+    if not os.path.exists(log_path):
+        raise FileNotFoundError(f"{log_path} not found")
+
+    with open(log_path, "r", encoding="utf-8") as f:
+        existing = f.read().strip()
+
+    hypo_map = {
+        "Donchian4hN55": "H1b",
+        "Donchian4hN20": "H1a",
+    }
+    hypo_label = hypo_map.get(strategy_name, strategy_name)
+    tag = f"{hypo_label} ({strategy_name})" if hypo_label != strategy_name else strategy_name
+
+    thresh = 0.025 if strategy_name == "Donchian4hN55" else 0.05
+    p_2se_below = (matched_p + 2.0 * mc_se) < thresh
+
+    if is_passed:
+        entry = (
+            f"{tag}: {iterations:,} matched baseline passes completed. "
+            f"matched p = {matched_p:.4f}, Monte Carlo SE = {mc_se:.4f}, "
+            f"null median = {null_median:+.4f}R, null std = {null_std:.4f}R. "
+            f"p + 2*SE = {matched_p + 2.0 * mc_se:.4f} (below {thresh}: {p_2se_below}). "
+            f"Verdict: PASSED DEV GATE (see robustness) (p < {thresh}, threshold={thresh}). "
+            f"Holdout pending."
+        )
+    else:
+        entry = (
+            f"{tag}: {iterations:,} matched baseline passes completed. "
+            f"matched p = {matched_p:.4f}, Monte Carlo SE = {mc_se:.4f}, "
+            f"null median = {null_median:+.4f}R, null std = {null_std:.4f}R. "
+            f"p + 2*SE = {matched_p + 2.0 * mc_se:.4f} (below {thresh}: {p_2se_below}). "
+            f"Verdict: REJECTED per pre-registered rule (p = {matched_p:.4f} >= {thresh}). "
+            f"Thresholds were not adjusted. Holdout not used."
+        )
+
+    # Avoid duplicate append if identical entry exists
+    if entry not in existing:
+        new_content = existing + "\n" + entry + "\n"
+        with open(log_path, "w", encoding="utf-8") as f:
+            f.write(new_content)
+        logger.info(f"Appended entry to {log_path}:\n  {entry}")
+    else:
+        logger.info("LOG.md already contains this entry.")
 
 
 # simulate_portfolio_signals is imported directly from engine.simulator
@@ -124,18 +291,31 @@ def compute_per_symbol_breakdown(trades: List[ExecutedTrade]) -> Dict[str, Dict[
 
 def run_strategy_evidence_validation(
     symbols: Optional[List[str]] = None,
+    universe_name: str = DEFAULT_UNIVERSE,
+    only_strategy: Optional[str] = None,
     data_dir: str = "data/candles",
     output_report_path: str = "research/reports/strategy_validation_report.md",
     output_json_path: str = "research/reports/strategy_results.json",
+    log_md_path: str = "research/preregistration/LOG.md",
     sizing_mode: str = "fixed_risk",
     ruin_threshold_usd: Optional[float] = None,
     matched_passes: int = 1000,
+    workers: Optional[int] = None,
+    checkpoint_path: Optional[str] = None,
 ) -> List[StrategyRunResult]:
     """
-    Main orchestration routine running all 4 hypotheses against the Phase 2 Monte Carlo hurdle.
+    Main orchestration routine running strategy evidence validation against the Monte Carlo hurdle.
+    Supports evaluating all hypotheses or an isolated strategy (--only), and named universes (--universe).
     """
-    syms = symbols or DEFAULT_SYMBOLS
-    logger.info(f"Loading 1h and 4h Parquet datasets for {len(syms)} symbols...")
+    if symbols is not None:
+        syms = list(symbols)
+    else:
+        syms = get_universe_symbols(universe_name)
+
+    logger.info(f"Validating candle data for universe '{universe_name}' ({len(syms)} symbols)...")
+    validate_universe_data(universe_name, syms, data_dir=data_dir)
+
+    logger.info(f"Loading 1h and 4h Parquet datasets for {len(syms)} symbols in universe '{universe_name}'...")
 
     df_1h_dict: Dict[str, pd.DataFrame] = {}
     df_4h_dict: Dict[str, pd.DataFrame] = {}
@@ -145,6 +325,10 @@ def run_strategy_evidence_validation(
     for sym in syms:
         df_1 = load_candles(sym, "1h", data_dir=data_dir)
         df_4 = load_candles(sym, "4h", data_dir=data_dir)
+        if df_1.empty or df_4.empty:
+            raise ValueError(
+                f"Symbol '{sym}' in universe '{universe_name}' has empty candle data. Never skipping silently."
+            )
         df_1h_dict[sym] = df_1
         df_4h_dict[sym] = df_4
 
@@ -156,7 +340,7 @@ def run_strategy_evidence_validation(
 
     logger.info("Loaded datasets. Initializing trading hypotheses...")
 
-    strategies: List[BaseStrategy] = [
+    all_strategies: List[BaseStrategy] = [
         TrendPullbackStrategy(),
         FVGRetestStrategy(),
         ConfluenceThresholdStrategy(),
@@ -164,6 +348,23 @@ def run_strategy_evidence_validation(
         Donchian4hN20(),
         Donchian4hN55(),
     ]
+
+    if only_strategy:
+        target = only_strategy.strip().lower()
+        strategies = [
+            s for s in all_strategies
+            if s.config.name.lower() == target
+            or s.__class__.__name__.lower() == target
+            or s.config.name.lower().replace("_", "") == target.replace("_", "")
+        ]
+        if not strategies:
+            avail = [s.config.name for s in all_strategies]
+            raise ValueError(
+                f"Strategy '{only_strategy}' not found. Available strategies: {', '.join(avail)}"
+            )
+        logger.info(f"Running ONLY strategy: {strategies[0].config.name} (passes: {matched_passes:,})")
+    else:
+        strategies = all_strategies
 
     dataset_hash = compute_dataset_hash(candles_dict)
     fric = SimulationFriction()
@@ -214,8 +415,29 @@ def run_strategy_evidence_validation(
         trade_net_r = [t.net_r for t in sim_res.trades]
         boot_ci = compute_bootstrap_ci(trade_net_r, n_resamples=10000, seed=42)
 
-        # Run matched random baseline (same trade count, same symbol mix, same stop dist % distribution)
-        logger.info(f"  Running matched random-entry baseline for {s_name} (N={matched_passes} passes)...")
+        # Matched baseline checkpoint and workers
+        strat_ckpt = checkpoint_path
+        if strat_ckpt is None:
+            default_ckpt = f"research/checkpoints/{s_name.lower()}_{matched_passes}_matched.json"
+            alt_ckpt = f"research/checkpoints/{s_name}_{matched_passes}_matched.json"
+            legacy_ckpt = (
+                "research/checkpoints/n55_10k_matched.json"
+                if (s_name == "Donchian4hN55" and matched_passes == 10000)
+                else None
+            )
+            if legacy_ckpt and os.path.exists(legacy_ckpt):
+                strat_ckpt = legacy_ckpt
+            elif os.path.exists(alt_ckpt):
+                strat_ckpt = alt_ckpt
+            else:
+                strat_ckpt = default_ckpt
+
+        num_workers = workers if workers is not None else (os.cpu_count() or 4)
+
+        logger.info(
+            f"  Running matched random-entry baseline for {s_name} (N={matched_passes} passes, "
+            f"workers={num_workers}, checkpoint={strat_ckpt})..."
+        )
         matched_res = run_matched_baseline(
             strategy_trades=sim_res.trades,
             candles_dict=candles_dict,
@@ -223,6 +445,9 @@ def run_strategy_evidence_validation(
             seed=42,
             friction=fric,
             exit_config=strat_cfg,
+            workers=num_workers,
+            checkpoint_path=strat_ckpt,
+            chunk_size=250,
         )
 
         evaluation = evaluator.evaluate(
@@ -284,6 +509,35 @@ def run_strategy_evidence_validation(
             )
         )
 
+    # If only_strategy was specified, merge with existing strategies from strategy_results.json
+    if only_strategy and os.path.exists(output_json_path):
+        combined_results: List[StrategyRunResult] = list(run_results)
+        evaluated_names = {r.strategy_name for r in run_results}
+        try:
+            with open(output_json_path, "r", encoding="utf-8") as f:
+                existing_json = json.load(f)
+            existing_strats = existing_json.get("strategies", {})
+            for name, s_data in existing_strats.items():
+                if name not in evaluated_names:
+                    combined_results.append(strategy_run_result_from_dict(s_data))
+        except Exception as e:
+            logger.warning(f"Could not load existing strategies from {output_json_path}: {e}")
+
+        canonical_order = [
+            "TrendPullback",
+            "FVGRetest",
+            "ConfluenceThreshold",
+            "LiquiditySweep",
+            "Donchian4hN20",
+            "Donchian4hN55",
+        ]
+        combined_results.sort(
+            key=lambda r: canonical_order.index(r.strategy_name) if r.strategy_name in canonical_order else 99
+        )
+        report_results = combined_results
+    else:
+        report_results = run_results
+
     # Generate and save master report
     if not candles_dict:
         raise ValueError("candles_dict is required and cannot be empty")
@@ -295,7 +549,7 @@ def run_strategy_evidence_validation(
     dataset_hash_val = compute_dataset_hash(candles_dict)
     git_hash_val = get_git_commit_hash()
     generate_markdown_report(
-        results=run_results,
+        results=report_results,
         output_path=output_report_path,
         baseline_hurdles=evaluator.hurdles,
         dataset_info={
@@ -308,14 +562,39 @@ def run_strategy_evidence_validation(
         exit_config=cfg,
         dataset_hash=dataset_hash_val,
         git_hash=git_hash_val,
+        universe_name=universe_name,
     )
     save_strategy_results_json(
-        run_results,
+        report_results,
         output_json_path,
         candles_dict=candles_dict,
         bars_per_symbol=bars_per_symbol_val,
         dataset_years=dataset_years_val,
+        universe_name=universe_name,
     )
+
+    # If only_strategy was specified, update LOG.md through update_log_md
+    if only_strategy and os.path.exists(log_md_path):
+        for r in run_results:
+            ev = r.evaluation
+            m_res = r.matched_baseline
+            m_p = ev.matched_p_value if ev.matched_p_value is not None else 1.0
+            rob = r.robustness_panel
+            se_val = rob.mc_se if rob and rob.mc_se is not None else 0.0
+            med_r = m_res.median_expectancy_r if m_res else 0.0
+            std_r = m_res.std_expectancy_r if m_res and hasattr(m_res, "std_expectancy_r") else 0.0
+            update_log_md(
+                log_path=log_md_path,
+                matched_p=m_p,
+                mc_se=se_val,
+                null_median=med_r,
+                null_std=std_r,
+                is_passed=ev.is_validated,
+                threshold_within_2se=rob.threshold_within_2se if rob else False,
+                strategy_name=r.strategy_name,
+                iterations=matched_passes,
+            )
+
     return run_results
 
 
@@ -338,6 +617,7 @@ def save_strategy_results_json(
     candles_dict: Optional[Dict[str, np.ndarray]] = None,
     bars_per_symbol: Optional[Dict[str, int]] = None,
     dataset_years: Optional[float] = None,
+    universe_name: str = DEFAULT_UNIVERSE,
 ) -> None:
     """Save machine-readable strategy validation outcomes to JSON."""
     os.makedirs(os.path.dirname(output_json_path), exist_ok=True)
@@ -373,6 +653,27 @@ def save_strategy_results_json(
         sim = r.sim_result
         matched_p = ev.matched_p_value if ev.matched_p_value is not None else ev.p_composite
         boot_ci = [round(r.bootstrap_ci[0], 4), round(r.bootstrap_ci[1], 4)] if r.bootstrap_ci else None
+
+        matched_med = 0.0
+        if r.matched_baseline and hasattr(r.matched_baseline, "median_expectancy_r"):
+            try:
+                matched_med = round(float(r.matched_baseline.median_expectancy_r), 4)
+            except (TypeError, ValueError):
+                matched_med = 0.0
+
+        matched_p95 = 0.0
+        if r.matched_baseline and hasattr(r.matched_baseline, "p95_expectancy_r"):
+            try:
+                matched_p95 = round(float(r.matched_baseline.p95_expectancy_r), 4)
+            except (TypeError, ValueError):
+                matched_p95 = 0.0
+
+        matched_std = 0.0
+        if r.matched_baseline and hasattr(r.matched_baseline, "std_expectancy_r"):
+            try:
+                matched_std = round(float(r.matched_baseline.std_expectancy_r), 4)
+            except (TypeError, ValueError):
+                matched_std = 0.0
 
         strategies_data[r.strategy_name] = {
             "strategy_name": r.strategy_name,
@@ -410,7 +711,27 @@ def save_strategy_results_json(
             "dropped_trade_fraction": round(getattr(ev, "dropped_trade_fraction", 0.0), 6),
             "p_value_at_floor": getattr(ev, "p_value_at_floor", False),
             "robustness_panel": r.robustness_panel.to_dict() if getattr(r, "robustness_panel", None) else None,
+            "per_symbol_metrics": r.per_symbol_metrics,
+            "total_signals_generated": r.total_signals_generated,
+            "hurdles_passed": getattr(ev, "hurdles_passed", []),
+            "hurdles_failed": getattr(ev, "hurdles_failed", []),
+            "diagnostics": getattr(ev, "diagnostics", []),
+            "matched_median_expectancy_r": matched_med,
+            "matched_p95_expectancy_r": matched_p95,
+            "matched_std_expectancy_r": matched_std,
         }
+
+    # Preserve any existing strategies not present in results
+    if os.path.exists(output_json_path):
+        try:
+            with open(output_json_path, "r", encoding="utf-8") as f:
+                existing_payload = json.load(f)
+            existing_strats = existing_payload.get("strategies", {})
+            for k, v in existing_strats.items():
+                if k not in strategies_data:
+                    strategies_data[k] = v
+        except Exception as e:
+            logger.warning(f"Could not load existing strategies from {output_json_path}: {e}")
 
     dataset_hash = compute_dataset_hash(candles_dict) if candles_dict else "unknown"
 
@@ -419,6 +740,7 @@ def save_strategy_results_json(
             "run_timestamp": now_iso,
             "git_commit": git_hash,
             "dataset_hash": dataset_hash,
+            "universe": universe_name,
             "data_date_range": date_range_str,
             "start_time_ms": min_ts,
             "end_time_ms": max_ts,
@@ -443,6 +765,7 @@ def generate_markdown_report(
     exit_config: Optional[ExitConfig] = None,
     dataset_hash: Optional[str] = None,
     git_hash: Optional[str] = None,
+    universe_name: str = DEFAULT_UNIVERSE,
 ) -> None:
     """Format publication-grade Strategy Validation Report."""
     now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
@@ -722,6 +1045,7 @@ def generate_markdown_report(
 **Generated:** {now_str}  
 **Git Commit:** `{git_commit_hash}`  
 **Dataset Hash:** `{ds_hash}`  
+**Universe:** {universe_name}  
 **Architecture Doctrine:** Claude's Option B (Discretionary Human Trading Terminal)  
 **Null Hypothesis ($H_0$):** Phase 2 {mc_iterations:,}-pass Monte Carlo Baseline Hurdle  
 **Dataset:** {total_symbols} Major Pairs (`{', '.join(symbols_list)}`), {dataset_years:.1f} Years (Binance USD-M Futures 1h candles)  
@@ -779,6 +1103,18 @@ def main():
     parser = argparse.ArgumentParser(description="Run Phase 3 Strategy Evidence Validation.")
     parser.add_argument("--data-dir", type=str, default="data/candles", help="Parquet candle directory")
     parser.add_argument(
+        "--universe",
+        type=str,
+        default=DEFAULT_UNIVERSE,
+        help=f"Named universe for research (e.g. U10, U4, U5; default: {DEFAULT_UNIVERSE})",
+    )
+    parser.add_argument(
+        "--only",
+        type=str,
+        default=None,
+        help="Evaluate only the specified strategy (e.g. Donchian4hN55)",
+    )
+    parser.add_argument(
         "--output",
         type=str,
         default="research/reports/strategy_validation_report.md",
@@ -789,6 +1125,12 @@ def main():
         type=str,
         default="research/reports/strategy_results.json",
         help="Output strategy results JSON path",
+    )
+    parser.add_argument(
+        "--log-md",
+        type=str,
+        default="research/preregistration/LOG.md",
+        help="Path to preregistration LOG.md",
     )
     parser.add_argument(
         "--sizing-mode",
@@ -811,15 +1153,32 @@ def main():
         default=1000,
         help="Number of matched baseline passes (default: 1000, use 200 in tests/dev)",
     )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=None,
+        help="Number of worker processes for matched baseline (default: os.cpu_count())",
+    )
+    parser.add_argument(
+        "--checkpoint",
+        type=str,
+        default=None,
+        help="Path to matched baseline checkpoint file",
+    )
     args = parser.parse_args()
 
     results = run_strategy_evidence_validation(
+        universe_name=args.universe,
+        only_strategy=args.only,
         data_dir=args.data_dir,
         output_report_path=args.output,
         output_json_path=args.output_json,
+        log_md_path=args.log_md,
         sizing_mode=args.sizing_mode,
         ruin_threshold_usd=args.ruin_threshold,
         matched_passes=args.matched_passes,
+        workers=args.workers,
+        checkpoint_path=args.checkpoint,
     )
 
     print("\n" + "=" * 80)
