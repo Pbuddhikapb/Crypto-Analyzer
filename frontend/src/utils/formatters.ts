@@ -45,3 +45,14 @@ export function formatUTCClock(date: Date | number = new Date()): string {
   const seconds = String(d.getUTCSeconds()).padStart(2, '0');
   return `${hours}:${minutes}:${seconds} UTC`;
 }
+
+/**
+ * Format UTC hours and minutes: HH:MM UTC.
+ */
+export function formatUTCHM(date: Date | number = new Date()): string {
+  const d = typeof date === 'number' ? new Date(date) : date;
+  if (isNaN(d.getTime())) return '--:-- UTC';
+  const hours = String(d.getUTCHours()).padStart(2, '0');
+  const minutes = String(d.getUTCMinutes()).padStart(2, '0');
+  return `${hours}:${minutes} UTC`;
+}

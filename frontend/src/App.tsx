@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
+import { AlertTriangle } from 'lucide-react';
 import { Navbar } from './components/Navbar';
 import { TopCoinsBar } from './components/TopCoinsBar';
 import { ChartToolbar } from './components/ChartToolbar';
@@ -12,6 +13,7 @@ import { OpportunityRadar } from './components/OpportunityRadar';
 import { ActiveTradeCockpit } from './components/ActiveTradeCockpit';
 import { useWebSocket } from './state/useWebSocket';
 import { soundEngine } from './state/audio';
+import { formatUTCHM } from './utils/formatters';
 import {
   fetchCandles,
   fetchHealth,
@@ -44,6 +46,8 @@ export function App() {
   // Market & Technical State
   const [candles, setCandles] = useState<Candle[]>([]);
   const [indicators, setIndicators] = useState<Indicators | null>(null);
+  const [candleHistorySource, setCandleHistorySource] = useState<'rest_futures' | 'parquet' | 'none' | null>(null);
+  const [candleLiveStartMs, setCandleLiveStartMs] = useState<number | null>(null);
 
   // Microstructure & Order Flow State
   const [microstructure, setMicrostructure] = useState<MicrostructureSummary | null>(null);
@@ -158,6 +162,8 @@ export function App() {
       .then((res) => {
         setCandles(res.candles);
         setIndicators(res.indicators);
+        if (res.history_source) setCandleHistorySource(res.history_source);
+        if (res.live_start_ms !== undefined) setCandleLiveStartMs(res.live_start_ms);
       })
       .catch(() => {});
 
@@ -193,6 +199,17 @@ export function App() {
     health?.last_update_per_symbol?.[activeSymbol] ||
     health?.last_update_times?.[activeSymbol] ||
     null;
+
+  const activeHistorySource =
+    candleHistorySource ||
+    health?.history_source?.[activeSymbol] ||
+    'none';
+
+  const liveStartMs =
+    candleLiveStartMs ||
+    health?.live_start_ms?.[activeSymbol] ||
+    (candles.length > 0 ? (candles[0].time > 10_000_000_000 ? candles[0].time : candles[0].time * 1000) : null);
+  const historyUnavailableLiveSince = liveStartMs ? formatUTCHM(liveStartMs) : formatUTCHM(Date.now());
 
   return (
     <div className="flex flex-col h-screen w-screen overflow-hidden bg-dark-bg text-slate-100">
@@ -235,6 +252,15 @@ export function App() {
             isRightPanelCollapsed={isRightPanelCollapsed}
             onToggleRightPanel={() => setIsRightPanelCollapsed((v) => !v)}
           />
+
+          {activeHistorySource !== 'rest_futures' && (
+            <div className="bg-amber-950/80 border-b border-amber-500/40 px-3 py-1.5 flex items-center gap-2 text-amber-300 text-xs font-mono">
+              <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+              <span>
+                History unavailable (REST blocked): charts show live data only since {historyUnavailableLiveSince}
+              </span>
+            </div>
+          )}
 
           <div className="flex-1 min-h-0 relative">
             <TradingChart

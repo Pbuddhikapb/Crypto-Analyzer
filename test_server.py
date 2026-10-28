@@ -817,7 +817,9 @@ def test_health_endpoint_status_states(app_and_client):
     assert data["status"] == "degraded"
     assert data["stale_symbols"] == ["ETHUSDT"]
 
-    # 4. State: HEALTHY when klines connected and all symbols updated recently
+    # 4. State: HEALTHY when klines connected, all symbols updated recently, and history_source is rest_futures
+    for sym in ["BTCUSDT", "ETHUSDT", "SOLUSDT"]:
+        app.state.history_source[sym] = "rest_futures"
     app.state.last_update_times["ETHUSDT"] = now_t - 30
     data = client.get("/api/health").json()
     assert data["status"] == "healthy"
@@ -827,20 +829,33 @@ def test_health_endpoint_status_states(app_and_client):
 
 
 def test_seed_buffer_from_parquet():
-    """Verify seed_buffer_from_parquet pre-seeds buffer with 249 historical candles and timestamps."""
+    """Verify seed_buffer_from_parquet pre-seeds buffer with 249 historical candles and timestamps
+    when parquet exists for the SAME timeframe, and returns False without fabricating candles
+    when no parquet file exists for that timeframe."""
     from server import CandleFeedBuffer, seed_buffer_from_parquet
-    buf = CandleFeedBuffer(symbol="BTCUSDT", timeframe="15m")
-    ts_dict = {"BTCUSDT": []}
 
-    success = seed_buffer_from_parquet(buf, "BTCUSDT", "15m", timestamps_dict=ts_dict, limit=249)
-    assert success is True
-    assert len(buf.candles) == 249
-    assert len(ts_dict["BTCUSDT"]) == 249
+    # 1. Missing timeframe (15m has no parquet file in data/candles): returns False, never fabricates candles
+    buf_15m = CandleFeedBuffer(symbol="BTCUSDT", timeframe="15m")
+    ts_dict_15m = {"BTCUSDT": []}
+    success_15m = seed_buffer_from_parquet(buf_15m, "BTCUSDT", "15m", timestamps_dict=ts_dict_15m, limit=249)
+    assert success_15m is False
+    assert len(buf_15m.candles) == 0
+    assert len(ts_dict_15m["BTCUSDT"]) == 0
+
+    # 2. Existing timeframe (1h has BTCUSDT_1h.parquet in data/candles): seeds real candles
+    buf_1h = CandleFeedBuffer(symbol="BTCUSDT", timeframe="1h")
+    ts_dict_1h = {"BTCUSDT": []}
+    success_1h = seed_buffer_from_parquet(buf_1h, "BTCUSDT", "1h", timestamps_dict=ts_dict_1h, limit=249)
+    assert success_1h is True
+    assert len(buf_1h.candles) == 249
+    assert len(ts_dict_1h["BTCUSDT"]) == 249
     # Strict monotonicity of timestamps
-    for i in range(1, len(ts_dict["BTCUSDT"])):
-        assert ts_dict["BTCUSDT"][i] > ts_dict["BTCUSDT"][i - 1]
+    for i in range(1, len(ts_dict_1h["BTCUSDT"])):
+        assert ts_dict_1h["BTCUSDT"][i] > ts_dict_1h["BTCUSDT"][i - 1]
     # Closes are realistic BTC prices (> 10000)
-    assert buf.candles[-1][3] > 10000.0
+    assert buf_1h.candles[-1][3] > 10000.0
+    assert buf_1h.history_source == "parquet"
+    assert buf_1h.history_end_ms is not None
 
 
 def test_git_commit_detection():
@@ -861,3 +876,135 @@ def test_git_commit_fallback_on_error(monkeypatch):
 
     monkeypatch.setattr(subprocess, "run", fail_run)
     assert get_git_commit() == "unknown"
+
+
+def test_guardrail_no_finer_timeframe_expansion_or_candle_fabrication():
+    """Grep-style guardrail: assert no code path produces candles of a finer timeframe than its source.
+    Synthetic expansion (e.g. 1h into 4 synthetic 15m bars) and candle fabrication are strictly forbidden.
+    """
+    import os
+    repo_root = os.path.dirname(os.path.abspath(__file__))
+    server_path = os.path.join(repo_root, "server.py")
+    with open(server_path, "r", encoding="utf-8") as f:
+        server_code = f.read()
+
+    forbidden_patterns = [
+        "needed_1h",
+        "expanded.append",
+        "o + (c - o) * 0.25",
+        "o + (c - o) * 0.5",
+        "o + (c - o) * 0.75",
+        "expand 1h into 15m",
+        "synthetic 15m",
+        "invented 15m",
+    ]
+    for pattern in forbidden_patterns:
+        assert pattern.lower() not in server_code.lower(), f"Found forbidden candle fabrication pattern: {pattern}"
+
+
+def test_health_reports_history_source_and_degraded(app_and_client):
+    """Verify /api/health reports history_source and history_end_ms, and sets status='degraded' when any symbol is not rest_futures."""
+    app, client = app_and_client
+    now_t = int(time.time())
+
+    app.state.is_kline_connected = True
+    for sym in ["BTCUSDT", "ETHUSDT", "SOLUSDT"]:
+        app.state.last_update_times[sym] = now_t
+        app.state.history_source[sym] = "rest_futures"
+        app.state.history_end_ms[sym] = (now_t - 60) * 1000
+
+    # Case 1: All symbols have rest_futures -> status is healthy
+    data = client.get("/api/health").json()
+    assert data["status"] == "healthy"
+    assert data["history_source"]["BTCUSDT"] == "rest_futures"
+    assert data["history_end_ms"]["BTCUSDT"] == (now_t - 60) * 1000
+
+    # Case 2: One symbol has parquet -> status degraded
+    app.state.history_source["ETHUSDT"] = "parquet"
+    data = client.get("/api/health").json()
+    assert data["status"] == "degraded"
+    assert data["history_source"]["ETHUSDT"] == "parquet"
+
+    # Case 3: One symbol has none -> status degraded
+    app.state.history_source["ETHUSDT"] = "none"
+    data = client.get("/api/health").json()
+    assert data["status"] == "degraded"
+    assert data["history_source"]["ETHUSDT"] == "none"
+
+
+def test_api_commit_stays_constant_after_simulated_checkout_change(app_and_client, monkeypatch):
+    """Verify the API commit stays constant after a simulated git checkout change.
+    Git commit must be captured ONCE at server startup (module import), not dynamically on every call.
+    """
+    import server
+    import subprocess
+    _, client = app_and_client
+
+    # First call captures startup commit
+    data1 = client.get("/api/health").json()
+    commit_initial = data1["git_commit"]
+    assert commit_initial == server.SERVER_GIT_COMMIT
+
+    # Simulate checkout of a different commit
+    fake_checkout_commit = "deadbeef999888777"
+    def fake_run(*args, **kwargs):
+        class FakeCompletedProcess:
+            returncode = 0
+            stdout = fake_checkout_commit
+        return FakeCompletedProcess()
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    # Calling get_git_commit directly would return the fake checkout commit
+    assert server.get_git_commit() == fake_checkout_commit
+
+    # But /api/health must stay strictly constant (SERVER_GIT_COMMIT captured at startup)
+    data2 = client.get("/api/health").json()
+    assert data2["git_commit"] == commit_initial
+    assert data2["git_commit"] != fake_checkout_commit
+
+
+def test_candle_feed_buffer_gap_handling():
+    """Verify gap detection: if live data starts more than 2 candle intervals after history_end_ms,
+    treat it as a gap: start the series after the gap and do not compute indicators across it.
+    """
+    from server import CandleFeedBuffer, compute_indicators
+
+    buf = CandleFeedBuffer(symbol="BTCUSDT", timeframe="1h")
+    # Interval for 1h is 3600 seconds = 3,600,000 ms. 2 intervals = 7,200,000 ms.
+    history_end_ms = 1_700_000_000_000
+    buf.history_end_ms = history_end_ms
+    buf.history_source = "parquet"
+
+    # Pre-load 60 historical candles
+    for i in range(60):
+        c = (50000.0 + i, 50100.0 + i, 49900.0 + i, 50050.0 + i, 10.0)
+        buf.load_historical_candle(c)
+
+    assert len(buf.candles) == 60
+    # Before gap, indicators can be computed on 60 candles (ema_50 is not None)
+    ind_before = compute_indicators(buf.candles)
+    assert ind_before["ema_50"] is not None
+
+    # Live data arrives 10 hours later (> 2 intervals = 2 hours)
+    gap_live_start_ms = history_end_ms + (10 * 3600 * 1000)
+    timestamps = [int(history_end_ms // 1000)]
+
+    # Trigger gap handling
+    gap = buf.handle_live_data_start(gap_live_start_ms, timestamps_list=timestamps)
+    assert gap is True
+    assert buf.gap_detected is True
+    assert len(buf.candles) == 0  # Pre-gap candles cleared
+    assert len(timestamps) == 0
+
+    # Add single live post-gap candle
+    post_gap_candle = (51000.0, 51200.0, 50900.0, 51100.0, 15.0)
+    buf.add_candle(post_gap_candle, timestamp=str(gap_live_start_ms))
+    assert len(buf.candles) == 1
+
+    # Indicators must NOT be computed across the gap: with only 1 post-gap candle,
+    # ema_50, ema_200, and rsi must return None
+    ind_after = compute_indicators(buf.candles)
+    assert ind_after["ema_50"] is None
+    assert ind_after["ema_200"] is None
+    assert ind_after["rsi"] is None

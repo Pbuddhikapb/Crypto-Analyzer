@@ -132,6 +132,10 @@ export interface CandleResponse {
   timeframe: string;
   candles: Candle[];
   indicators: Indicators;
+  history_source?: 'rest_futures' | 'parquet' | 'none';
+  history_end_ms?: number | null;
+  live_start_ms?: number | null;
+  gap_detected?: boolean;
 }
 
 export interface MarketSymbol {
@@ -239,6 +243,9 @@ export interface SystemHealth {
   db_status: string;
   connected_ws_clients: number;
   stale_symbols?: string[];
+  history_source?: Record<string, 'rest_futures' | 'parquet' | 'none'>;
+  history_end_ms?: Record<string, number | null>;
+  live_start_ms?: Record<string, number | null>;
 }
 
 export interface OrderBookLevel {

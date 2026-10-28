@@ -335,35 +335,39 @@ export const TradingChart: React.FC<TradingChartProps> = ({
     }
 
     // Populate RSI Sub-Pane
-    if (showRSI && rsiSeriesRef.current && cleanCandles.length >= 15) {
-      const closes = cleanCandles.map((c) => c.close);
-      const rsiData: { time: UTCTimestamp; value: number }[] = [];
+    if (showRSI && rsiSeriesRef.current) {
+      if (cleanCandles.length >= 15) {
+        const closes = cleanCandles.map((c) => c.close);
+        const rsiData: { time: UTCTimestamp; value: number }[] = [];
 
-      // Calculate Wilder's RSI
-      let gains = 0;
-      let losses = 0;
-      for (let i = 1; i <= 14; i++) {
-        const diff = closes[i] - closes[i - 1];
-        if (diff >= 0) gains += diff;
-        else losses -= diff;
-      }
-      let avgGain = gains / 14;
-      let avgLoss = losses / 14;
-      let rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
-      let rsi = 100 - 100 / (1 + rs);
-      rsiData.push({ time: cleanCandles[14].time as UTCTimestamp, value: rsi });
+        // Calculate Wilder's RSI
+        let gains = 0;
+        let losses = 0;
+        for (let i = 1; i <= 14; i++) {
+          const diff = closes[i] - closes[i - 1];
+          if (diff >= 0) gains += diff;
+          else losses -= diff;
+        }
+        let avgGain = gains / 14;
+        let avgLoss = losses / 14;
+        let rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
+        let rsi = 100 - 100 / (1 + rs);
+        rsiData.push({ time: cleanCandles[14].time as UTCTimestamp, value: rsi });
 
-      for (let i = 15; i < closes.length; i++) {
-        const diff = closes[i] - closes[i - 1];
-        const gain = diff > 0 ? diff : 0;
-        const loss = diff < 0 ? -diff : 0;
-        avgGain = (avgGain * 13 + gain) / 14;
-        avgLoss = (avgLoss * 13 + loss) / 14;
-        rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
-        rsi = 100 - 100 / (1 + rs);
-        rsiData.push({ time: cleanCandles[i].time as UTCTimestamp, value: rsi });
+        for (let i = 15; i < closes.length; i++) {
+          const diff = closes[i] - closes[i - 1];
+          const gain = diff > 0 ? diff : 0;
+          const loss = diff < 0 ? -diff : 0;
+          avgGain = (avgGain * 13 + gain) / 14;
+          avgLoss = (avgLoss * 13 + loss) / 14;
+          rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
+          rsi = 100 - 100 / (1 + rs);
+          rsiData.push({ time: cleanCandles[i].time as UTCTimestamp, value: rsi });
+        }
+        rsiSeriesRef.current.setData(rsiData);
+      } else {
+        rsiSeriesRef.current.setData([]);
       }
-      rsiSeriesRef.current.setData(rsiData);
     }
   }, [candles, showEMAs, showRSI]);
 
@@ -561,14 +565,18 @@ export const TradingChart: React.FC<TradingChartProps> = ({
             <span className="text-slate-500 font-semibold">C:</span>
             <span className="font-bold">{formatPrice(activeCandle.close, refPrice)}</span>
           </div>
-          {showEMAs && (
+          {showEMAs && (candles.length >= 50 || candles.length >= 200) && (
             <div className="flex items-center space-x-2 text-[10px]">
-              <span className="text-laser-cyan font-semibold">
-                EMA 50: {formatPrice(hoveredEma50 ?? (candles.length >= 50 ? activeCandle.close : null), refPrice)}
-              </span>
-              <span className="text-purple-400 font-semibold">
-                EMA 200: {formatPrice(hoveredEma200 ?? (candles.length >= 200 ? activeCandle.close : null), refPrice)}
-              </span>
+              {candles.length >= 50 && (
+                <span className="text-laser-cyan font-semibold">
+                  EMA 50: {formatPrice(hoveredEma50 ?? indicators?.ema_50 ?? null, refPrice)}
+                </span>
+              )}
+              {candles.length >= 200 && (
+                <span className="text-purple-400 font-semibold">
+                  EMA 200: {formatPrice(hoveredEma200 ?? indicators?.ema_200 ?? null, refPrice)}
+                </span>
+              )}
             </div>
           )}
         </div>
@@ -578,13 +586,18 @@ export const TradingChart: React.FC<TradingChartProps> = ({
       {showRSI && (
         <div className="h-28 w-full border-t border-dark-border flex flex-col">
           <div className="px-3 py-0.5 bg-dark-panel/90 border-b border-dark-border/40 flex items-center justify-between text-[10px] text-slate-400">
-            <span className="font-semibold text-sky-400">RSI (14) MOMENTUM OSCILLATOR</span>
-            {indicators?.has_bullish_divergence && (
+            <span className="font-semibold text-sky-400">
+              RSI (14) MOMENTUM OSCILLATOR
+              {candles.length < 15 && (
+                <span className="ml-1.5 text-amber-400/80 font-normal">(Needs &ge; 15 bars)</span>
+              )}
+            </span>
+            {candles.length >= 15 && indicators?.has_bullish_divergence && (
               <span className="text-laser-green font-bold bg-laser-green/10 px-1 rounded">
                 BULLISH DIVERGENCE DETECTED
               </span>
             )}
-            {indicators?.has_bearish_divergence && (
+            {candles.length >= 15 && indicators?.has_bearish_divergence && (
               <span className="text-crimson-red font-bold bg-crimson-red/10 px-1 rounded">
                 BEARISH DIVERGENCE DETECTED
               </span>

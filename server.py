@@ -52,6 +52,10 @@ def get_git_commit() -> str:
     return "unknown"
 
 
+# Capture git commit ONCE at server startup (module import)
+SERVER_GIT_COMMIT: str = get_git_commit()
+
+
 class CandleFeedBuffer:
     """
     Lightweight candle feed buffer maintaining rolling historical bars
@@ -68,6 +72,36 @@ class CandleFeedBuffer:
         self.htf_trend: Optional[str] = None
         self.trend_1h: Optional[str] = None
         self.bar_count: int = 0
+        self.history_source: str = "none"  # "rest_futures" | "parquet" | "none"
+        self.history_end_ms: Optional[int] = None
+        self.gap_detected: bool = False
+        self.live_start_ms: Optional[int] = None
+
+    def handle_live_data_start(
+        self,
+        live_start_ms: int,
+        timestamps_list: Optional[List[int]] = None,
+    ) -> bool:
+        """
+        Handle start of live data. If live data starts more than 2 candle intervals
+        after history_end_ms, treat it as a gap: start the series after the gap
+        and do not compute indicators across it.
+        Returns True if a gap was detected, False otherwise.
+        """
+        if self.live_start_ms is None:
+            self.live_start_ms = live_start_ms
+
+        if self.history_end_ms is not None and not self.gap_detected:
+            interval_sec = timeframe_to_seconds(self.timeframe)
+            interval_ms = interval_sec * 1000
+            if (live_start_ms - self.history_end_ms) > 2 * interval_ms:
+                self.gap_detected = True
+                self.candles.clear()
+                if timestamps_list is not None:
+                    timestamps_list.clear()
+                self.bar_count = 0
+                return True
+        return False
 
     def load_historical_candle(self, candle_data: Any) -> None:
         self.candles.append(tuple(candle_data))
@@ -78,6 +112,12 @@ class CandleFeedBuffer:
 
     def add_candle(self, candle_data: Any, timestamp: Optional[str] = None) -> None:
         """Append a closed candle to the rolling buffer."""
+        if timestamp is not None:
+            try:
+                raw_t = int(timestamp)
+                self.handle_live_data_start(raw_t)
+            except (ValueError, TypeError):
+                pass
         self.candles.append(tuple(candle_data))
         self.bar_count += 1
 
@@ -554,6 +594,13 @@ async def process_closed_candle_event(
     if feed is None:
         return
 
+    ts_list = app.state.candle_timestamps.get(symbol)
+    feed.handle_live_data_start(raw_t, timestamps_list=ts_list)
+    if hasattr(app.state, "live_data_start_ms"):
+        app.state.live_data_start_ms[symbol] = feed.live_start_ms
+    if feed.gap_detected and hasattr(app.state, "history_gap_detected"):
+        app.state.history_gap_detected[symbol] = True
+
     feed.add_candle(candle_tuple, timestamp=str(raw_t))
 
     # Update last update tracking
@@ -612,8 +659,19 @@ async def run_kline_ingestion(
                     if not symbol or symbol not in app.state.traders:
                         continue
 
-                    # Record last-update timestamp
+                    # Check gap and handle live data start
                     now_t = time.time()
+                    raw_t = int(kline.get("t") or int(now_t * 1000))
+                    feed = app.state.candle_buffers.get(symbol)
+                    if feed:
+                        ts_list = app.state.candle_timestamps.get(symbol)
+                        feed.handle_live_data_start(raw_t, timestamps_list=ts_list)
+                        if hasattr(app.state, "live_data_start_ms"):
+                            app.state.live_data_start_ms[symbol] = feed.live_start_ms
+                        if feed.gap_detected and hasattr(app.state, "history_gap_detected"):
+                            app.state.history_gap_detected[symbol] = True
+
+                    # Record last-update timestamp
                     if not hasattr(app.state, "last_update_times"):
                         app.state.last_update_times = {}
                     app.state.last_update_times[symbol] = int(now_t)
@@ -796,81 +854,29 @@ def seed_buffer_from_parquet(
     limit: int = 249,
     data_dir: str = "data/candles",
 ) -> bool:
-    """Pre-seed a CandleFeedBuffer with historical candles from the local verified Parquet data lake."""
+    """Pre-seed a CandleFeedBuffer with historical candles from the local verified Parquet data lake.
+
+    Never fabricate candles or interpolate across timeframes.
+    If the requested timeframe has no parquet file, returns False.
+    """
     import pandas as pd
     sym = symbol.upper()
     try:
         file_path = os.path.join(data_dir, f"{sym}_{timeframe}.parquet")
-        if os.path.exists(file_path):
-            df = pd.read_parquet(file_path)
-        else:
-            file_1h = os.path.join(data_dir, f"{sym}_1h.parquet")
-            if not os.path.exists(file_1h):
-                return False
-            df = pd.read_parquet(file_1h)
-            if timeframe == "15m":
-                needed_1h = (limit // 4) + 2
-                df_recent = df.tail(needed_1h).copy()
-                expanded = []
-                for _, row in df_recent.iterrows():
-                    base_t = int(row["open_time"])
-                    o = float(row["open"])
-                    h = float(row["high"])
-                    l = float(row["low"])
-                    c = float(row["close"])
-                    v = float(row["volume"]) / 4.0
-                    c0 = o + (c - o) * 0.25
-                    h0 = max(o, c0, min(h, max(o, c0) + abs(c - o) * 0.1))
-                    l0 = min(o, c0, max(l, min(o, c0) - abs(c - o) * 0.1))
-                    o1 = c0
-                    c1 = o + (c - o) * 0.50
-                    h1 = max(o1, c1, h if (h > max(o, c)) else max(o1, c1))
-                    l1 = min(o1, c1, min(o1, c1))
-                    o2 = c1
-                    c2 = o + (c - o) * 0.75
-                    h2 = max(o2, c2)
-                    l2 = min(o2, c2, l if (l < min(o, c)) else min(o2, c2))
-                    o3 = c2
-                    c3 = c
-                    h3 = max(o3, c3)
-                    l3 = min(o3, c3)
-                    expanded.append((base_t, (o, h0, l0, c0, v)))
-                    expanded.append((base_t + 900_000, (o1, h1, l1, c1, v)))
-                    expanded.append((base_t + 1800_000, (o2, h2, l2, c2, v)))
-                    expanded.append((base_t + 2700_000, (o3, h3, l3, c3, v)))
+        if not os.path.exists(file_path):
+            return False
 
-                selected = expanded[-limit:]
-                interval_sec = 900
-                now_sec = int(time.time())
-                anchor_sec = (now_sec // interval_sec) * interval_sec
-                m = len(selected)
-                for idx, (_raw_t, c_tuple) in enumerate(selected):
-                    buffer.load_historical_candle(c_tuple)
-                    if timestamps_dict is not None and sym in timestamps_dict:
-                        ts_sec = anchor_sec - (m - 1 - idx) * interval_sec
-                        timestamps_dict[sym].append(ts_sec)
+        df = pd.read_parquet(file_path)
+        if df.empty:
+            return False
 
-                if getattr(buffer, "htf_trend_filter", False):
-                    file_4h = os.path.join(data_dir, f"{sym}_4h.parquet")
-                    if os.path.exists(file_4h):
-                        df_4h = pd.read_parquet(file_4h)
-                        for _, row in df_4h.tail(limit).iterrows():
-                            buffer.load_historical_htf_candle((
-                                float(row["open"]),
-                                float(row["high"]),
-                                float(row["low"]),
-                                float(row["close"]),
-                                float(row["volume"]),
-                            ))
-                return True
-
-        # Direct match for 1h or other available timeframes
-        interval_sec = timeframe_to_seconds(timeframe)
-        now_sec = int(time.time())
-        anchor_sec = (now_sec // interval_sec) * interval_sec
         df_recent = df.tail(limit)
         m = len(df_recent)
-        for idx, (_, row) in enumerate(df_recent.iterrows()):
+        if m == 0:
+            return False
+
+        last_open_time = 0
+        for _, row in df_recent.iterrows():
             c_tuple = (
                 float(row["open"]),
                 float(row["high"]),
@@ -879,13 +885,21 @@ def seed_buffer_from_parquet(
                 float(row["volume"]),
             )
             buffer.load_historical_candle(c_tuple)
-            if timestamps_dict is not None and sym in timestamps_dict:
-                ts_sec = anchor_sec - (m - 1 - idx) * interval_sec
+            raw_t = int(row["open_time"])
+            last_open_time = raw_t
+            if timestamps_dict is not None:
+                if sym not in timestamps_dict:
+                    timestamps_dict[sym] = []
+                ts_sec = raw_t // 1000 if raw_t > 10_000_000_000 else raw_t
                 timestamps_dict[sym].append(ts_sec)
+
+        last_open_ms = last_open_time if last_open_time > 10_000_000_000 else last_open_time * 1000
+        buffer.history_end_ms = last_open_ms
+        buffer.history_source = "parquet"
 
         if getattr(buffer, "htf_trend_filter", False):
             file_4h = os.path.join(data_dir, f"{sym}_4h.parquet")
-            if os.path.exists(file_4h):
+            if os.path.exists(file_4h) and timeframe != "4h":
                 df_4h = pd.read_parquet(file_4h)
                 for _, row in df_4h.tail(limit).iterrows():
                     buffer.load_historical_htf_candle((
@@ -942,6 +956,10 @@ def create_app(
         app.state.latest_prices = {}
         app.state.candle_timestamps = {sym: [] for sym in active_symbols}
         app.state.last_update_times = {}
+        app.state.history_source = {sym: "none" for sym in active_symbols}
+        app.state.history_end_ms = {sym: None for sym in active_symbols}
+        app.state.history_gap_detected = {sym: False for sym in active_symbols}
+        app.state.live_data_start_ms = {sym: None for sym in active_symbols}
         app.state.is_spot_connected = False
         app.state.is_kline_connected = False
         app.state.futures_status_message = "Not checked"
@@ -957,17 +975,34 @@ def create_app(
                     timeframe,
                     timestamps_dict=app.state.candle_timestamps,
                 )
+                for sym in active_symbols:
+                    buf = app.state.candle_buffers.get(sym)
+                    if buf and len(buf.candles) > 0:
+                        app.state.history_source[sym] = "rest_futures"
+                        buf.history_source = "rest_futures"
+                        ts_list = app.state.candle_timestamps.get(sym, [])
+                        if ts_list:
+                            end_ms = int(ts_list[-1]) * 1000
+                            app.state.history_end_ms[sym] = end_ms
+                            buf.history_end_ms = end_ms
             except Exception as e:
                 print(f"[Server Warmup Error] {e}")
 
             # Ensure all buffers are seeded; if REST warmup failed or was geoblocked, prime from local parquet data lake
-            now_t = int(time.time())
             for sym, buffer in app.state.candle_buffers.items():
                 if len(buffer.candles) == 0:
-                    seed_buffer_from_parquet(buffer, sym, timeframe, timestamps_dict=app.state.candle_timestamps)
-                if buffer.candles:
-                    app.state.latest_prices[sym] = float(buffer.candles[-1][3])
-                    app.state.last_update_times[sym] = now_t
+                    seeded = seed_buffer_from_parquet(
+                        buffer,
+                        sym,
+                        timeframe,
+                        timestamps_dict=app.state.candle_timestamps,
+                    )
+                    if seeded:
+                        app.state.history_source[sym] = "parquet"
+                        app.state.history_end_ms[sym] = getattr(buffer, "history_end_ms", None)
+                    else:
+                        app.state.history_source[sym] = "none"
+                        app.state.history_end_ms[sym] = None
 
             # Probe Futures
             try:
@@ -1016,6 +1051,10 @@ def create_app(
     app.state.latest_prices = {}
     app.state.candle_timestamps = {}
     app.state.last_update_times = {}
+    app.state.history_source = {}
+    app.state.history_end_ms = {}
+    app.state.history_gap_detected = {}
+    app.state.live_data_start_ms = {}
     app.state.last_tick_broadcast = {}
     app.state.is_spot_connected = False
     app.state.is_kline_connected = False
@@ -1043,6 +1082,9 @@ def create_app(
         kline_conn = bool(
             getattr(app.state, "is_kline_connected", getattr(app.state, "is_spot_connected", False))
         )
+        history_source = getattr(app.state, "history_source", {})
+        history_end_ms = getattr(app.state, "history_end_ms", {})
+        live_start_ms = getattr(app.state, "live_data_start_ms", {})
 
         now_t = int(time.time())
         staleness_threshold = 2 * tf_sec
@@ -1064,16 +1106,18 @@ def create_app(
             ]
         )
 
+        has_non_rest = any(history_source.get(sym) != "rest_futures" for sym in buffers)
+
         if not symbols_with_data:
             status = "down"
-        elif not kline_conn or len(stale_symbols) > 0:
+        elif not kline_conn or len(stale_symbols) > 0 or has_non_rest:
             status = "degraded"
         else:
             status = "healthy"
 
         return {
             "status": status,
-            "git_commit": get_git_commit(),
+            "git_commit": SERVER_GIT_COMMIT,
             "data_source": "binance_futures_um",
             "kline_connectivity": kline_conn,
             "spot_connectivity": kline_conn,  # Backwards compatibility alias
@@ -1087,6 +1131,9 @@ def create_app(
             "stale_symbols": stale_symbols,
             "timeframe": timeframe,
             "candle_interval_sec": tf_sec,
+            "history_source": {sym: history_source.get(sym, "none") for sym in buffers},
+            "history_end_ms": {sym: history_end_ms.get(sym) for sym in buffers},
+            "live_start_ms": {sym: live_start_ms.get(sym) for sym in buffers},
         }
 
     @app.get("/api/market/symbols")
@@ -1097,8 +1144,6 @@ def create_app(
         for sym, buffer in buffers.items():
             f_sym = SymbolNormalizer.to_futures_symbol(sym)
             latest_price = app.state.latest_prices.get(sym)
-            if latest_price is None and buffer.candles:
-                latest_price = buffer.candles[-1][3]
 
             indicators = compute_indicators(buffer.candles)
 
@@ -1156,6 +1201,10 @@ def create_app(
             "timeframe": timeframe,
             "candles": formatted_candles,
             "indicators": indicators,
+            "history_source": getattr(app.state, "history_source", {}).get(sym, "none"),
+            "history_end_ms": getattr(app.state, "history_end_ms", {}).get(sym),
+            "live_start_ms": getattr(app.state, "live_data_start_ms", {}).get(sym),
+            "gap_detected": getattr(app.state, "history_gap_detected", {}).get(sym, False),
         }
 
     @app.get("/api/portfolio/summary")

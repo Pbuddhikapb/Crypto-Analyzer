@@ -1,6 +1,6 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { getPricePrecision, formatPrice, getMinMove, formatUTCClock } from './compiled/formatters.js';
+import { getPricePrecision, formatPrice, getMinMove, formatUTCClock, formatUTCHM } from './compiled/formatters.js';
 
 describe('Price Formatter', () => {
   test('derives price precision from symbol price according to institutional rules', () => {
@@ -77,5 +77,19 @@ describe('Header UTC Clock', () => {
     const result = formatUTCClock(timestamp);
     assert.equal(result, '22:15:30 UTC');
     assert.ok(result.endsWith(' UTC'));
+  });
+
+  test('formats UTC hours and minutes for banner: HH:MM UTC', () => {
+    const fixedDate = new Date(Date.UTC(2026, 9, 23, 14, 30, 0));
+    assert.equal(formatUTCHM(fixedDate), '14:30 UTC');
+
+    const midnight = new Date(Date.UTC(2026, 0, 1, 0, 0, 0));
+    assert.equal(formatUTCHM(midnight), '00:00 UTC');
+
+    const singleDigits = new Date(Date.UTC(2026, 4, 5, 9, 5, 12));
+    assert.equal(formatUTCHM(singleDigits), '09:05 UTC');
+
+    const timestampMs = Date.UTC(2026, 9, 28, 16, 45, 0);
+    assert.equal(formatUTCHM(timestampMs), '16:45 UTC');
   });
 });
