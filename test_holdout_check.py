@@ -43,7 +43,7 @@ def test_default_load_excludes_holdout_bars():
 
 
 def test_holdout_command_logs_and_blocks_reruns():
-    """Verify holdout command logs executed runs and strictly blocks reruns on the same git hash."""
+    """Verify holdout command logs executed runs with status and strictly blocks reruns on the same git hash."""
     temp_dir = tempfile.mkdtemp()
     try:
         log_path = os.path.join(temp_dir, "holdout_log.csv")
@@ -63,11 +63,15 @@ def test_holdout_command_logs_and_blocks_reruns():
         with open(log_path, "r", encoding="utf-8") as f:
             lines = [line.strip() for line in f if line.strip()]
 
-        assert len(lines) == 2  # Header + 1 record
-        assert lines[0] == "strategy,timestamp,git_hash"
-        cols = lines[1].split(",")
-        assert cols[0] == "TrendPullback"
-        assert len(cols[2]) == 40  # 40-character git hash
+        assert len(lines) == 3  # Header + started + completed records
+        assert lines[0] == "strategy,timestamp,git_hash,status"
+        cols_started = lines[1].split(",")
+        cols_completed = lines[2].split(",")
+        assert cols_started[0] == "TrendPullback"
+        assert cols_started[3] == "started"
+        assert cols_completed[0] == "TrendPullback"
+        assert len(cols_completed[2]) == 40  # 40-character git hash
+        assert cols_completed[3] == "completed"
 
         # 3. Second run must be BLOCKED
         with pytest.raises(RuntimeError, match="Holdout run blocked"):
@@ -80,7 +84,7 @@ def test_holdout_command_logs_and_blocks_reruns():
         # Ensure no additional line was appended
         with open(log_path, "r", encoding="utf-8") as f:
             lines_after = [line.strip() for line in f if line.strip()]
-        assert len(lines_after) == 2
+        assert len(lines_after) == 3
 
     finally:
         shutil.rmtree(temp_dir)
@@ -98,8 +102,8 @@ def test_holdout_check_allows_new_run_if_hash_differs():
     try:
         log_path = os.path.join(temp_dir, "holdout_log.csv")
 
-        # Simulate first run with hash "1111..."
-        record_holdout_run("TrendPullback", "1" * 40, log_path=log_path)
+        # Simulate first completed run with hash "1111..."
+        record_holdout_run("TrendPullback", "1" * 40, status="completed", log_path=log_path)
         assert is_holdout_run_recorded("TrendPullback", "1" * 40, log_path=log_path) is True
         assert is_holdout_run_recorded("TrendPullback", "2" * 40, log_path=log_path) is False
 
@@ -113,11 +117,70 @@ def test_holdout_check_allows_new_run_if_hash_differs():
                 )
             assert res["git_hash"] == "2" * 40
 
-        # Now both runs are recorded in log
+        # Now runs are recorded in log (header + completed run 1 + started run 2 + completed run 2)
         with open(log_path, "r", encoding="utf-8") as f:
             lines = [line.strip() for line in f if line.strip()]
-        assert len(lines) == 3  # Header + 2 records
+        assert len(lines) == 4
 
+    finally:
+        shutil.rmtree(temp_dir)
+
+
+def test_holdout_check_failed_run_does_not_count_as_evaluated():
+    """
+    Verify that a failed holdout run records status='failed' and does NOT count as evaluated,
+    allowing re-evaluation without warnings or blocks.
+    """
+    temp_dir = tempfile.mkdtemp()
+    try:
+        log_path = os.path.join(temp_dir, "holdout_log.csv")
+
+        # 1. Simulate a run that fails during simulation
+        with patch("research.holdout_check.simulate_portfolio_signals", side_effect=RuntimeError("Sim failed")):
+            with pytest.raises(RuntimeError, match="Sim failed"):
+                run_holdout_check(
+                    strategy_name="TrendPullback",
+                    symbols=["BTCUSDT"],
+                    log_path=log_path,
+                )
+
+        # Log should contain started and failed entries
+        with open(log_path, "r", encoding="utf-8") as f:
+            lines = [line.strip() for line in f if line.strip()]
+        assert len(lines) == 3
+        assert lines[0] == "strategy,timestamp,git_hash,status"
+        assert lines[1].endswith(",started")
+        assert lines[2].endswith(",failed")
+
+        # Failed run does NOT count as evaluated
+        from research.holdout_check import get_source_file_git_hash, is_strategy_name_recorded
+        git_hash = get_source_file_git_hash("research/strategies/trend_pullback.py")
+        assert is_holdout_run_recorded("TrendPullback", git_hash, log_path=log_path) is False
+        assert is_strategy_name_recorded("TrendPullback", log_path=log_path) is False
+
+        # 2. Re-running should NOT be blocked and should NOT emit repeat-strategy warnings
+        import warnings
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", UserWarning)
+            # Must succeed without raising UserWarning
+            res = run_holdout_check(
+                strategy_name="TrendPullback",
+                symbols=["BTCUSDT"],
+                log_path=log_path,
+            )
+        assert res["total_trades"] > 0
+
+        # Now it is completed
+        assert is_holdout_run_recorded("TrendPullback", git_hash, log_path=log_path) is True
+        assert is_strategy_name_recorded("TrendPullback", log_path=log_path) is True
+
+        # Now attempting to run again with same hash MUST be blocked
+        with pytest.raises(RuntimeError, match="Holdout run blocked"):
+            run_holdout_check(
+                strategy_name="TrendPullback",
+                symbols=["BTCUSDT"],
+                log_path=log_path,
+            )
     finally:
         shutil.rmtree(temp_dir)
 

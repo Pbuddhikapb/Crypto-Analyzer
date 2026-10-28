@@ -33,6 +33,7 @@ from engine.simulator import (
     simulate_portfolio_signals,
 )
 from research.evaluator import BaselineHurdles, StrategyEvaluation, StrategyEvaluator
+from research.robustness import RobustnessPanel, compute_robustness_panel
 from research.random_baseline import (
     MatchedBaselineResult,
     compute_bootstrap_ci,
@@ -79,6 +80,7 @@ class StrategyRunResult:
     signals_executed: int
     matched_baseline: Optional[MatchedBaselineResult] = None
     bootstrap_ci: Optional[Tuple[float, float]] = None
+    robustness_panel: Optional[RobustnessPanel] = None
 
 
 # simulate_portfolio_signals is imported directly from engine.simulator
@@ -239,14 +241,32 @@ def run_strategy_evidence_validation(
         else:
             perf_metric_str = f"MaxDD={sim_res.max_drawdown_pct:.1f}%, Return={sim_res.net_profit_pct:+.1f}%"
 
+        # Compute report-only robustness panel
+        rob_panel = compute_robustness_panel(
+            strategy_name=s_name,
+            trades=sim_res.trades,
+            matched_p=matched_p_val,
+            mc_iterations=matched_passes,
+            significance_level=strat_sig_level,
+        )
+
+        flag_note = " (⚠️ WITHIN 2 SE OF THRESHOLD)" if rob_panel.threshold_within_2se else ""
+        mc_se_str = f"{rob_panel.mc_se:.4f}" if rob_panel.mc_se is not None else "N/A"
+
         logger.info(
             f"  Result for {s_name}: Trades={sim_res.total_trades}, "
             f"WR={sim_res.win_rate_pct:.1f}%, PF={sim_res.profit_factor:.2f}, "
             f"EV={sim_res.expectancy_r:+.4f}R, Sharpe={sim_res.sharpe_ratio:.2f}, "
             f"{perf_metric_str} | "
-            f"Matched Rank p-val: {matched_p_val:.4f} | "
+            f"Matched Rank p-val: {matched_p_val:.4f} (MC SE: {mc_se_str}{flag_note}) | "
             f"Bootstrap 95% CI: [{boot_ci[0]:+.4f}, {boot_ci[1]:+.4f}]R | "
             f"Verdict: {evaluation.verdict}"
+        )
+        logger.info(
+            f"  Robustness for {s_name}: iid 2.5% bound > 0: {rob_panel.iid_boot_share_above_zero:.1%} | "
+            f"Week-Block 95% CI: [{rob_panel.week_block_ci[0]:+.4f}, {rob_panel.week_block_ci[1]:+.4f}]R | "
+            f"Top-10 Share: {rob_panel.top10_share_pct:.1f}% (mean w/o: {rob_panel.mean_net_r_without_top10:+.4f}R) | "
+            f"80% Power Trades: {rob_panel.trades_needed_80_power_onesided or 'N/A'}"
         )
 
         run_results.append(
@@ -260,6 +280,7 @@ def run_strategy_evidence_validation(
                 signals_executed=sim_res.total_trades,
                 matched_baseline=matched_res,
                 bootstrap_ci=boot_ci,
+                robustness_panel=rob_panel,
             )
         )
 
@@ -388,6 +409,7 @@ def save_strategy_results_json(
             "per_year_net_r": {str(k): round(v, 2) for k, v in ev.per_year_net_r.items()} if getattr(ev, "per_year_net_r", None) else None,
             "dropped_trade_fraction": round(getattr(ev, "dropped_trade_fraction", 0.0), 6),
             "p_value_at_floor": getattr(ev, "p_value_at_floor", False),
+            "robustness_panel": r.robustness_panel.to_dict() if getattr(r, "robustness_panel", None) else None,
         }
 
     dataset_hash = compute_dataset_hash(candles_dict) if candles_dict else "unknown"
@@ -497,7 +519,7 @@ def generate_markdown_report(
     scorecard_rows = []
     for r in results:
         ev = r.evaluation
-        badge = "🟢 **VALIDATED**" if ev.is_validated else "🔴 **REJECTED**"
+        badge = "🟢 **PASSED DEV GATE (see robustness)**" if ev.is_validated else "🔴 **REJECTED**"
         ruin_str = (
             f"⚠️ Ruined ({datetime.fromtimestamp(r.sim_result.ruin_time_ms / 1000, tz=timezone.utc).strftime('%Y-%m-%d')})"
             if r.sim_result.ruined and r.sim_result.ruin_time_ms
@@ -574,6 +596,10 @@ def generate_markdown_report(
             f"{floor_warning_str}"
         )
 
+        rob_md = ""
+        if getattr(r, "robustness_panel", None):
+            rob_md = "\n\n" + r.robustness_panel.format_markdown()
+
         section = f"""### Hypothesis: {ev.strategy_name}
 **Concept:** {r.description}
 
@@ -592,7 +618,7 @@ def generate_markdown_report(
 #### Per-Symbol Performance:
 | Symbol | Trades | Win Rate | Net PF (Gross) | Net PnL (USD) | Net R (Gross R) |
 | :--- | :---: | :---: | :---: | :---: | :---: |
-{sym_table}
+{sym_table}{rob_md}
 
 ---"""
         deep_dives.append(section)
@@ -627,8 +653,8 @@ def generate_markdown_report(
         ])
         rejected_names = ", ".join([f"**{r.strategy_name}**" for r in rejected_strats]) or "None"
         conclusions_body = (
-            f"1. **Validated Setups ({len(validated_strats)}/{num_strategies})**:\n"
-            f"   The following strategies met all alpha validation criteria ($p < {alpha_sig_level:.2f}$, positive bootstrap CI lower bound):\n"
+            f"1. **Passed Dev Gate (see robustness) ({len(validated_strats)}/{num_strategies})**:\n"
+            f"   The following strategies met all pre-registered dev gate criteria ($p < {alpha_sig_level:.2f}$, positive bootstrap CI lower bound):\n"
             f"{passed_bullets}\n\n"
             f"2. **Unvalidated Patterns**:\n"
             f"   The following strategies failed validation: {rejected_names}. These setups show no validated edge under institutional friction and will display warning banners.\n\n"

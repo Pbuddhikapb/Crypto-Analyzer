@@ -87,7 +87,7 @@ def is_holdout_run_recorded(
     git_hash: str,
     log_path: str = DEFAULT_HOLDOUT_LOG,
 ) -> bool:
-    """Verify if a specific strategy with the same source git hash has already been run on holdout."""
+    """Verify if a specific strategy with the same source git hash has completed holdout evaluation."""
     if not os.path.exists(log_path):
         return False
     try:
@@ -98,7 +98,12 @@ def is_holdout_run_recorded(
                 if len(row) >= 3:
                     strat_recorded = row[0].strip().lower()
                     hash_recorded = row[2].strip().lower()
-                    if strat_recorded == strategy_name.lower() and hash_recorded == git_hash.lower():
+                    status = row[3].strip().lower() if len(row) >= 4 else "completed"
+                    if (
+                        strat_recorded == strategy_name.lower()
+                        and hash_recorded == git_hash.lower()
+                        and status == "completed"
+                    ):
                         return True
     except Exception as e:
         logger.warning(f"Error checking holdout log at {log_path}: {e}")
@@ -109,7 +114,7 @@ def is_strategy_name_recorded(
     strategy_name: str,
     log_path: str = DEFAULT_HOLDOUT_LOG,
 ) -> bool:
-    """Verify if any evaluation attempt for this strategy name has been recorded in holdout log."""
+    """Verify if a strategy name has completed holdout evaluation previously, regardless of source hash."""
     if not os.path.exists(log_path):
         return False
     try:
@@ -119,7 +124,8 @@ def is_strategy_name_recorded(
             for row in reader:
                 if len(row) >= 1:
                     strat_recorded = row[0].strip().lower()
-                    if strat_recorded == strategy_name.lower():
+                    status = row[3].strip().lower() if len(row) >= 4 else "completed"
+                    if strat_recorded == strategy_name.lower() and status == "completed":
                         return True
     except Exception as e:
         logger.warning(f"Error checking holdout log at {log_path}: {e}")
@@ -129,18 +135,19 @@ def is_strategy_name_recorded(
 def record_holdout_run(
     strategy_name: str,
     git_hash: str,
+    status: str = "completed",
     log_path: str = DEFAULT_HOLDOUT_LOG,
     timestamp: Optional[str] = None,
 ):
-    """Atomically append a run entry to research/reports/holdout_log.csv."""
+    """Atomically append a run entry with status to research/reports/holdout_log.csv."""
     os.makedirs(os.path.dirname(log_path), exist_ok=True)
     file_exists = os.path.exists(log_path) and os.path.getsize(log_path) > 0
     ts = timestamp or datetime.now(timezone.utc).isoformat()
     with open(log_path, "a", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         if not file_exists:
-            writer.writerow(["strategy", "timestamp", "git_hash"])
-        writer.writerow([strategy_name, ts, git_hash])
+            writer.writerow(["strategy", "timestamp", "git_hash", "status"])
+        writer.writerow([strategy_name, ts, git_hash, status])
 
 
 def run_holdout_check(
@@ -180,58 +187,65 @@ def run_holdout_check(
         import warnings
         warnings.warn(msg, UserWarning)
 
-    # Record every evaluation attempt in the CSV ledger (append-only)
-    record_holdout_run(canonical_name, git_hash, log_path=log_path)
+    # Record start in CSV ledger
+    record_holdout_run(canonical_name, git_hash, status="started", log_path=log_path)
 
-    # 2. Ingest candles: load full history for indicator warm-up
-    syms = symbols or DEFAULT_SYMBOLS
-    dev_end_dt = pd.to_datetime(DEVELOPMENT_END, utc=True)
-    dev_end_ms = int(dev_end_dt.timestamp() * 1000)
-    logger.info(f"Loading full history (for indicator warm-up) and holdout data (> {DEVELOPMENT_END}) for {len(syms)} symbols...")
+    try:
+        # 2. Ingest candles: load full history for indicator warm-up
+        syms = symbols or DEFAULT_SYMBOLS
+        dev_end_dt = pd.to_datetime(DEVELOPMENT_END, utc=True)
+        dev_end_ms = int(dev_end_dt.timestamp() * 1000)
+        logger.info(f"Loading full history (for indicator warm-up) and holdout data (> {DEVELOPMENT_END}) for {len(syms)} symbols...")
 
-    df_1h_dict: Dict[str, pd.DataFrame] = {}
-    df_4h_dict: Dict[str, pd.DataFrame] = {}
-    candles_dict: Dict[str, np.ndarray] = {}
-    bar_index_map: Dict[str, Dict[int, int]] = {}
-    max_ts = 0
+        df_1h_dict: Dict[str, pd.DataFrame] = {}
+        df_4h_dict: Dict[str, pd.DataFrame] = {}
+        candles_dict: Dict[str, np.ndarray] = {}
+        bar_index_map: Dict[str, Dict[int, int]] = {}
+        max_ts = 0
 
-    for sym in syms:
-        raw_1h = load_candles(sym, "1h", data_dir=data_dir, allow_holdout=True)
-        raw_4h = load_candles(sym, "4h", data_dir=data_dir, allow_holdout=True)
+        for sym in syms:
+            raw_1h = load_candles(sym, "1h", data_dir=data_dir, allow_holdout=True)
+            raw_4h = load_candles(sym, "4h", data_dir=data_dir, allow_holdout=True)
 
-        holdout_count = (raw_1h["datetime"] > dev_end_dt).sum()
-        if holdout_count == 0:
-            raise ValueError(f"No holdout data available for {sym} 1h past {DEVELOPMENT_END}")
+            holdout_count = (raw_1h["datetime"] > dev_end_dt).sum()
+            if holdout_count == 0:
+                raise ValueError(f"No holdout data available for {sym} 1h past {DEVELOPMENT_END}")
 
-        df_1h_dict[sym] = raw_1h
-        df_4h_dict[sym] = raw_4h
+            df_1h_dict[sym] = raw_1h
+            df_4h_dict[sym] = raw_4h
 
-        # (b) build candle arrays with data.loader.candles_to_array (volume included)
-        arr = candles_to_array(raw_1h)
-        candles_dict[sym] = arr
-        bar_index_map[sym] = {int(arr[idx, 4]): idx for idx in range(len(arr))}
-        if len(arr) > 0 and int(arr[-1, 4]) > max_ts:
-            max_ts = int(arr[-1, 4])
+            # (b) build candle arrays with data.loader.candles_to_array (volume included)
+            arr = candles_to_array(raw_1h)
+            candles_dict[sym] = arr
+            bar_index_map[sym] = {int(arr[idx, 4]): idx for idx in range(len(arr))}
+            if len(arr) > 0 and int(arr[-1, 4]) > max_ts:
+                max_ts = int(arr[-1, 4])
 
-    max_holdout_str = datetime.fromtimestamp(max_ts / 1000.0, tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+        max_holdout_str = datetime.fromtimestamp(max_ts / 1000.0, tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
-    # 3. Generate candidate signals with indicator warm-up on full history, but only allow entries/signals after DEVELOPMENT_END
-    strat = strat_cls()
-    strat_cfg = getattr(strat, "exit_config", None)
-    all_candidates: List[CandidateSignal] = []
-    for sym in syms:
-        sym_sigs = strat.generate_signals(sym, df_1h_dict[sym], df_4h_dict[sym])
-        holdout_sigs = [s for s in sym_sigs if s.timestamp_ms > dev_end_ms]
-        all_candidates.extend(holdout_sigs)
+        # 3. Generate candidate signals with indicator warm-up on full history, but only allow entries/signals after DEVELOPMENT_END
+        strat = strat_cls()
+        strat_cfg = getattr(strat, "exit_config", None)
+        all_candidates: List[CandidateSignal] = []
+        for sym in syms:
+            sym_sigs = strat.generate_signals(sym, df_1h_dict[sym], df_4h_dict[sym])
+            holdout_sigs = [s for s in sym_sigs if s.timestamp_ms > dev_end_ms]
+            all_candidates.extend(holdout_sigs)
 
-    # 4. Simulate portfolio execution across holdout passing strategy's exit_config
-    sim_res: SimulationResult = simulate_portfolio_signals(
-        candidates=all_candidates,
-        candles_dict=candles_dict,
-        bar_index_map=bar_index_map,
-        sizing_mode=sizing_mode,
-        exit_config=strat_cfg,
-    )
+        # 4. Simulate portfolio execution across holdout passing strategy's exit_config
+        sim_res: SimulationResult = simulate_portfolio_signals(
+            candidates=all_candidates,
+            candles_dict=candles_dict,
+            bar_index_map=bar_index_map,
+            sizing_mode=sizing_mode,
+            exit_config=strat_cfg,
+        )
+
+        # Record successful completion in holdout log
+        record_holdout_run(canonical_name, git_hash, status="completed", log_path=log_path)
+    except Exception:
+        record_holdout_run(canonical_name, git_hash, status="failed", log_path=log_path)
+        raise
 
     # 5. Print summary
     print("\n" + "=" * 80)

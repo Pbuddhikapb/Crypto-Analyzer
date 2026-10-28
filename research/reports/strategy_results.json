@@ -1,7 +1,7 @@
 {
   "metadata": {
-    "run_timestamp": "2026-10-27T21:30:47.069221+00:00",
-    "git_commit": "97c8a0ab65bf343b019fafa699e32d2860363cd3+dirty",
+    "run_timestamp": "2026-10-27T23:47:09.814501+00:00",
+    "git_commit": "2fc38be31f36e62c8d4b0423a88aac7358893f02+dirty",
     "dataset_hash": "61d0448603612d76",
     "data_date_range": "2021-01-01 to 2026-04-18",
     "start_time_ms": 1609459200000,
@@ -48,9 +48,9 @@
       "net_profit_pct": -727.28,
       "start_time_ms": 1609459200000,
       "end_time_ms": 1776470400000,
-      "run_timestamp": "2026-10-27T21:30:47.069221+00:00",
+      "run_timestamp": "2026-10-27T23:47:09.814501+00:00",
       "data_date_range": "2021-01-01 to 2026-04-18",
-      "git_commit": "97c8a0ab65bf343b019fafa699e32d2860363cd3+dirty",
+      "git_commit": "2fc38be31f36e62c8d4b0423a88aac7358893f02+dirty",
       "significance_level": 0.05,
       "median_stop_pct": 1.72,
       "cost_drag_r": 0.0602,
@@ -76,7 +76,102 @@
         "2026": -65.25
       },
       "dropped_trade_fraction": 0.0,
-      "p_value_at_floor": false
+      "p_value_at_floor": false,
+      "robustness_panel": {
+        "strategy_name": "TrendPullback",
+        "total_trades": 6627,
+        "mean_net_r": -0.1097,
+        "matched_p": 0.7742,
+        "mc_iterations": 1000,
+        "mc_se": 0.0132,
+        "significance_threshold": 0.05,
+        "threshold_within_2se": false,
+        "iid_boot_share_above_zero": 0.0,
+        "iid_boot_min_bound_2_5pct": -0.1328,
+        "iid_boot_max_bound_2_5pct": -0.1307,
+        "iid_boot_mean_bound_2_5pct": -0.1317,
+        "iid_boot_bounds_30_seeds": [
+          -0.1314,
+          -0.1314,
+          -0.1309,
+          -0.1316,
+          -0.1315,
+          -0.1322,
+          -0.1319,
+          -0.1307,
+          -0.1318,
+          -0.1311,
+          -0.1319,
+          -0.1315,
+          -0.1321,
+          -0.1312,
+          -0.1315,
+          -0.1315,
+          -0.1322,
+          -0.1321,
+          -0.1316,
+          -0.1314,
+          -0.1324,
+          -0.1314,
+          -0.1315,
+          -0.1319,
+          -0.1327,
+          -0.1324,
+          -0.1317,
+          -0.1328,
+          -0.1318,
+          -0.1317
+        ],
+        "week_block_ci": [
+          -0.139,
+          -0.081
+        ],
+        "annual_breakdown": {
+          "2021": {
+            "n": 1112,
+            "mean_net_r": -0.0712,
+            "total_net_r": -79.17,
+            "win_rate_pct": 51.0
+          },
+          "2022": {
+            "n": 1208,
+            "mean_net_r": -0.1006,
+            "total_net_r": -121.55,
+            "win_rate_pct": 49.7
+          },
+          "2023": {
+            "n": 1213,
+            "mean_net_r": -0.1147,
+            "total_net_r": -139.07,
+            "win_rate_pct": 49.1
+          },
+          "2024": {
+            "n": 1449,
+            "mean_net_r": -0.1261,
+            "total_net_r": -182.68,
+            "win_rate_pct": 48.1
+          },
+          "2025": {
+            "n": 1318,
+            "mean_net_r": -0.1059,
+            "total_net_r": -139.56,
+            "win_rate_pct": 49.7
+          },
+          "2026": {
+            "n": 327,
+            "mean_net_r": -0.1995,
+            "total_net_r": -65.25,
+            "win_rate_pct": 46.2
+          }
+        },
+        "total_net_r": -727.2797,
+        "top10_share_pct": -1.42,
+        "top10_total_r": 10.306,
+        "mean_net_r_without_top10": -0.1115,
+        "std_net_r": 0.9207,
+        "trades_needed_80_power_onesided": null,
+        "trades_needed_80_power_twosided": null
+      }
     },
     "FVGRetest": {
       "strategy_name": "FVGRetest",
@@ -105,9 +200,9 @@
       "net_profit_pct": -559.69,
       "start_time_ms": 1609459200000,
       "end_time_ms": 1776470400000,
-      "run_timestamp": "2026-10-27T21:30:47.069221+00:00",
+      "run_timestamp": "2026-10-27T23:47:09.814501+00:00",
       "data_date_range": "2021-01-01 to 2026-04-18",
-      "git_commit": "97c8a0ab65bf343b019fafa699e32d2860363cd3+dirty",
+      "git_commit": "2fc38be31f36e62c8d4b0423a88aac7358893f02+dirty",
       "significance_level": 0.05,
       "median_stop_pct": 2.22,
       "cost_drag_r": 0.0432,
@@ -133,7 +228,102 @@
         "2026": -43.38
       },
       "dropped_trade_fraction": 0.0,
-      "p_value_at_floor": false
+      "p_value_at_floor": false,
+      "robustness_panel": {
+        "strategy_name": "FVGRetest",
+        "total_trades": 7828,
+        "mean_net_r": -0.0715,
+        "matched_p": 0.7073,
+        "mc_iterations": 1000,
+        "mc_se": 0.0144,
+        "significance_threshold": 0.05,
+        "threshold_within_2se": false,
+        "iid_boot_share_above_zero": 0.0,
+        "iid_boot_min_bound_2_5pct": -0.0918,
+        "iid_boot_max_bound_2_5pct": -0.0897,
+        "iid_boot_mean_bound_2_5pct": -0.0908,
+        "iid_boot_bounds_30_seeds": [
+          -0.0906,
+          -0.0906,
+          -0.0909,
+          -0.0902,
+          -0.0914,
+          -0.0905,
+          -0.0913,
+          -0.0899,
+          -0.0909,
+          -0.0915,
+          -0.0897,
+          -0.091,
+          -0.0911,
+          -0.0918,
+          -0.0909,
+          -0.0917,
+          -0.0914,
+          -0.0911,
+          -0.0903,
+          -0.0905,
+          -0.0904,
+          -0.0918,
+          -0.0904,
+          -0.0901,
+          -0.091,
+          -0.0911,
+          -0.0902,
+          -0.0904,
+          -0.0897,
+          -0.0906
+        ],
+        "week_block_ci": [
+          -0.0945,
+          -0.0488
+        ],
+        "annual_breakdown": {
+          "2021": {
+            "n": 1685,
+            "mean_net_r": -0.0165,
+            "total_net_r": -27.74,
+            "win_rate_pct": 52.2
+          },
+          "2022": {
+            "n": 1489,
+            "mean_net_r": -0.102,
+            "total_net_r": -151.85,
+            "win_rate_pct": 46.4
+          },
+          "2023": {
+            "n": 1322,
+            "mean_net_r": -0.0872,
+            "total_net_r": -115.28,
+            "win_rate_pct": 43.0
+          },
+          "2024": {
+            "n": 1598,
+            "mean_net_r": -0.0712,
+            "total_net_r": -113.8,
+            "win_rate_pct": 46.8
+          },
+          "2025": {
+            "n": 1367,
+            "mean_net_r": -0.0787,
+            "total_net_r": -107.63,
+            "win_rate_pct": 46.3
+          },
+          "2026": {
+            "n": 367,
+            "mean_net_r": -0.1182,
+            "total_net_r": -43.38,
+            "win_rate_pct": 42.0
+          }
+        },
+        "total_net_r": -559.692,
+        "top10_share_pct": -1.84,
+        "top10_total_r": 10.3062,
+        "mean_net_r_without_top10": -0.0729,
+        "std_net_r": 0.8713,
+        "trades_needed_80_power_onesided": null,
+        "trades_needed_80_power_twosided": null
+      }
     },
     "ConfluenceThreshold": {
       "strategy_name": "ConfluenceThreshold",
@@ -162,9 +352,9 @@
       "net_profit_pct": -2597.83,
       "start_time_ms": 1609459200000,
       "end_time_ms": 1776470400000,
-      "run_timestamp": "2026-10-27T21:30:47.069221+00:00",
+      "run_timestamp": "2026-10-27T23:47:09.814501+00:00",
       "data_date_range": "2021-01-01 to 2026-04-18",
-      "git_commit": "97c8a0ab65bf343b019fafa699e32d2860363cd3+dirty",
+      "git_commit": "2fc38be31f36e62c8d4b0423a88aac7358893f02+dirty",
       "significance_level": 0.05,
       "median_stop_pct": 1.82,
       "cost_drag_r": 0.0573,
@@ -190,7 +380,102 @@
         "2026": -200.63
       },
       "dropped_trade_fraction": 0.0,
-      "p_value_at_floor": false
+      "p_value_at_floor": false,
+      "robustness_panel": {
+        "strategy_name": "ConfluenceThreshold",
+        "total_trades": 17171,
+        "mean_net_r": -0.1513,
+        "matched_p": 1.0,
+        "mc_iterations": 1000,
+        "mc_se": 0.0,
+        "significance_threshold": 0.05,
+        "threshold_within_2se": false,
+        "iid_boot_share_above_zero": 0.0,
+        "iid_boot_min_bound_2_5pct": -0.1662,
+        "iid_boot_max_bound_2_5pct": -0.1646,
+        "iid_boot_mean_bound_2_5pct": -0.1652,
+        "iid_boot_bounds_30_seeds": [
+          -0.1656,
+          -0.1658,
+          -0.1652,
+          -0.1653,
+          -0.1651,
+          -0.1652,
+          -0.1653,
+          -0.1649,
+          -0.1653,
+          -0.1647,
+          -0.1662,
+          -0.1646,
+          -0.1653,
+          -0.1648,
+          -0.1647,
+          -0.165,
+          -0.1653,
+          -0.1651,
+          -0.1656,
+          -0.1655,
+          -0.1647,
+          -0.1654,
+          -0.1649,
+          -0.1653,
+          -0.1651,
+          -0.1657,
+          -0.1651,
+          -0.1648,
+          -0.1656,
+          -0.1655
+        ],
+        "week_block_ci": [
+          -0.176,
+          -0.126
+        ],
+        "annual_breakdown": {
+          "2021": {
+            "n": 3240,
+            "mean_net_r": -0.1557,
+            "total_net_r": -504.47,
+            "win_rate_pct": 46.9
+          },
+          "2022": {
+            "n": 3235,
+            "mean_net_r": -0.1288,
+            "total_net_r": -416.65,
+            "win_rate_pct": 47.6
+          },
+          "2023": {
+            "n": 3100,
+            "mean_net_r": -0.1762,
+            "total_net_r": -546.25,
+            "win_rate_pct": 45.8
+          },
+          "2024": {
+            "n": 3501,
+            "mean_net_r": -0.1373,
+            "total_net_r": -480.77,
+            "win_rate_pct": 47.8
+          },
+          "2025": {
+            "n": 3145,
+            "mean_net_r": -0.1428,
+            "total_net_r": -449.06,
+            "win_rate_pct": 47.4
+          },
+          "2026": {
+            "n": 950,
+            "mean_net_r": -0.2112,
+            "total_net_r": -200.63,
+            "win_rate_pct": 44.2
+          }
+        },
+        "total_net_r": -2597.8329,
+        "top10_share_pct": -0.44,
+        "top10_total_r": 11.3736,
+        "mean_net_r_without_top10": -0.152,
+        "std_net_r": 0.9333,
+        "trades_needed_80_power_onesided": null,
+        "trades_needed_80_power_twosided": null
+      }
     },
     "LiquiditySweep": {
       "strategy_name": "LiquiditySweep",
@@ -219,9 +504,9 @@
       "net_profit_pct": -4845.32,
       "start_time_ms": 1609459200000,
       "end_time_ms": 1776470400000,
-      "run_timestamp": "2026-10-27T21:30:47.069221+00:00",
+      "run_timestamp": "2026-10-27T23:47:09.814501+00:00",
       "data_date_range": "2021-01-01 to 2026-04-18",
-      "git_commit": "97c8a0ab65bf343b019fafa699e32d2860363cd3+dirty",
+      "git_commit": "2fc38be31f36e62c8d4b0423a88aac7358893f02+dirty",
       "significance_level": 0.05,
       "median_stop_pct": 0.88,
       "cost_drag_r": 0.0919,
@@ -247,7 +532,102 @@
         "2026": -286.61
       },
       "dropped_trade_fraction": 0.0,
-      "p_value_at_floor": false
+      "p_value_at_floor": false,
+      "robustness_panel": {
+        "strategy_name": "LiquiditySweep",
+        "total_trades": 22464,
+        "mean_net_r": -0.2157,
+        "matched_p": 1.0,
+        "mc_iterations": 1000,
+        "mc_se": 0.0,
+        "significance_threshold": 0.05,
+        "threshold_within_2se": false,
+        "iid_boot_share_above_zero": 0.0,
+        "iid_boot_min_bound_2_5pct": -0.229,
+        "iid_boot_max_bound_2_5pct": -0.2274,
+        "iid_boot_mean_bound_2_5pct": -0.2282,
+        "iid_boot_bounds_30_seeds": [
+          -0.2289,
+          -0.2287,
+          -0.2283,
+          -0.2278,
+          -0.2281,
+          -0.2276,
+          -0.2281,
+          -0.2282,
+          -0.2284,
+          -0.2284,
+          -0.2278,
+          -0.2278,
+          -0.2288,
+          -0.2277,
+          -0.229,
+          -0.2283,
+          -0.2286,
+          -0.2284,
+          -0.2282,
+          -0.2283,
+          -0.2277,
+          -0.2277,
+          -0.2286,
+          -0.228,
+          -0.2289,
+          -0.2278,
+          -0.2282,
+          -0.2279,
+          -0.2274,
+          -0.2279
+        ],
+        "week_block_ci": [
+          -0.2324,
+          -0.1989
+        ],
+        "annual_breakdown": {
+          "2021": {
+            "n": 4849,
+            "mean_net_r": -0.2128,
+            "total_net_r": -1031.82,
+            "win_rate_pct": 46.3
+          },
+          "2022": {
+            "n": 4209,
+            "mean_net_r": -0.192,
+            "total_net_r": -808.11,
+            "win_rate_pct": 48.2
+          },
+          "2023": {
+            "n": 3722,
+            "mean_net_r": -0.2218,
+            "total_net_r": -825.46,
+            "win_rate_pct": 46.6
+          },
+          "2024": {
+            "n": 4470,
+            "mean_net_r": -0.2177,
+            "total_net_r": -972.91,
+            "win_rate_pct": 47.3
+          },
+          "2025": {
+            "n": 4110,
+            "mean_net_r": -0.2239,
+            "total_net_r": -920.41,
+            "win_rate_pct": 46.6
+          },
+          "2026": {
+            "n": 1104,
+            "mean_net_r": -0.2596,
+            "total_net_r": -286.61,
+            "win_rate_pct": 45.5
+          }
+        },
+        "total_net_r": -4845.3235,
+        "top10_share_pct": -0.21,
+        "top10_total_r": 10.306,
+        "mean_net_r_without_top10": -0.2162,
+        "std_net_r": 0.963,
+        "trades_needed_80_power_onesided": null,
+        "trades_needed_80_power_twosided": null
+      }
     },
     "Donchian4hN20": {
       "strategy_name": "Donchian4hN20",
@@ -276,9 +656,9 @@
       "net_profit_pct": 52.17,
       "start_time_ms": 1609459200000,
       "end_time_ms": 1776470400000,
-      "run_timestamp": "2026-10-27T21:30:47.069221+00:00",
+      "run_timestamp": "2026-10-27T23:47:09.814501+00:00",
       "data_date_range": "2021-01-01 to 2026-04-18",
-      "git_commit": "97c8a0ab65bf343b019fafa699e32d2860363cd3+dirty",
+      "git_commit": "2fc38be31f36e62c8d4b0423a88aac7358893f02+dirty",
       "significance_level": 0.025,
       "median_stop_pct": 7.6,
       "cost_drag_r": 0.0288,
@@ -304,7 +684,102 @@
         "2026": -7.08
       },
       "dropped_trade_fraction": 0.0,
-      "p_value_at_floor": false
+      "p_value_at_floor": false,
+      "robustness_panel": {
+        "strategy_name": "Donchian4hN20",
+        "total_trades": 1055,
+        "mean_net_r": 0.0495,
+        "matched_p": 0.0669,
+        "mc_iterations": 1000,
+        "mc_se": 0.0079,
+        "significance_threshold": 0.025,
+        "threshold_within_2se": false,
+        "iid_boot_share_above_zero": 0.0,
+        "iid_boot_min_bound_2_5pct": -0.0204,
+        "iid_boot_max_bound_2_5pct": -0.0149,
+        "iid_boot_mean_bound_2_5pct": -0.0172,
+        "iid_boot_bounds_30_seeds": [
+          -0.0171,
+          -0.0163,
+          -0.0193,
+          -0.0157,
+          -0.0172,
+          -0.0204,
+          -0.0174,
+          -0.0163,
+          -0.0196,
+          -0.017,
+          -0.0164,
+          -0.0157,
+          -0.018,
+          -0.0155,
+          -0.0159,
+          -0.0175,
+          -0.0168,
+          -0.0198,
+          -0.0174,
+          -0.0179,
+          -0.02,
+          -0.016,
+          -0.0181,
+          -0.0194,
+          -0.0173,
+          -0.0168,
+          -0.0163,
+          -0.0149,
+          -0.0158,
+          -0.0156
+        ],
+        "week_block_ci": [
+          -0.0278,
+          0.1319
+        ],
+        "annual_breakdown": {
+          "2021": {
+            "n": 219,
+            "mean_net_r": -0.0427,
+            "total_net_r": -9.34,
+            "win_rate_pct": 35.2
+          },
+          "2022": {
+            "n": 186,
+            "mean_net_r": 0.0548,
+            "total_net_r": 10.19,
+            "win_rate_pct": 43.5
+          },
+          "2023": {
+            "n": 208,
+            "mean_net_r": 0.1084,
+            "total_net_r": 22.55,
+            "win_rate_pct": 37.0
+          },
+          "2024": {
+            "n": 201,
+            "mean_net_r": 0.0646,
+            "total_net_r": 12.99,
+            "win_rate_pct": 39.8
+          },
+          "2025": {
+            "n": 181,
+            "mean_net_r": 0.1264,
+            "total_net_r": 22.88,
+            "win_rate_pct": 38.7
+          },
+          "2026": {
+            "n": 60,
+            "mean_net_r": -0.1181,
+            "total_net_r": -7.08,
+            "win_rate_pct": 31.7
+          }
+        },
+        "total_net_r": 52.1739,
+        "top10_share_pct": 112.14,
+        "top10_total_r": 58.5089,
+        "mean_net_r_without_top10": -0.0061,
+        "std_net_r": 1.1281,
+        "trades_needed_80_power_onesided": 4077,
+        "trades_needed_80_power_twosided": 4937
+      }
     },
     "Donchian4hN55": {
       "strategy_name": "Donchian4hN55",
@@ -320,7 +795,7 @@
         0.159
       ],
       "matched_p_value": 0.024,
-      "verdict": "VALIDATED (p < 0.025)",
+      "verdict": "PASSED DEV GATE (see robustness) (p < 0.025)",
       "sizing_mode": "fixed_risk",
       "ruined": false,
       "ruin_time_ms": null,
@@ -333,9 +808,9 @@
       "net_profit_pct": 65.56,
       "start_time_ms": 1609459200000,
       "end_time_ms": 1776470400000,
-      "run_timestamp": "2026-10-27T21:30:47.069221+00:00",
+      "run_timestamp": "2026-10-27T23:47:09.814501+00:00",
       "data_date_range": "2021-01-01 to 2026-04-18",
-      "git_commit": "97c8a0ab65bf343b019fafa699e32d2860363cd3+dirty",
+      "git_commit": "2fc38be31f36e62c8d4b0423a88aac7358893f02+dirty",
       "significance_level": 0.025,
       "median_stop_pct": 7.55,
       "cost_drag_r": 0.0264,
@@ -361,7 +836,102 @@
         "2026": -2.94
       },
       "dropped_trade_fraction": 0.0,
-      "p_value_at_floor": false
+      "p_value_at_floor": false,
+      "robustness_panel": {
+        "strategy_name": "Donchian4hN55",
+        "total_trades": 832,
+        "mean_net_r": 0.0788,
+        "matched_p": 0.024,
+        "mc_iterations": 1000,
+        "mc_se": 0.0048,
+        "significance_threshold": 0.025,
+        "threshold_within_2se": true,
+        "iid_boot_share_above_zero": 0.9333,
+        "iid_boot_min_bound_2_5pct": -0.0018,
+        "iid_boot_max_bound_2_5pct": 0.0078,
+        "iid_boot_mean_bound_2_5pct": 0.0033,
+        "iid_boot_bounds_30_seeds": [
+          0.0005,
+          0.0051,
+          0.0039,
+          0.0029,
+          0.0046,
+          -0.0018,
+          0.0045,
+          0.0073,
+          -0.0011,
+          0.006,
+          0.0019,
+          0.0022,
+          0.0029,
+          0.0028,
+          0.0036,
+          0.0051,
+          0.0048,
+          0.0032,
+          0.0041,
+          0.0026,
+          0.0078,
+          0.0023,
+          0.0014,
+          0.0007,
+          0.003,
+          0.0032,
+          0.0052,
+          0.0043,
+          0.0052,
+          0.0014
+        ],
+        "week_block_ci": [
+          -0.0151,
+          0.1796
+        ],
+        "annual_breakdown": {
+          "2021": {
+            "n": 176,
+            "mean_net_r": 0.0582,
+            "total_net_r": 10.25,
+            "win_rate_pct": 35.8
+          },
+          "2022": {
+            "n": 142,
+            "mean_net_r": 0.027,
+            "total_net_r": 3.83,
+            "win_rate_pct": 40.1
+          },
+          "2023": {
+            "n": 171,
+            "mean_net_r": 0.1357,
+            "total_net_r": 23.21,
+            "win_rate_pct": 36.3
+          },
+          "2024": {
+            "n": 166,
+            "mean_net_r": 0.0789,
+            "total_net_r": 13.11,
+            "win_rate_pct": 39.2
+          },
+          "2025": {
+            "n": 138,
+            "mean_net_r": 0.1313,
+            "total_net_r": 18.11,
+            "win_rate_pct": 39.9
+          },
+          "2026": {
+            "n": 39,
+            "mean_net_r": -0.0755,
+            "total_net_r": -2.94,
+            "win_rate_pct": 28.2
+          }
+        },
+        "total_net_r": 65.556,
+        "top10_share_pct": 82.0,
+        "top10_total_r": 53.7564,
+        "mean_net_r_without_top10": 0.0144,
+        "std_net_r": 1.1415,
+        "trades_needed_80_power_onesided": 1648,
+        "trades_needed_80_power_twosided": 1995
+      }
     }
   }
 }

@@ -157,7 +157,7 @@ class TestStrategyEvaluator:
         }
         res = evaluator.evaluate("AlphaStrategy", "Validated Model", mock_result)
         assert res.is_validated is True
-        assert res.verdict == "VALIDATED (p < 0.05)"
+        assert res.verdict == "PASSED DEV GATE (see robustness) (p < 0.05)"
         assert res.p_composite < 0.05
         assert len(res.hurdles_passed) >= 4
 
@@ -201,7 +201,7 @@ class TestStrategyEvaluator:
         }
         res_pos = evaluator.evaluate("SyntheticEdge", "True +0.1R Edge", pos_result)
         assert res_pos.is_validated is True
-        assert res_pos.verdict == "VALIDATED (p < 0.05)"
+        assert res_pos.verdict == "PASSED DEV GATE (see robustness) (p < 0.05)"
         assert res_pos.expectancy_r == 0.1000
         assert res_pos.bootstrap_ci[0] > 0.0
         assert res_pos.matched_p_value < 0.05
@@ -513,7 +513,7 @@ class TestMarkdownReportGeneration:
             p_composite=0.001,
             matched_p_value=0.001,
             is_validated=True,
-            verdict="VALIDATED (p < 0.05)",
+            verdict="PASSED DEV GATE (see robustness) (p < 0.05)",
         )
         r_pass = StrategyRunResult(
             strategy_name="AlphaModel",
@@ -566,7 +566,7 @@ class TestMarkdownReportGeneration:
         with open(out_path, "r", encoding="utf-8") as f:
             content = f.read()
 
-        assert "Validated Setups (1/2)" in content
+        assert "Passed Dev Gate (see robustness) (1/2)" in content
         assert "AlphaModel" in content
         assert "BetaNoise" in content
         assert "edge emerges" not in content.lower()

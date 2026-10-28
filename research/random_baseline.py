@@ -10,6 +10,7 @@ metrics beat the 95th percentile (p < 0.05) of this random entry baseline.
 """
 
 import argparse
+from concurrent.futures import ProcessPoolExecutor
 import hashlib
 import json
 import logging
@@ -262,6 +263,35 @@ def _simulate_single_matched_pass(
     return pass_ev, len(pass_net_r), dropped_count
 
 
+def _worker_matched_chunk(
+    seeds: List[int],
+    trade_profiles: List[Tuple[str, float]],
+    candles_dict: Dict[str, np.ndarray],
+    friction: SimulationFriction,
+    exit_config: ExitConfig,
+    initial_equity_usd: float,
+    risk_per_trade_pct: float,
+    max_leverage: float,
+) -> List[Tuple[float, int, int]]:
+    """Worker function to process a batch of matched passes across multiprocessing workers."""
+    logging.getLogger("simulator").setLevel(logging.ERROR)
+    chunk_results: List[Tuple[float, int, int]] = []
+    for s in seeds:
+        iter_rng = np.random.default_rng(s)
+        res = _simulate_single_matched_pass(
+            trade_profiles=trade_profiles,
+            candles_dict=candles_dict,
+            rng=iter_rng,
+            friction=friction,
+            exit_config=exit_config,
+            initial_equity_usd=initial_equity_usd,
+            risk_per_trade_pct=risk_per_trade_pct,
+            max_leverage=max_leverage,
+        )
+        chunk_results.append(res)
+    return chunk_results
+
+
 def run_matched_baseline(
     strategy_trades: List[ExecutedTrade],
     candles_dict: Dict[str, np.ndarray],
@@ -321,29 +351,56 @@ def run_matched_baseline(
         trade_profiles.append((sym, dist_pct))
 
     master_rng = np.random.default_rng(seed)
+    iter_seeds = [int(master_rng.integers(0, 100000000)) for _ in range(iterations)]
+
     null_ev_dist: List[float] = []
     total_dropped = 0
     total_simulated = 0
 
-    step = max(50, iterations // 10)
-    for it in range(iterations):
-        if (it + 1) % step == 0 or it == 0 or (it + 1) == iterations:
-            logger.info(f"    Matched pass {it + 1}/{iterations} ({(it + 1) / iterations * 100:.0f}%)")
-        iter_seed = int(master_rng.integers(0, 100000000))
-        iter_rng = np.random.default_rng(iter_seed)
-        pass_ev, comp_cnt, drop_cnt = _simulate_single_matched_pass(
-            trade_profiles=trade_profiles,
-            candles_dict=candles_dict,
-            rng=iter_rng,
-            friction=fric,
-            exit_config=cfg,
-            initial_equity_usd=initial_equity_usd,
-            risk_per_trade_pct=risk_per_trade_pct,
-            max_leverage=max_leverage,
-        )
-        null_ev_dist.append(round(pass_ev, 4))
-        total_dropped += drop_cnt
-        total_simulated += comp_cnt
+    workers = min(os.cpu_count() or 4, 4)
+    if iterations >= 50 and workers > 1:
+        logger.info(f"    Executing {iterations:,} matched passes in parallel using {workers} workers...")
+        chunks = np.array_split(iter_seeds, workers)
+        with ProcessPoolExecutor(max_workers=workers) as ex:
+            futures = [
+                ex.submit(
+                    _worker_matched_chunk,
+                    chunk.tolist(),
+                    trade_profiles,
+                    candles_dict,
+                    fric,
+                    cfg,
+                    initial_equity_usd,
+                    risk_per_trade_pct,
+                    max_leverage,
+                )
+                for chunk in chunks
+                if len(chunk) > 0
+            ]
+            for f in futures:
+                for pass_ev, comp_cnt, drop_cnt in f.result():
+                    null_ev_dist.append(round(pass_ev, 4))
+                    total_dropped += drop_cnt
+                    total_simulated += comp_cnt
+    else:
+        step = max(50, iterations // 10)
+        for it, it_seed in enumerate(iter_seeds):
+            if (it + 1) % step == 0 or it == 0 or (it + 1) == iterations:
+                logger.info(f"    Matched pass {it + 1}/{iterations} ({(it + 1) / iterations * 100:.0f}%)")
+            iter_rng = np.random.default_rng(it_seed)
+            pass_ev, comp_cnt, drop_cnt = _simulate_single_matched_pass(
+                trade_profiles=trade_profiles,
+                candles_dict=candles_dict,
+                rng=iter_rng,
+                friction=fric,
+                exit_config=cfg,
+                initial_equity_usd=initial_equity_usd,
+                risk_per_trade_pct=risk_per_trade_pct,
+                max_leverage=max_leverage,
+            )
+            null_ev_dist.append(round(pass_ev, 4))
+            total_dropped += drop_cnt
+            total_simulated += comp_cnt
 
     total_planned = iterations * n_trades
     dropped_trade_fraction = total_dropped / total_planned if total_planned > 0 else 0.0

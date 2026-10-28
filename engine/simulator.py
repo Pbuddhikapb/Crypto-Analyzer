@@ -12,7 +12,7 @@ Simulates trading execution with realistic market frictions:
 
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 
@@ -454,7 +454,7 @@ class SimulationEngine:
 
         for trade_id, pos in self.active_positions.items():
             state = pos["state"]
-            if state.symbol != symbol.upper():
+            if state.symbol != sym:
                 continue
 
             # 1. 8-hour funding rate check
@@ -763,7 +763,7 @@ def simulate_single_trade_lifecycle(
     nominal_entry: float,
     stop_loss: float,
     entry_ts_ms: int,
-    candles_forward: List[Tuple[float, ...]],
+    candles_forward: Union[List[Tuple[float, ...]], np.ndarray, Sequence[Any]],
     equity_at_entry: float,
     risk_per_trade_pct: float,
     max_leverage: float,
@@ -804,22 +804,59 @@ def simulate_single_trade_lifecycle(
     if trade_id is None:
         return None
 
-    for idx, c in enumerate(candles_forward):
-        c_open = float(c[0])
-        c_high = float(c[1])
-        c_low = float(c[2])
-        c_close = float(c[3])
-        c_ts = int(c[4]) if len(c) > 4 else entry_ts_ms + (idx + 1) * (bar_interval_ms or 3600000)
+    if isinstance(candles_forward, np.ndarray) and candles_forward.ndim == 2 and candles_forward.shape[1] >= 4:
+        has_ts = candles_forward.shape[1] > 4
+        c_opens = candles_forward[:, 0]
+        c_highs = candles_forward[:, 1]
+        c_lows = candles_forward[:, 2]
+        c_closes = candles_forward[:, 3]
+        c_tss = candles_forward[:, 4] if has_ts else None
+        eff_interval = bar_interval_ms or 3600000
 
-        closed = engine.process_bar(
-            symbol=symbol,
-            candle=(c_open, c_high, c_low, c_close),
-            timestamp_ms=c_ts,
-            current_bar_idx=idx + 1,
-            bar_interval_ms=bar_interval_ms,
-        )
-        if closed:
-            return closed[0]
+        if has_ts:
+            for idx, (c_open, c_high, c_low, c_close, c_ts) in enumerate(
+                zip(c_opens, c_highs, c_lows, c_closes, c_tss)
+            ):
+                closed = engine.process_bar(
+                    symbol=symbol,
+                    candle=(float(c_open), float(c_high), float(c_low), float(c_close)),
+                    timestamp_ms=int(c_ts),
+                    current_bar_idx=idx + 1,
+                    bar_interval_ms=eff_interval,
+                )
+                if closed:
+                    return closed[0]
+        else:
+            for idx, (c_open, c_high, c_low, c_close) in enumerate(
+                zip(c_opens, c_highs, c_lows, c_closes)
+            ):
+                c_ts = entry_ts_ms + (idx + 1) * eff_interval
+                closed = engine.process_bar(
+                    symbol=symbol,
+                    candle=(float(c_open), float(c_high), float(c_low), float(c_close)),
+                    timestamp_ms=c_ts,
+                    current_bar_idx=idx + 1,
+                    bar_interval_ms=bar_interval_ms,
+                )
+                if closed:
+                    return closed[0]
+    else:
+        for idx, c in enumerate(candles_forward):
+            c_open = float(c[0])
+            c_high = float(c[1])
+            c_low = float(c[2])
+            c_close = float(c[3])
+            c_ts = int(c[4]) if len(c) > 4 else entry_ts_ms + (idx + 1) * (bar_interval_ms or 3600000)
+
+            closed = engine.process_bar(
+                symbol=symbol,
+                candle=(c_open, c_high, c_low, c_close),
+                timestamp_ms=c_ts,
+                current_bar_idx=idx + 1,
+                bar_interval_ms=bar_interval_ms,
+            )
+            if closed:
+                return closed[0]
 
     # If trade is still open at the end of forward data, close it at the last bar's close with END_OF_DATA
     if close_at_end_of_data and engine.active_positions and len(candles_forward) > 0:
@@ -969,9 +1006,9 @@ def simulate_portfolio_signals(
                 engine.ruin_time_ms = c_ts
             continue
 
-        # 4. Slicing forward candles and executing single trade lifecycle
-        forward_candles = [tuple(arr[k]) for k in range(entry_bar_idx, len(arr))]
-        if not forward_candles:
+        # 4. Slicing forward candles and executing single trade lifecycle (array view)
+        forward_candles = arr[entry_bar_idx:]
+        if len(forward_candles) == 0:
             unfinished_trades += 1
             continue
 

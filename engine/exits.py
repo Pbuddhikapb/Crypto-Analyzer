@@ -55,12 +55,15 @@ class ExitDecision:
     """Result of candle exit evaluation."""
 
     action: str  # 'HOLD', 'PARTIAL_TP1', 'FULL_EXIT'
-    exit_reason: Optional[str]  # e.g., 'STOP_LOSS', 'GAP_STOP_LOSS', 'TAKE_PROFIT_1', 'TAKE_PROFIT_2', 'BREAKEVEN', 'TIME_STOP_UNDERWATER', 'TRAILING_STOP', 'SESSION_BREAK', 'END_OF_DATA'
-    exit_price: Optional[float]
-    closed_pct: float  # Percentage of original position closed in this decision (0.0, 0.5, 1.0)
-    realized_r: float  # Net R-multiple achieved on this exit portion
-    gross_return_pct: float  # Return % on this exit portion
-    updated_state: TradeState
+    exit_reason: Optional[str] = None  # e.g., 'STOP_LOSS', 'GAP_STOP_LOSS', 'TAKE_PROFIT_1', 'TAKE_PROFIT_2', 'BREAKEVEN', 'TIME_STOP_UNDERWATER', 'TRAILING_STOP', 'SESSION_BREAK', 'END_OF_DATA'
+    exit_price: Optional[float] = None
+    closed_pct: float = 0.0  # Percentage of original position closed in this decision (0.0, 0.5, 1.0)
+    realized_r: float = 0.0  # Net R-multiple achieved on this exit portion
+    gross_return_pct: float = 0.0  # Return % on this exit portion
+    updated_state: Optional[TradeState] = None
+
+
+HOLD_DECISION = ExitDecision(action="HOLD")
 
 
 def create_trade_state(
@@ -331,15 +334,7 @@ def evaluate_trade_exit(
                     updated_state=state,
                 )
 
-        return ExitDecision(
-            action="HOLD",
-            exit_reason=None,
-            exit_price=None,
-            closed_pct=0.0,
-            realized_r=0.0,
-            gross_return_pct=0.0,
-            updated_state=state,
-        )
+        return HOLD_DECISION
 
     # Rule 1: Check Stop Loss Hit
     sl_at_start = state.current_sl
@@ -513,12 +508,4 @@ def evaluate_trade_exit(
             )
 
     # No exit triggered on this bar
-    return ExitDecision(
-        action="HOLD",
-        exit_reason=None,
-        exit_price=None,
-        closed_pct=0.0,
-        realized_r=0.0,
-        gross_return_pct=0.0,
-        updated_state=state,
-    )
+    return HOLD_DECISION

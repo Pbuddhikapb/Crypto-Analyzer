@@ -1,9 +1,9 @@
 # Strategy Validation Dossier: Evidence Before Infrastructure
-**Generated:** 2026-10-27 21:30 UTC  
-**Git Commit:** `97c8a0ab65bf343b019fafa699e32d2860363cd3+dirty`  
+**Generated:** 2026-10-27 23:47 UTC  
+**Git Commit:** `2fc38be31f36e62c8d4b0423a88aac7358893f02+dirty`  
 **Dataset Hash:** `61d0448603612d76`  
 **Architecture Doctrine:** Claude's Option B (Discretionary Human Trading Terminal)  
-**Null Hypothesis ($H_0$):** Phase 2 1,000-pass Monte Carlo Baseline Hurdle  
+**Null Hypothesis ($H_0$):** Phase 2 10-pass Monte Carlo Baseline Hurdle  
 **Dataset:** 10 Major Pairs (`BTCUSDT, ETHUSDT, SOLUSDT, BNBUSDT, XRPUSDT, DOGEUSDT, ADAUSDT, AVAXUSDT, LINKUSDT, SUIUSDT`), 5.3 Years (Binance USD-M Futures 1h candles)  
 * **Per-Symbol 1h Bar Counts:** BTCUSDT: 46,393, ETHUSDT: 46,393, SOLUSDT: 46,273, BNBUSDT: 46,393, XRPUSDT: 46,273, DOGEUSDT: 46,393, ADAUSDT: 46,393, AVAXUSDT: 46,393, LINKUSDT: 46,393, SUIUSDT: 25,929  
 * **Data Continuity & Coverage Notes:**
@@ -19,12 +19,12 @@
 
 Under Claude's doctrine (*"Evidence before infrastructure"*), no trading signal or indicator rule is permitted to enter the Discretionary Trading Terminal without empirical proof that it outperforms random noise ($p < 0.05$).
 
-In Phase 2, we established the empirical null hypothesis ($H_0$) across 1,000 Monte Carlo runs on Binance USD-M Futures under full institutional friction:
-* **Profit Factor Hurdle ($p_{95}$):** `> 1.04` (Median noise: `0.83`)
-* **Win Rate Hurdle ($p_{95}$):** `> 52.40%` (Median noise: `47.27%`)
-* **Expectancy Hurdle ($p_{95}$):** `> +0.0152R` (Median noise: `-0.0773R`)
-* **Sharpe Ratio Hurdle ($p_{95}$):** `> 0.27` (Median noise: `-1.41`)
-* **Max Drawdown Hurdle ($p_{50}$):** `< 25.53%` (Worst 5% noise: `45.12%`)
+In Phase 2, we established the empirical null hypothesis ($H_0$) across 10 Monte Carlo runs on Binance USD-M Futures under full institutional friction:
+* **Profit Factor Hurdle ($p_{95}$):** `> 0.00` (Median noise: `0.00`)
+* **Win Rate Hurdle ($p_{95}$):** `> 0.00%` (Median noise: `0.00%`)
+* **Expectancy Hurdle ($p_{95}$):** `> -0.0318R` (Median noise: `-0.0339R`)
+* **Sharpe Ratio Hurdle ($p_{95}$):** `> -19.09` (Median noise: `-30.37`)
+* **Max Drawdown Hurdle ($p_{50}$):** `< 8.50%` (Worst 5% noise: `8.87%`)
 
 6 core discretionary trading hypotheses were codified with strict zero lookahead (signal at bar $i$ close $\rightarrow$ entry at bar $i+1$ open) and simulated across all 10 coins.
 
@@ -34,12 +34,12 @@ In Phase 2, we established the empirical null hypothesis ($H_0$) across 1,000 Mo
 
 | Strategy | Trades | Win Rate | Net PF (Gross) | Net EV (Gross EV) | Max DD (R) | Bootstrap 95% CI | Matched Median EV | Matched Rank $p$-value | Dropped Null % | Days Evaluated | Sizing | Ruined? | Alpha Verdict |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| **TrendPullback** | 6627 | 49.3% | **0.78** (0.89) | **-0.1097R** (-0.0496R) | 732.51R | [-0.1320, -0.0875]R | -0.1018R | `p = 0.7742` | 0.00% | 1933d (100.0%) | `fixed_risk` | ⚠️ Ruined (2022-02-07) | 🔴 **REJECTED** |
-| **FVGRetest** | 7828 | 46.9% | **0.84** (0.93) | **-0.0715R** (-0.0283R) | 594.76R | [-0.0908, -0.0519]R | -0.0660R | `p = 0.7073` | 0.00% | 1933d (100.0%) | `fixed_risk` | ⚠️ Ruined (2022-05-24) | 🔴 **REJECTED** |
-| **ConfluenceThreshold** | 17171 | 47.0% | **0.71** (0.80) | **-0.1513R** (-0.0940R) | 2606.85R | [-0.1657, -0.1375]R | -0.0966R | `p = 1.0000` | 0.00% | 1933d (100.0%) | `fixed_risk` | ⚠️ Ruined (2021-03-23) | 🔴 **REJECTED** |
-| **LiquiditySweep** | 22464 | 46.9% | **0.62** (0.75) | **-0.2157R** (-0.1239R) | 4846.73R | [-0.2286, -0.2031]R | -0.1758R | `p = 1.0000` | 0.00% | 1933d (100.0%) | `fixed_risk` | ⚠️ Ruined (2021-01-27) | 🔴 **REJECTED** |
-| **Donchian4hN20** | 1055 | 38.3% | **1.14** (1.23) | **+0.0495R** (+0.0774R) | 24.59R | [-0.0162, +0.1187]R | +0.0027R | `p = 0.0669` | 0.00% | 1933d (100.0%) | `fixed_risk` | No | 🔴 **REJECTED** |
-| **Donchian4hN55** | 832 | 37.6% | **1.22** (1.31) | **+0.0788R** (+0.1047R) | 16.69R | [+0.0021, +0.1590]R | -0.0012R | `p = 0.0240` | 0.00% | 1933d (100.0%) | `fixed_risk` | No | 🟢 **VALIDATED** |
+| **TrendPullback** | 6627 | 49.3% | **0.78** (0.89) | **-0.1097R** (-0.0496R) | 732.51R | [-0.1320, -0.0875]R | +0.0000R | `p = 0.7742` | 0.00% | 1933d (100.0%) | `fixed_risk` | ⚠️ Ruined (2022-02-07) | 🔴 **REJECTED** |
+| **FVGRetest** | 7828 | 46.9% | **0.84** (0.93) | **-0.0715R** (-0.0283R) | 594.76R | [-0.0908, -0.0519]R | +0.0000R | `p = 0.7073` | 0.00% | 1933d (100.0%) | `fixed_risk` | ⚠️ Ruined (2022-05-24) | 🔴 **REJECTED** |
+| **ConfluenceThreshold** | 17171 | 47.0% | **0.71** (0.80) | **-0.1513R** (-0.0940R) | 2606.85R | [-0.1657, -0.1375]R | +0.0000R | `p = 1.0000` | 0.00% | 1933d (100.0%) | `fixed_risk` | ⚠️ Ruined (2021-03-23) | 🔴 **REJECTED** |
+| **LiquiditySweep** | 22464 | 46.9% | **0.62** (0.75) | **-0.2157R** (-0.1239R) | 4846.73R | [-0.2286, -0.2031]R | +0.0000R | `p = 1.0000` | 0.00% | 1933d (100.0%) | `fixed_risk` | ⚠️ Ruined (2021-01-27) | 🔴 **REJECTED** |
+| **Donchian4hN20** | 1055 | 38.3% | **1.14** (1.23) | **+0.0495R** (+0.0774R) | 24.59R | [-0.0162, +0.1187]R | +0.0000R | `p = 0.0669` | 0.00% | 1933d (100.0%) | `fixed_risk` | No | 🔴 **REJECTED** |
+| **Donchian4hN55** | 832 | 37.6% | **1.22** (1.31) | **+0.0788R** (+0.1047R) | 16.69R | [+0.0021, +0.1590]R | +0.0000R | `p = 0.0240` | 0.00% | 1933d (100.0%) | `fixed_risk` | No | 🟢 **PASSED DEV GATE (see robustness)** |
 
 ---
 
@@ -57,7 +57,7 @@ In Phase 2, we established the empirical null hypothesis ($H_0$) across 1,000 Mo
 > Max Drawdown (R): **`732.51R`** | Cumulative Net R: **`-727.28R`**  
 > Days Evaluated: **`1933 days (100.0% of dataset)`**  
 > Bootstrap 95% CI (Mean Net R): **`[-0.1320R, -0.0875R]`** (10,000 resamples)  
-> Matched Baseline Median Net EV: **`-0.1018R`** (Matched 95th Pct Hurdle: `-0.0852R`)  
+> Matched Baseline Median Net EV: **`+0.0000R`** (Matched 95th Pct Hurdle: `+0.0000R`)  
 > Sizing Mode: `fixed_risk` | Account Ruined: `YES (at 2022-02-07 03:00 UTC)`
 
 #### Alpha Validation Requirements:
@@ -70,10 +70,10 @@ In Phase 2, we established the empirical null hypothesis ($H_0$) across 1,000 Mo
 - ❌ Matched Rank p-value 0.7742 >= 0.05
 
 #### Diagnostics:
-- ℹ️ Net Profit Factor: 0.78 (Null p95 Hurdle: 1.04, p=0.6783)
-- ℹ️ Net Win Rate: 49.27% (Null p95 Hurdle: 52.40%, p=0.2643)
+- ℹ️ Net Profit Factor: 0.78 (Null p95 Hurdle: 0.00, p=0.5000)
+- ℹ️ Net Win Rate: 49.27% (Null p95 Hurdle: 0.00%, p=0.5000)
 - ℹ️ Max Drawdown (R): 732.51R
-- ℹ️ Sharpe Ratio: -1.66 (p=0.5983)
+- ℹ️ Sharpe Ratio: -1.66 (p=0.0097)
 - ℹ️ Median Stop % of Price: 1.72%
 - ℹ️ Cost Drag in R per Trade: +0.0602R
 - ℹ️ Median Holding Time: 6 bars (6h)
@@ -94,6 +94,33 @@ In Phase 2, we established the empirical null hypothesis ($H_0$) across 1,000 Mo
 | `SUIUSDT` | 327 | 45.9% | 0.70 (0.77) | $-5,094.92 | -0.1558R (-0.1107R) |
 | `XRPUSDT` | 747 | 49.7% | 0.76 (0.88) | $-8,517.45 | -0.1140R (-0.0515R) |
 
+#### Robustness Panel: TrendPullback
+*(Report-only diagnostics; does not modify pre-registered hypothesis verdict)*
+
+| Diagnostic Metric | Value | Reference / Standard |
+| :--- | :--- | :--- |
+| **Matched $p$-value** | `0.7742` (N=1,000) | Gate threshold $\alpha = 0.05$ |
+| **Monte Carlo Standard Error** | `SE = 0.0132` | $\sqrt{p(1-p)/N}$ |
+| **Threshold within 2 SE?** | No (threshold outside 2 SE) | $|p - \alpha| \le 2 \times SE$ |
+| **iid Bootstrap 2.5% Bound (30 seeds)** | **`0.0%`** above zero | Min: `-0.1328R`, Max: `-0.1307R` |
+| **Week-Block Bootstrap 95% CI** | `[-0.1390, -0.0810]R` | 7-day block temporal resampling |
+| **Top-10 Outlier Share of Total R** | **`-1.4%`** (`+10.31R` / `-727.28R`) | Lower indicates broader distribution |
+| **Mean Net R Without Top-10 Outliers** | **`-0.1115R`** (vs `-0.1097R` all) | Baseline expectancy excluding windfalls |
+| **Per-Trade Standard Deviation ($s$)** | `0.9207R` | Sample trade dispersion ($ddof=1$) |
+| **Trades for 80% Power (One-sided $\alpha$)** | `N/A (mean <= 0)` | $N = \lceil ((z_{1-\alpha} + z_{0.80}) s / \mu)^2 \rceil$ |
+| **Trades for 80% Power (Two-sided $\alpha=0.05$)** | `N/A (mean <= 0)` | $N = \lceil ((1.960 + 0.842) s / \mu)^2 \rceil$ |
+
+**Calendar Year Performance Breakdown**:
+| Year | Trades ($n$) | Win Rate | Mean Net R | Total Net R |
+| :--- | :---: | :---: | :---: | :---: |
+| 2021 | 1,112 | 51.0% | -0.0712R | -79.17R |
+| 2022 | 1,208 | 49.7% | -0.1006R | -121.55R |
+| 2023 | 1,213 | 49.1% | -0.1147R | -139.07R |
+| 2024 | 1,449 | 48.1% | -0.1261R | -182.68R |
+| 2025 | 1,318 | 49.7% | -0.1059R | -139.56R |
+| 2026 | 327 | 46.2% | -0.1995R | -65.25R |
+
+
 ---
 
 ### Hypothesis: FVGRetest
@@ -108,7 +135,7 @@ In Phase 2, we established the empirical null hypothesis ($H_0$) across 1,000 Mo
 > Max Drawdown (R): **`594.76R`** | Cumulative Net R: **`-559.69R`**  
 > Days Evaluated: **`1933 days (100.0% of dataset)`**  
 > Bootstrap 95% CI (Mean Net R): **`[-0.0908R, -0.0519R]`** (10,000 resamples)  
-> Matched Baseline Median Net EV: **`-0.0660R`** (Matched 95th Pct Hurdle: `-0.0507R`)  
+> Matched Baseline Median Net EV: **`+0.0000R`** (Matched 95th Pct Hurdle: `+0.0000R`)  
 > Sizing Mode: `fixed_risk` | Account Ruined: `YES (at 2022-05-24 09:00 UTC)`
 
 #### Alpha Validation Requirements:
@@ -121,10 +148,10 @@ In Phase 2, we established the empirical null hypothesis ($H_0$) across 1,000 Mo
 - ❌ Matched Rank p-value 0.7073 >= 0.05
 
 #### Diagnostics:
-- ℹ️ Net Profit Factor: 0.84 (Null p95 Hurdle: 1.04, p=0.4768)
-- ℹ️ Net Win Rate: 46.93% (Null p95 Hurdle: 52.40%, p=0.5430)
+- ℹ️ Net Profit Factor: 0.84 (Null p95 Hurdle: 0.00, p=0.5000)
+- ℹ️ Net Win Rate: 46.93% (Null p95 Hurdle: 0.00%, p=0.5000)
 - ℹ️ Max Drawdown (R): 594.76R
-- ℹ️ Sharpe Ratio: -1.18 (p=0.4105)
+- ℹ️ Sharpe Ratio: -1.18 (p=0.0087)
 - ℹ️ Median Stop % of Price: 2.22%
 - ℹ️ Cost Drag in R per Trade: +0.0432R
 - ℹ️ Median Holding Time: 7 bars (7h)
@@ -145,6 +172,33 @@ In Phase 2, we established the empirical null hypothesis ($H_0$) across 1,000 Mo
 | `SUIUSDT` | 394 | 48.5% | 0.84 (0.92) | $-3,018.06 | -0.0766R (-0.0376R) |
 | `XRPUSDT` | 838 | 47.7% | 0.89 (0.99) | $-3,954.61 | -0.0472R (-0.0042R) |
 
+#### Robustness Panel: FVGRetest
+*(Report-only diagnostics; does not modify pre-registered hypothesis verdict)*
+
+| Diagnostic Metric | Value | Reference / Standard |
+| :--- | :--- | :--- |
+| **Matched $p$-value** | `0.7073` (N=1,000) | Gate threshold $\alpha = 0.05$ |
+| **Monte Carlo Standard Error** | `SE = 0.0144` | $\sqrt{p(1-p)/N}$ |
+| **Threshold within 2 SE?** | No (threshold outside 2 SE) | $|p - \alpha| \le 2 \times SE$ |
+| **iid Bootstrap 2.5% Bound (30 seeds)** | **`0.0%`** above zero | Min: `-0.0918R`, Max: `-0.0897R` |
+| **Week-Block Bootstrap 95% CI** | `[-0.0945, -0.0488]R` | 7-day block temporal resampling |
+| **Top-10 Outlier Share of Total R** | **`-1.8%`** (`+10.31R` / `-559.69R`) | Lower indicates broader distribution |
+| **Mean Net R Without Top-10 Outliers** | **`-0.0729R`** (vs `-0.0715R` all) | Baseline expectancy excluding windfalls |
+| **Per-Trade Standard Deviation ($s$)** | `0.8713R` | Sample trade dispersion ($ddof=1$) |
+| **Trades for 80% Power (One-sided $\alpha$)** | `N/A (mean <= 0)` | $N = \lceil ((z_{1-\alpha} + z_{0.80}) s / \mu)^2 \rceil$ |
+| **Trades for 80% Power (Two-sided $\alpha=0.05$)** | `N/A (mean <= 0)` | $N = \lceil ((1.960 + 0.842) s / \mu)^2 \rceil$ |
+
+**Calendar Year Performance Breakdown**:
+| Year | Trades ($n$) | Win Rate | Mean Net R | Total Net R |
+| :--- | :---: | :---: | :---: | :---: |
+| 2021 | 1,685 | 52.2% | -0.0165R | -27.74R |
+| 2022 | 1,489 | 46.4% | -0.1020R | -151.85R |
+| 2023 | 1,322 | 43.0% | -0.0872R | -115.28R |
+| 2024 | 1,598 | 46.8% | -0.0712R | -113.80R |
+| 2025 | 1,367 | 46.3% | -0.0787R | -107.63R |
+| 2026 | 367 | 42.0% | -0.1182R | -43.38R |
+
+
 ---
 
 ### Hypothesis: ConfluenceThreshold
@@ -159,7 +213,7 @@ In Phase 2, we established the empirical null hypothesis ($H_0$) across 1,000 Mo
 > Max Drawdown (R): **`2606.85R`** | Cumulative Net R: **`-2597.83R`**  
 > Days Evaluated: **`1933 days (100.0% of dataset)`**  
 > Bootstrap 95% CI (Mean Net R): **`[-0.1657R, -0.1375R]`** (10,000 resamples)  
-> Matched Baseline Median Net EV: **`-0.0966R`** (Matched 95th Pct Hurdle: `-0.0851R`)  
+> Matched Baseline Median Net EV: **`+0.0000R`** (Matched 95th Pct Hurdle: `+0.0000R`)  
 > Sizing Mode: `fixed_risk` | Account Ruined: `YES (at 2021-03-23 20:00 UTC)`
 
 #### Alpha Validation Requirements:
@@ -172,10 +226,10 @@ In Phase 2, we established the empirical null hypothesis ($H_0$) across 1,000 Mo
 - ❌ Matched Rank p-value 1.0000 >= 0.05
 
 #### Diagnostics:
-- ℹ️ Net Profit Factor: 0.71 (Null p95 Hurdle: 1.04, p=0.8580)
-- ℹ️ Net Win Rate: 46.96% (Null p95 Hurdle: 52.40%, p=0.5393)
+- ℹ️ Net Profit Factor: 0.71 (Null p95 Hurdle: 0.00, p=0.5000)
+- ℹ️ Net Win Rate: 46.96% (Null p95 Hurdle: 0.00%, p=0.5000)
 - ℹ️ Max Drawdown (R): 2606.85R
-- ℹ️ Sharpe Ratio: -2.40 (p=0.8368)
+- ℹ️ Sharpe Ratio: -2.40 (p=0.0114)
 - ℹ️ Median Stop % of Price: 1.82%
 - ℹ️ Cost Drag in R per Trade: +0.0573R
 - ℹ️ Median Holding Time: 4 bars (4h)
@@ -196,6 +250,33 @@ In Phase 2, we established the empirical null hypothesis ($H_0$) across 1,000 Mo
 | `SUIUSDT` | 748 | 48.1% | 0.79 (0.86) | $-8,010.86 | -0.1071R (-0.0657R) |
 | `XRPUSDT` | 1772 | 48.6% | 0.73 (0.83) | $-24,043.98 | -0.1357R (-0.0779R) |
 
+#### Robustness Panel: ConfluenceThreshold
+*(Report-only diagnostics; does not modify pre-registered hypothesis verdict)*
+
+| Diagnostic Metric | Value | Reference / Standard |
+| :--- | :--- | :--- |
+| **Matched $p$-value** | `1.0000` (N=1,000) | Gate threshold $\alpha = 0.05$ |
+| **Monte Carlo Standard Error** | `SE = 0.0000` | $\sqrt{p(1-p)/N}$ |
+| **Threshold within 2 SE?** | No (threshold outside 2 SE) | $|p - \alpha| \le 2 \times SE$ |
+| **iid Bootstrap 2.5% Bound (30 seeds)** | **`0.0%`** above zero | Min: `-0.1662R`, Max: `-0.1646R` |
+| **Week-Block Bootstrap 95% CI** | `[-0.1760, -0.1260]R` | 7-day block temporal resampling |
+| **Top-10 Outlier Share of Total R** | **`-0.4%`** (`+11.37R` / `-2597.83R`) | Lower indicates broader distribution |
+| **Mean Net R Without Top-10 Outliers** | **`-0.1520R`** (vs `-0.1513R` all) | Baseline expectancy excluding windfalls |
+| **Per-Trade Standard Deviation ($s$)** | `0.9333R` | Sample trade dispersion ($ddof=1$) |
+| **Trades for 80% Power (One-sided $\alpha$)** | `N/A (mean <= 0)` | $N = \lceil ((z_{1-\alpha} + z_{0.80}) s / \mu)^2 \rceil$ |
+| **Trades for 80% Power (Two-sided $\alpha=0.05$)** | `N/A (mean <= 0)` | $N = \lceil ((1.960 + 0.842) s / \mu)^2 \rceil$ |
+
+**Calendar Year Performance Breakdown**:
+| Year | Trades ($n$) | Win Rate | Mean Net R | Total Net R |
+| :--- | :---: | :---: | :---: | :---: |
+| 2021 | 3,240 | 46.9% | -0.1557R | -504.47R |
+| 2022 | 3,235 | 47.6% | -0.1288R | -416.65R |
+| 2023 | 3,100 | 45.8% | -0.1762R | -546.25R |
+| 2024 | 3,501 | 47.8% | -0.1373R | -480.77R |
+| 2025 | 3,145 | 47.4% | -0.1428R | -449.06R |
+| 2026 | 950 | 44.2% | -0.2112R | -200.63R |
+
+
 ---
 
 ### Hypothesis: LiquiditySweep
@@ -210,7 +291,7 @@ In Phase 2, we established the empirical null hypothesis ($H_0$) across 1,000 Mo
 > Max Drawdown (R): **`4846.73R`** | Cumulative Net R: **`-4845.32R`**  
 > Days Evaluated: **`1933 days (100.0% of dataset)`**  
 > Bootstrap 95% CI (Mean Net R): **`[-0.2286R, -0.2031R]`** (10,000 resamples)  
-> Matched Baseline Median Net EV: **`-0.1758R`** (Matched 95th Pct Hurdle: `-0.1653R`)  
+> Matched Baseline Median Net EV: **`+0.0000R`** (Matched 95th Pct Hurdle: `+0.0000R`)  
 > Sizing Mode: `fixed_risk` | Account Ruined: `YES (at 2021-01-27 10:00 UTC)`
 
 #### Alpha Validation Requirements:
@@ -223,10 +304,10 @@ In Phase 2, we established the empirical null hypothesis ($H_0$) across 1,000 Mo
 - ❌ Matched Rank p-value 1.0000 >= 0.05
 
 #### Diagnostics:
-- ℹ️ Net Profit Factor: 0.62 (Null p95 Hurdle: 1.04, p=0.9681)
-- ℹ️ Net Win Rate: 46.90% (Null p95 Hurdle: 52.40%, p=0.5468)
+- ℹ️ Net Profit Factor: 0.62 (Null p95 Hurdle: 0.00, p=0.5000)
+- ℹ️ Net Win Rate: 46.90% (Null p95 Hurdle: 0.00%, p=0.5000)
 - ℹ️ Max Drawdown (R): 4846.73R
-- ℹ️ Sharpe Ratio: -2.64 (p=0.8886)
+- ℹ️ Sharpe Ratio: -2.64 (p=0.0119)
 - ℹ️ Median Stop % of Price: 0.88%
 - ℹ️ Cost Drag in R per Trade: +0.0919R
 - ℹ️ Median Holding Time: 2 bars (2h)
@@ -247,6 +328,33 @@ In Phase 2, we established the empirical null hypothesis ($H_0$) across 1,000 Mo
 | `SUIUSDT` | 1187 | 48.1% | 0.67 (0.80) | $-21,772.00 | -0.1834R (-0.0983R) |
 | `XRPUSDT` | 2430 | 47.8% | 0.63 (0.77) | $-50,576.37 | -0.2081R (-0.1152R) |
 
+#### Robustness Panel: LiquiditySweep
+*(Report-only diagnostics; does not modify pre-registered hypothesis verdict)*
+
+| Diagnostic Metric | Value | Reference / Standard |
+| :--- | :--- | :--- |
+| **Matched $p$-value** | `1.0000` (N=1,000) | Gate threshold $\alpha = 0.05$ |
+| **Monte Carlo Standard Error** | `SE = 0.0000` | $\sqrt{p(1-p)/N}$ |
+| **Threshold within 2 SE?** | No (threshold outside 2 SE) | $|p - \alpha| \le 2 \times SE$ |
+| **iid Bootstrap 2.5% Bound (30 seeds)** | **`0.0%`** above zero | Min: `-0.2290R`, Max: `-0.2274R` |
+| **Week-Block Bootstrap 95% CI** | `[-0.2324, -0.1989]R` | 7-day block temporal resampling |
+| **Top-10 Outlier Share of Total R** | **`-0.2%`** (`+10.31R` / `-4845.32R`) | Lower indicates broader distribution |
+| **Mean Net R Without Top-10 Outliers** | **`-0.2162R`** (vs `-0.2157R` all) | Baseline expectancy excluding windfalls |
+| **Per-Trade Standard Deviation ($s$)** | `0.9630R` | Sample trade dispersion ($ddof=1$) |
+| **Trades for 80% Power (One-sided $\alpha$)** | `N/A (mean <= 0)` | $N = \lceil ((z_{1-\alpha} + z_{0.80}) s / \mu)^2 \rceil$ |
+| **Trades for 80% Power (Two-sided $\alpha=0.05$)** | `N/A (mean <= 0)` | $N = \lceil ((1.960 + 0.842) s / \mu)^2 \rceil$ |
+
+**Calendar Year Performance Breakdown**:
+| Year | Trades ($n$) | Win Rate | Mean Net R | Total Net R |
+| :--- | :---: | :---: | :---: | :---: |
+| 2021 | 4,849 | 46.3% | -0.2128R | -1031.82R |
+| 2022 | 4,209 | 48.2% | -0.1920R | -808.11R |
+| 2023 | 3,722 | 46.6% | -0.2218R | -825.46R |
+| 2024 | 4,470 | 47.3% | -0.2177R | -972.91R |
+| 2025 | 4,110 | 46.6% | -0.2239R | -920.41R |
+| 2026 | 1,104 | 45.5% | -0.2596R | -286.61R |
+
+
 ---
 
 ### Hypothesis: Donchian4hN20
@@ -261,7 +369,7 @@ In Phase 2, we established the empirical null hypothesis ($H_0$) across 1,000 Mo
 > Max Drawdown (R): **`24.59R`** | Cumulative Net R: **`+52.17R`**  
 > Days Evaluated: **`1933 days (100.0% of dataset)`**  
 > Bootstrap 95% CI (Mean Net R): **`[-0.0162R, +0.1187R]`** (10,000 resamples)  
-> Matched Baseline Median Net EV: **`+0.0027R`** (Matched 95th Pct Hurdle: `+0.0553R`)  
+> Matched Baseline Median Net EV: **`+0.0000R`** (Matched 95th Pct Hurdle: `+0.0000R`)  
 > Sizing Mode: `fixed_risk` | Account Ruined: `NO`
 
 #### Alpha Validation Requirements:
@@ -274,10 +382,10 @@ In Phase 2, we established the empirical null hypothesis ($H_0$) across 1,000 Mo
 - ❌ Matched Rank p-value 0.0669 >= 0.025
 
 #### Diagnostics:
-- ℹ️ Net Profit Factor: 1.14 (Null p95 Hurdle: 1.04, p=0.0039)
-- ℹ️ Net Win Rate: 38.29% (Null p95 Hurdle: 52.40%, p=0.9977)
+- ℹ️ Net Profit Factor: 1.14 (Null p95 Hurdle: 0.00, p=0.5000)
+- ℹ️ Net Win Rate: 38.29% (Null p95 Hurdle: 0.00%, p=0.5000)
 - ℹ️ Max Drawdown (R): 24.59R
-- ℹ️ Sharpe Ratio: -0.19 (p=0.1138)
+- ℹ️ Sharpe Ratio: -0.19 (p=0.0070)
 - ℹ️ Median Stop % of Price: 7.60%
 - ℹ️ Cost Drag in R per Trade: +0.0288R
 - ℹ️ Median Holding Time: 60 bars (60h)
@@ -298,12 +406,39 @@ In Phase 2, we established the empirical null hypothesis ($H_0$) across 1,000 Mo
 | `SUIUSDT` | 57 | 35.1% | 1.21 (1.28) | $+490.93 | +0.0861R (+0.1075R) |
 | `XRPUSDT` | 97 | 30.9% | 0.83 (0.89) | $-676.39 | -0.0697R (-0.0420R) |
 
+#### Robustness Panel: Donchian4hN20
+*(Report-only diagnostics; does not modify pre-registered hypothesis verdict)*
+
+| Diagnostic Metric | Value | Reference / Standard |
+| :--- | :--- | :--- |
+| **Matched $p$-value** | `0.0669` (N=1,000) | Gate threshold $\alpha = 0.025$ |
+| **Monte Carlo Standard Error** | `SE = 0.0079` | $\sqrt{p(1-p)/N}$ |
+| **Threshold within 2 SE?** | No (threshold outside 2 SE) | $|p - \alpha| \le 2 \times SE$ |
+| **iid Bootstrap 2.5% Bound (30 seeds)** | **`0.0%`** above zero | Min: `-0.0204R`, Max: `-0.0149R` |
+| **Week-Block Bootstrap 95% CI** | `[-0.0278, +0.1319]R` | 7-day block temporal resampling |
+| **Top-10 Outlier Share of Total R** | **`112.1%`** (`+58.51R` / `+52.17R`) | Lower indicates broader distribution |
+| **Mean Net R Without Top-10 Outliers** | **`-0.0061R`** (vs `+0.0495R` all) | Baseline expectancy excluding windfalls |
+| **Per-Trade Standard Deviation ($s$)** | `1.1281R` | Sample trade dispersion ($ddof=1$) |
+| **Trades for 80% Power (One-sided $\alpha$)** | `4,077` | $N = \lceil ((z_{1-\alpha} + z_{0.80}) s / \mu)^2 \rceil$ |
+| **Trades for 80% Power (Two-sided $\alpha=0.05$)** | `4,937` | $N = \lceil ((1.960 + 0.842) s / \mu)^2 \rceil$ |
+
+**Calendar Year Performance Breakdown**:
+| Year | Trades ($n$) | Win Rate | Mean Net R | Total Net R |
+| :--- | :---: | :---: | :---: | :---: |
+| 2021 | 219 | 35.2% | -0.0427R | -9.34R |
+| 2022 | 186 | 43.5% | +0.0548R | +10.19R |
+| 2023 | 208 | 37.0% | +0.1084R | +22.55R |
+| 2024 | 201 | 39.8% | +0.0646R | +12.99R |
+| 2025 | 181 | 38.7% | +0.1264R | +22.88R |
+| 2026 | 60 | 31.7% | -0.1181R | -7.08R |
+
+
 ---
 
 ### Hypothesis: Donchian4hN55
 **Concept:** 4h Donchian Breakout N=55 + ATR(14) 3R Trailing Stop (H1b)
 
-> **Statistical Verdict**: **`VALIDATED (p < 0.025)`**  
+> **Statistical Verdict**: **`PASSED DEV GATE (see robustness) (p < 0.025)`**  
 > Matched Rank $p$-value: **`p = 0.0240`** (Empirical rank within 1,000 matched null passes)  
 > Matched Null Dropped Trade Share: **`0.00%`**  
 > Total Candidate Signals: `5274` | Executed Trades: `832`  
@@ -312,7 +447,7 @@ In Phase 2, we established the empirical null hypothesis ($H_0$) across 1,000 Mo
 > Max Drawdown (R): **`16.69R`** | Cumulative Net R: **`+65.56R`**  
 > Days Evaluated: **`1933 days (100.0% of dataset)`**  
 > Bootstrap 95% CI (Mean Net R): **`[+0.0021R, +0.1590R]`** (10,000 resamples)  
-> Matched Baseline Median Net EV: **`-0.0012R`** (Matched 95th Pct Hurdle: `+0.0620R`)  
+> Matched Baseline Median Net EV: **`+0.0000R`** (Matched 95th Pct Hurdle: `+0.0000R`)  
 > Sizing Mode: `fixed_risk` | Account Ruined: `NO`
 
 #### Alpha Validation Requirements:
@@ -326,10 +461,10 @@ In Phase 2, we established the empirical null hypothesis ($H_0$) across 1,000 Mo
 - None
 
 #### Diagnostics:
-- ℹ️ Net Profit Factor: 1.22 (Null p95 Hurdle: 1.04, p=0.0004)
-- ℹ️ Net Win Rate: 37.62% (Null p95 Hurdle: 52.40%, p=0.9988)
+- ℹ️ Net Profit Factor: 1.22 (Null p95 Hurdle: 0.00, p=0.5000)
+- ℹ️ Net Win Rate: 37.62% (Null p95 Hurdle: 0.00%, p=0.5000)
 - ℹ️ Max Drawdown (R): 16.69R
-- ℹ️ Sharpe Ratio: 0.47 (p=0.0314)
+- ℹ️ Sharpe Ratio: 0.47 (p=0.0060)
 - ℹ️ Median Stop % of Price: 7.55%
 - ℹ️ Cost Drag in R per Trade: +0.0264R
 - ℹ️ Median Holding Time: 52 bars (52h)
@@ -350,12 +485,39 @@ In Phase 2, we established the empirical null hypothesis ($H_0$) across 1,000 Mo
 | `SUIUSDT` | 46 | 28.3% | 1.05 (1.10) | $+93.54 | +0.0203R (+0.0404R) |
 | `XRPUSDT` | 73 | 37.0% | 1.09 (1.16) | $+235.19 | +0.0322R (+0.0560R) |
 
+#### Robustness Panel: Donchian4hN55
+*(Report-only diagnostics; does not modify pre-registered hypothesis verdict)*
+
+| Diagnostic Metric | Value | Reference / Standard |
+| :--- | :--- | :--- |
+| **Matched $p$-value** | `0.0240` (N=1,000) | Gate threshold $\alpha = 0.025$ |
+| **Monte Carlo Standard Error** | `SE = 0.0048` | $\sqrt{p(1-p)/N}$ |
+| **Threshold within 2 SE?** | ⚠️ **YES (p is within 2 MC SE of threshold)** | $|p - \alpha| \le 2 \times SE$ |
+| **iid Bootstrap 2.5% Bound (30 seeds)** | **`93.3%`** above zero | Min: `-0.0018R`, Max: `+0.0078R` |
+| **Week-Block Bootstrap 95% CI** | `[-0.0151, +0.1796]R` | 7-day block temporal resampling |
+| **Top-10 Outlier Share of Total R** | **`82.0%`** (`+53.76R` / `+65.56R`) | Lower indicates broader distribution |
+| **Mean Net R Without Top-10 Outliers** | **`+0.0144R`** (vs `+0.0788R` all) | Baseline expectancy excluding windfalls |
+| **Per-Trade Standard Deviation ($s$)** | `1.1415R` | Sample trade dispersion ($ddof=1$) |
+| **Trades for 80% Power (One-sided $\alpha$)** | `1,648` | $N = \lceil ((z_{1-\alpha} + z_{0.80}) s / \mu)^2 \rceil$ |
+| **Trades for 80% Power (Two-sided $\alpha=0.05$)** | `1,995` | $N = \lceil ((1.960 + 0.842) s / \mu)^2 \rceil$ |
+
+**Calendar Year Performance Breakdown**:
+| Year | Trades ($n$) | Win Rate | Mean Net R | Total Net R |
+| :--- | :---: | :---: | :---: | :---: |
+| 2021 | 176 | 35.8% | +0.0582R | +10.25R |
+| 2022 | 142 | 40.1% | +0.0270R | +3.83R |
+| 2023 | 171 | 36.3% | +0.1357R | +23.21R |
+| 2024 | 166 | 39.2% | +0.0789R | +13.11R |
+| 2025 | 138 | 39.9% | +0.1313R | +18.11R |
+| 2026 | 39 | 28.2% | -0.0755R | -2.94R |
+
+
 ---
 
 ## 4. Strategic Implications for Discretionary Terminal
 
-1. **Validated Setups (1/6)**:
-   The following strategies met all alpha validation criteria ($p < 0.05$, positive bootstrap CI lower bound):
+1. **Passed Dev Gate (see robustness) (1/6)**:
+   The following strategies met all pre-registered dev gate criteria ($p < 0.05$, positive bootstrap CI lower bound):
    - **Donchian4hN55**: Net EV = `+0.0788R` (Gross: `+0.1047R`), Net PF = `1.22`, Bootstrap 95% CI = `[+0.0021, +0.1590]R`, Matched Rank $p$-value = `0.0240`
 
 2. **Unvalidated Patterns**:

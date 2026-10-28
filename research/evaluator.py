@@ -396,7 +396,7 @@ class StrategyEvaluator:
             and has_significant_p
         )
         sig_str = f"{significance_level:.3g}"
-        verdict = f"VALIDATED (p < {sig_str})" if is_validated else f"REJECTED (p >= {sig_str})"
+        verdict = f"PASSED DEV GATE (see robustness) (p < {sig_str})" if is_validated else f"REJECTED (p >= {sig_str})"
 
         passed: List[str] = []
         failed: List[str] = []
