@@ -5,7 +5,7 @@ Executes a single named hypothesis against strictly out-of-sample holdout data
 (candles recorded after DEVELOPMENT_END = 2026-04-18).
 Guarantees one-pass audit integrity:
 - Refuses execution if the strategy's source file has already been evaluated on holdout.
-- Appends audit record (strategy, timestamp, git_hash) to research/reports/holdout_log.csv.
+- Appends audit record (strategy, timestamp, git_hash, commit_hash, status) to research/reports/holdout_log.csv.
 """
 
 import argparse
@@ -21,7 +21,7 @@ from typing import Any, Dict, List, Optional, Tuple, Type
 import numpy as np
 import pandas as pd
 
-from data.loader import DEVELOPMENT_END, candles_to_array, load_candles
+from data.loader import DEVELOPMENT_END, candles_to_array, load_all_funding_rates, load_candles
 from engine.simulator import CandidateSignal, SimulationResult, simulate_portfolio_signals
 from research.strategies.base import BaseStrategy
 from research.strategies.confluence_threshold import ConfluenceThresholdStrategy
@@ -106,6 +106,27 @@ def get_source_file_git_hash(source_file: str) -> str:
         ) from e
 
 
+def get_head_commit_hash() -> str:
+    """
+    Get full 40-character HEAD commit hash via git rev-parse HEAD.
+    Raises RuntimeError if git rev-parse fails; never returns 'unknown'.
+    """
+    try:
+        res = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=True,
+        )
+        h = res.stdout.strip()
+        if len(h) == 40 and all(c in "0123456789abcdefABCDEF" for c in h):
+            return h
+        raise RuntimeError(f"Unexpected HEAD commit hash format: '{h}'")
+    except (subprocess.SubprocessError, OSError) as e:
+        raise RuntimeError(f"Failed to get HEAD commit hash via 'git rev-parse HEAD': {e}") from e
+
+
 def check_working_tree_clean(strategy_source_file: str) -> List[str]:
     """
     Check if the git working tree has uncommitted changes to the strategy source file
@@ -143,12 +164,22 @@ def is_holdout_run_recorded(
     try:
         with open(log_path, "r", encoding="utf-8") as f:
             reader = csv.reader(f)
-            next(reader, None)  # Advance past header row
+            header = next(reader, None)  # Advance past header row
+            status_idx = 4
+            hash_idx = 2
+            if header:
+                lower_header = [h.strip().lower() for h in header]
+                if "status" in lower_header:
+                    status_idx = lower_header.index("status")
+                elif len(lower_header) == 4:
+                    status_idx = 3
+                if "git_hash" in lower_header:
+                    hash_idx = lower_header.index("git_hash")
             for row in reader:
-                if len(row) >= 3:
+                if len(row) > hash_idx:
                     strat_recorded = row[0].strip().lower()
-                    hash_recorded = row[2].strip().lower()
-                    status = row[3].strip().lower() if len(row) >= 4 else "completed"
+                    hash_recorded = row[hash_idx].strip().lower()
+                    status = row[status_idx].strip().lower() if len(row) > status_idx else "completed"
                     if (
                         strat_recorded == strategy_name.lower()
                         and hash_recorded == git_hash.lower()
@@ -170,11 +201,18 @@ def is_strategy_name_recorded(
     try:
         with open(log_path, "r", encoding="utf-8") as f:
             reader = csv.reader(f)
-            next(reader, None)  # Advance past header row
+            header = next(reader, None)  # Advance past header row
+            status_idx = 4
+            if header:
+                lower_header = [h.strip().lower() for h in header]
+                if "status" in lower_header:
+                    status_idx = lower_header.index("status")
+                elif len(lower_header) == 4:
+                    status_idx = 3
             for row in reader:
                 if len(row) >= 1:
                     strat_recorded = row[0].strip().lower()
-                    status = row[3].strip().lower() if len(row) >= 4 else "completed"
+                    status = row[status_idx].strip().lower() if len(row) > status_idx else "completed"
                     if strat_recorded == strategy_name.lower() and status == "completed":
                         return True
     except Exception as e:
@@ -186,18 +224,20 @@ def record_holdout_run(
     strategy_name: str,
     git_hash: str,
     status: str = "completed",
+    commit_hash: Optional[str] = None,
     log_path: str = DEFAULT_HOLDOUT_LOG,
     timestamp: Optional[str] = None,
 ):
-    """Atomically append a run entry with status to research/reports/holdout_log.csv."""
+    """Atomically append a run entry with status and commit_hash to research/reports/holdout_log.csv."""
     os.makedirs(os.path.dirname(log_path), exist_ok=True)
     file_exists = os.path.exists(log_path) and os.path.getsize(log_path) > 0
     ts = timestamp or datetime.now(timezone.utc).isoformat()
+    c_hash = commit_hash if commit_hash is not None else get_head_commit_hash()
     with open(log_path, "a", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         if not file_exists:
-            writer.writerow(["strategy", "timestamp", "git_hash", "status"])
-        writer.writerow([strategy_name, ts, git_hash, status])
+            writer.writerow(["strategy", "timestamp", "git_hash", "commit_hash", "status"])
+        writer.writerow([strategy_name, ts, git_hash, c_hash, status])
 
 
 def run_holdout_check(
@@ -230,6 +270,7 @@ def run_holdout_check(
         )
 
     git_hash = get_source_file_git_hash(source_path)
+    commit_hash = get_head_commit_hash()
 
     # 1. Check holdout lock: refuse reruns on identical source code
     if is_holdout_run_recorded(canonical_name, git_hash, log_path=log_path):
@@ -250,7 +291,13 @@ def run_holdout_check(
         warnings.warn(msg, UserWarning)
 
     # Record start in CSV ledger
-    record_holdout_run(canonical_name, git_hash, status="started", log_path=log_path)
+    record_holdout_run(
+        canonical_name,
+        git_hash,
+        status="started",
+        commit_hash=commit_hash,
+        log_path=log_path,
+    )
 
     try:
         # 2. Ingest candles: load full history for indicator warm-up
@@ -294,6 +341,13 @@ def run_holdout_check(
             holdout_sigs = [s for s in sym_sigs if s.timestamp_ms > dev_end_ms]
             all_candidates.extend(holdout_sigs)
 
+        funding_dir = (
+            os.path.join(os.path.dirname(data_dir), "funding")
+            if data_dir.endswith("candles")
+            else "data/funding"
+        )
+        funding_rates = load_all_funding_rates(syms, data_dir=funding_dir, allow_holdout=True)
+
         # 4. Simulate portfolio execution across holdout passing strategy's exit_config
         sim_res: SimulationResult = simulate_portfolio_signals(
             candidates=all_candidates,
@@ -301,12 +355,25 @@ def run_holdout_check(
             bar_index_map=bar_index_map,
             sizing_mode=sizing_mode,
             exit_config=strat_cfg,
+            funding_rates=funding_rates,
         )
 
         # Record successful completion in holdout log
-        record_holdout_run(canonical_name, git_hash, status="completed", log_path=log_path)
+        record_holdout_run(
+            canonical_name,
+            git_hash,
+            status="completed",
+            commit_hash=commit_hash,
+            log_path=log_path,
+        )
     except Exception:
-        record_holdout_run(canonical_name, git_hash, status="failed", log_path=log_path)
+        record_holdout_run(
+            canonical_name,
+            git_hash,
+            status="failed",
+            commit_hash=commit_hash,
+            log_path=log_path,
+        )
         raise
 
     # 5. Print summary
@@ -315,6 +382,7 @@ def run_holdout_check(
     print("=" * 80)
     print(f"Source File:         {source_path}")
     print(f"Source Git Hash:     {git_hash}")
+    print(f"HEAD Commit Hash:    {commit_hash}")
     print(f"Holdout Window:      > {DEVELOPMENT_END} to {max_holdout_str}")
     print(f"Signals Generated:   {len(all_candidates):,}")
     print(f"Trades Executed:     {sim_res.total_trades:,}")
@@ -329,6 +397,7 @@ def run_holdout_check(
     return {
         "strategy": canonical_name,
         "git_hash": git_hash,
+        "commit_hash": commit_hash,
         "total_trades": sim_res.total_trades,
         "win_rate_pct": sim_res.win_rate_pct,
         "profit_factor": sim_res.profit_factor,

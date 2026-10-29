@@ -392,6 +392,10 @@ def test_download_funding_rates_roundtrip():
             loaded = pd.read_parquet(parquet_path)
             assert len(loaded) == 2
             assert loaded["calc_time"].iloc[0] == 1704067200000
+
+        # Verify alias download_funding_rates_futures
+        from data.downloader import download_funding_rates_futures
+        assert download_funding_rates_futures is download_funding_rates
     finally:
         shutil.rmtree(temp_dir)
 

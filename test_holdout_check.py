@@ -2,6 +2,7 @@
 Unit tests for locked holdout loader protection and research.holdout_check CLI.
 """
 
+import csv
 import os
 import shutil
 import tempfile
@@ -13,6 +14,7 @@ import pytest
 from data.loader import DEVELOPMENT_END, clear_cache, load_candles
 from research.holdout_check import (
     check_working_tree_clean,
+    get_head_commit_hash,
     get_source_file_git_hash,
     is_holdout_run_recorded,
     record_holdout_run,
@@ -72,14 +74,17 @@ def test_holdout_command_logs_and_blocks_reruns():
             lines = [line.strip() for line in f if line.strip()]
 
         assert len(lines) == 3  # Header + started + completed records
-        assert lines[0] == "strategy,timestamp,git_hash,status"
+        assert lines[0] == "strategy,timestamp,git_hash,commit_hash,status"
         cols_started = lines[1].split(",")
         cols_completed = lines[2].split(",")
         assert cols_started[0] == "TrendPullback"
-        assert cols_started[3] == "started"
+        assert len(cols_started[2]) == 40  # 40-character source blob hash
+        assert len(cols_started[3]) == 40  # 40-character commit hash
+        assert cols_started[4] == "started"
         assert cols_completed[0] == "TrendPullback"
-        assert len(cols_completed[2]) == 40  # 40-character git hash
-        assert cols_completed[3] == "completed"
+        assert len(cols_completed[2]) == 40  # 40-character source blob hash
+        assert len(cols_completed[3]) == 40  # 40-character commit hash
+        assert cols_completed[4] == "completed"
 
         # 3. Second run must be BLOCKED
         with pytest.raises(RuntimeError, match="Holdout run blocked"):
@@ -156,7 +161,7 @@ def test_holdout_check_failed_run_does_not_count_as_evaluated():
         with open(log_path, "r", encoding="utf-8") as f:
             lines = [line.strip() for line in f if line.strip()]
         assert len(lines) == 3
-        assert lines[0] == "strategy,timestamp,git_hash,status"
+        assert lines[0] == "strategy,timestamp,git_hash,commit_hash,status"
         assert lines[1].endswith(",started")
         assert lines[2].endswith(",failed")
 
@@ -221,6 +226,7 @@ def test_holdout_check_applies_strategy_exit_config_donchian_trailing():
         assert passed_cfg is not None
         assert passed_cfg.exit_mode == "trailing_1r", f"Expected exit_mode='trailing_1r', got '{passed_cfg.exit_mode}'"
         assert passed_cfg.trail_dist_r == 1.0
+        assert "funding_rates" in captured_kwargs
 
         # Confirm that executed trades do NOT exit via stepped take-profit rules (TP1 or TP2)
         sim_res = res["sim_result"]
@@ -290,5 +296,58 @@ def test_check_working_tree_clean_behavior():
         assert not path.startswith("ngine/"), f"Path truncated: {path}"
         assert not path.startswith("ndicators"), f"Path truncated: {path}"
         assert not path.startswith("esearch/"), f"Path truncated: {path}"
+
+
+def test_holdout_records_head_commit_hash():
+    """
+    Verify get_head_commit_hash retrieves the current commit hash and
+    run_holdout_check / record_holdout_run record HEAD commit hash in holdout_log.csv.
+    """
+    # 1. get_head_commit_hash returns 40-character hex string
+    commit_h = get_head_commit_hash()
+    assert len(commit_h) == 40
+    assert commit_h != "unknown"
+    assert all(c in "0123456789abcdefABCDEF" for c in commit_h)
+
+    # 2. get_head_commit_hash fails loudly when git fails
+    with patch("subprocess.run", side_effect=OSError("git failure")):
+        with pytest.raises(RuntimeError, match="Failed to get HEAD commit hash"):
+            get_head_commit_hash()
+
+    # 3. get_head_commit_hash fails loudly when output format is invalid
+    with patch("subprocess.run") as mock_run:
+        mock_run.return_value.stdout = "short_hash\n"
+        with pytest.raises(RuntimeError, match="Unexpected HEAD commit hash format"):
+            get_head_commit_hash()
+
+    # 4. Verify record_holdout_run and run_holdout_check record commit_hash in CSV
+    temp_dir = tempfile.mkdtemp()
+    try:
+        log_path = os.path.join(temp_dir, "holdout_log.csv")
+        mock_commit = "deadbeef1234567890abcdef1234567890abcdef"
+        with patch("research.holdout_check.get_head_commit_hash", return_value=mock_commit):
+            res = run_holdout_check(
+                strategy_name="TrendPullback",
+                symbols=["BTCUSDT"],
+                log_path=log_path,
+            )
+            assert res["commit_hash"] == mock_commit
+
+            with open(log_path, "r", encoding="utf-8") as f:
+                reader = list(csv.reader(f))
+
+            assert len(reader) == 3
+            assert reader[0] == ["strategy", "timestamp", "git_hash", "commit_hash", "status"]
+            # started row
+            assert reader[1][0] == "TrendPullback"
+            assert reader[1][3] == mock_commit
+            assert reader[1][4] == "started"
+            # completed row
+            assert reader[2][0] == "TrendPullback"
+            assert reader[2][3] == mock_commit
+            assert reader[2][4] == "completed"
+    finally:
+        shutil.rmtree(temp_dir)
+
 
 

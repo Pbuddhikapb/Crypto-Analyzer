@@ -37,6 +37,10 @@ class SimulationFriction:
     funding_rate_8h_pct: float = 0.01  # 0.01% conservative funding drag per 8 hours
 
 
+# Maximum permissible fraction of funding periods falling back to flat rate (1.0%)
+MAX_FUNDING_FALLBACK_FRACTION: float = 0.01
+
+
 from domain.signals import CandidateSignal as CandidateSignal
 
 
@@ -937,6 +941,7 @@ def simulate_portfolio_signals(
     ruin_threshold_usd: Optional[float] = None,
     bar_interval_ms: Optional[int] = None,
     funding_rates: Optional[Dict[str, Any]] = None,
+    max_funding_fallback_fraction: Optional[float] = None,
 ) -> SimulationResult:
     """
     Simulate portfolio execution of candidate signals using SimulationEngine, enforcing:
@@ -1116,6 +1121,20 @@ def simulate_portfolio_signals(
             f"simulate_portfolio_signals: dropped trade fraction {dropped_trade_fraction:.4%} "
             f"exceeds 0.5% threshold ({unfinished_trades}/{total_attempted} trades dropped)"
         )
+
+    eff_max_fallback = (
+        max_funding_fallback_fraction
+        if max_funding_fallback_fraction is not None
+        else (MAX_FUNDING_FALLBACK_FRACTION if funding_rates else None)
+    )
+    if eff_max_fallback is not None and engine.funding_total_periods > 0:
+        fallback_fraction = engine.funding_fallback_periods / engine.funding_total_periods
+        if fallback_fraction > eff_max_fallback:
+            raise ValueError(
+                f"simulate_portfolio_signals: funding fallback fraction {fallback_fraction:.4%} "
+                f"({engine.funding_fallback_periods}/{engine.funding_total_periods} periods) "
+                f"exceeds maximum allowed threshold of {eff_max_fallback:.2%}"
+            )
 
     # Compute days evaluated if candles_dict has timestamps
     summary = engine.compute_summary()

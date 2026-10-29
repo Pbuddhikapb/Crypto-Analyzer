@@ -1078,7 +1078,7 @@ def test_funding_fallback_period_counter():
     assert res_fallback.funding_total_periods == 3
     assert res_fallback.funding_fallback_periods == 3
 
-    # 2. Dynamic funding_rates map provided with 1 period defined and 2 missing
+    # 2. Dynamic funding_rates map provided with 1 period defined and 2 missing (override threshold to 1.0 to test counter)
     p0 = t0 // (8 * 3600 * 1000)
     # Define funding rate only for second period (p0 + 2)
     dynamic_rates = {
@@ -1091,9 +1091,127 @@ def test_funding_fallback_period_counter():
         candles_dict=candles,
         bar_index_map=bar_map,
         funding_rates=dynamic_rates,
+        max_funding_fallback_fraction=1.0,
     )
     assert res_mixed.funding_total_periods == 3
     assert res_mixed.funding_fallback_periods == 2  # 1 dynamic, 2 fallbacks
+
+
+def test_funding_fallback_threshold_failure():
+    """Verify simulate_portfolio_signals fails when funding fallback fraction exceeds 1% threshold."""
+    from engine.simulator import MAX_FUNDING_FALLBACK_FRACTION
+
+    assert MAX_FUNDING_FALLBACK_FRACTION == 0.01
+
+    interval_ms = 3600 * 1000
+    t0 = 1700000000000
+    bars = []
+    for i in range(25):
+        t = t0 + i * interval_ms
+        bars.append([100.0, 105.0, 95.0, 100.0, t, 1000.0])
+    candles = {"BTCUSDT": np.array(bars, dtype=np.float64)}
+    bar_map = {"BTCUSDT": {int(bars[i][4]): i for i in range(len(bars))}}
+
+    sig = CandidateSignal(
+        symbol="BTCUSDT",
+        side="LONG",
+        entry_price=100.0,
+        stop_loss=90.0,
+        timestamp_ms=t0,
+    )
+
+    # 1. Dynamic rates with 2/3 periods missing (66.7% fallback > 1% threshold) raises ValueError
+    p0 = t0 // (8 * 3600 * 1000)
+    dynamic_rates = {"BTCUSDT": {p0 + 2: 0.0002}}
+    with pytest.raises(ValueError, match="funding fallback fraction 66.6667% .* exceeds maximum allowed threshold"):
+        simulate_portfolio_signals(
+            candidates=[sig],
+            candles_dict=candles,
+            bar_index_map=bar_map,
+            funding_rates=dynamic_rates,
+        )
+
+    # 2. Complete dynamic rates with 0/3 periods missing succeeds
+    full_dynamic_rates = {
+        "BTCUSDT": {
+            p0 + 1: 0.0001,
+            p0 + 2: 0.0002,
+            p0 + 3: 0.00015,
+        }
+    }
+    res_full = simulate_portfolio_signals(
+        candidates=[sig],
+        candles_dict=candles,
+        bar_index_map=bar_map,
+        funding_rates=full_dynamic_rates,
+    )
+    assert res_full.funding_total_periods == 3
+    assert res_full.funding_fallback_periods == 0
+
+    # 3. Explicitly configured max_funding_fallback_fraction=0.8 permits 66.7% fallback
+    res_permissive = simulate_portfolio_signals(
+        candidates=[sig],
+        candles_dict=candles,
+        bar_index_map=bar_map,
+        funding_rates=dynamic_rates,
+        max_funding_fallback_fraction=0.8,
+    )
+    assert res_permissive.funding_fallback_periods == 2
+
+
+def test_load_all_funding_rates_and_dev_holdout_boundary(tmp_path):
+    """Verify load_all_funding_rates and dev window filtering against DEVELOPMENT_END."""
+    import pandas as pd
+    from data.loader import DEVELOPMENT_END, clear_funding_cache, load_all_funding_rates, load_funding_rates
+
+    funding_dir = tmp_path / "funding"
+    funding_dir.mkdir(parents=True)
+
+    dev_end_ms = int(pd.to_datetime(DEVELOPMENT_END, utc=True).timestamp() * 1000)
+
+    # Two records: one before dev end, one after dev end
+    df_btc = pd.DataFrame([
+        {
+            "calc_time": dev_end_ms - 3600000,
+            "datetime": pd.to_datetime(dev_end_ms - 3600000, unit="ms", utc=True),
+            "funding_interval_hours": 8,
+            "last_funding_rate": 0.0001,
+            "symbol": "BTCUSDT",
+        },
+        {
+            "calc_time": dev_end_ms + 3600000,
+            "datetime": pd.to_datetime(dev_end_ms + 3600000, unit="ms", utc=True),
+            "funding_interval_hours": 8,
+            "last_funding_rate": 0.0002,
+            "symbol": "BTCUSDT",
+        },
+    ])
+    df_btc.to_parquet(funding_dir / "BTCUSDT.parquet")
+
+    clear_funding_cache()
+
+    try:
+        # 1. Default (allow_holdout=False) returns only dev record
+        dev_rates = load_funding_rates("BTCUSDT", data_dir=str(funding_dir), allow_holdout=False)
+        assert dev_rates is not None
+        assert len(dev_rates) == 1
+        assert dev_rates["last_funding_rate"].iloc[0] == 0.0001
+
+        # 2. Explicit allow_holdout=True returns both records
+        clear_funding_cache()
+        all_rates = load_funding_rates("BTCUSDT", data_dir=str(funding_dir), allow_holdout=True)
+        assert all_rates is not None
+        assert len(all_rates) == 2
+
+        # 3. load_all_funding_rates maps symbol to DataFrame
+        clear_funding_cache()
+        universe_rates = load_all_funding_rates(["BTCUSDT", "MISSINGUSDT"], data_dir=str(funding_dir), allow_holdout=False)
+        assert "BTCUSDT" in universe_rates
+        assert "MISSINGUSDT" not in universe_rates
+        assert len(universe_rates["BTCUSDT"]) == 1
+    finally:
+        clear_funding_cache()
+
 
 
 

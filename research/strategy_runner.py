@@ -23,7 +23,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 
-from data.loader import candles_to_array, load_candles
+from data.loader import candles_to_array, load_all_funding_rates, load_candles
 from engine.exits import ExitConfig
 from engine.simulator import (
     CandidateSignal,
@@ -296,6 +296,7 @@ def run_strategy_evidence_validation(
     universe_name: str = DEFAULT_UNIVERSE,
     only_strategy: Optional[str] = None,
     data_dir: str = "data/candles",
+    funding_dir: str = "data/funding",
     output_report_path: str = "research/reports/strategy_validation_report.md",
     output_json_path: str = "research/reports/strategy_results.json",
     log_md_path: str = "research/preregistration/LOG.md",
@@ -339,6 +340,17 @@ def run_strategy_evidence_validation(
 
         # Fast lookup mapping: open_time_ms -> bar_idx
         bar_index_map[sym] = {int(arr[idx, 4]): idx for idx in range(len(arr))}
+
+    f_dir = funding_dir
+    if funding_dir == "data/funding" and data_dir != "data/candles":
+        candidate_fdir = os.path.join(os.path.dirname(data_dir), "funding")
+        if os.path.exists(candidate_fdir):
+            f_dir = candidate_fdir
+    funding_rates = load_all_funding_rates(syms, data_dir=f_dir, allow_holdout=False)
+    if funding_rates:
+        logger.info(f"Loaded funding rate history for {len(funding_rates)} symbols from '{f_dir}'.")
+    else:
+        logger.warning(f"No funding rate archives found in '{f_dir}'; flat fallback rate will apply.")
 
     logger.info("Loaded datasets. Initializing trading hypotheses...")
 
@@ -411,6 +423,7 @@ def run_strategy_evidence_validation(
             sizing_mode=sizing_mode,
             ruin_threshold_usd=ruin_threshold_usd,
             exit_config=strat_cfg,
+            funding_rates=funding_rates,
         )
 
         # Compute bootstrap 95% CI on mean net R (10,000 resamples, seeded)

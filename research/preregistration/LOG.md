@@ -6,7 +6,9 @@ H1b (Donchian4hN55): 10,000 matched baseline passes completed. matched p = 0.019
 Universes U4/U5 defined on 2026-10-28 before any results for them were viewed, for operational monitoring and future hypotheses. H1 primary evidence stays on U10.
 
 H1b (Donchian4hN55) Holdout Run Preregistration:
-- Strategy: Donchian4hN55 (source blob hash: 7697ee8f5d1657febdb2378d7896593cc560e83a)
+- Strategy: Donchian4hN55 (source blob hash: 991dd2aff1df5eb14e06214ecf7597078e947cf4)
+- Commit Hash: c72980905c24d4eacf2c6a8b6eccdc880fe1e0f2
+- Dependency Blob Hashes: indicators.py (1c403c972155b1dc722619b789f12d31d123ac17), engine/exits.py (1f8a8882f88039a44a762dc1286d1f7d680ac0e0)
 - Effective Execution Config: Identical to dev run (ExitConfig: trailing_1r, trail_dist_r=1.0; Friction: taker 0.05%, maker 0.02%, slippage 0.03%, funding 0.01%/8h; Sizing: fixed_risk 1.0%, max 3 open positions, max 2 directional, max leverage 3.0x, cooldown 3 bars).
 - Out-of-Sample Holdout Window: post-2026-04-18 00:00:00 UTC through 2026-10-19 23:00:00 UTC (185.0 days, 4,439 1h bars, 1,109 4h bars across 10 symbols in U10; 0 gaps).
 - Expected Sample Size & Statistical Power: At dev trade rate (832 trades / 5.29 yrs = 157.28 trades/yr), expected holdout trade count is ~80 trades (79.66). Standard error is ~0.1276R. Statistical power at dev mean (+0.0788R) and SD (1.1415R) is only ~8.97% at alpha=0.025 and ~15.21% at alpha=0.050. Achieving 80% power at alpha=0.025 would require ~1,648 trades (~10.5 years).

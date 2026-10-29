@@ -17,7 +17,7 @@ import time
 import urllib.error
 import urllib.request
 import zipfile
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
@@ -554,9 +554,35 @@ def download_funding_rates(
     return full_df
 
 
+def download_universe_funding(
+    symbols: Optional[Sequence[str]] = None,
+    start_year: int = 2021,
+    start_month: int = 1,
+    end_year: int = 2026,
+    end_month: int = 10,
+    output_dir: str = "data/funding",
+) -> Dict[str, pd.DataFrame]:
+    """Download official Binance USD-M Futures funding rate history for all universe symbols."""
+    syms = symbols or DEFAULT_SYMBOLS
+    res: Dict[str, pd.DataFrame] = {}
+    for sym in syms:
+        df = download_funding_rates(
+            symbol=sym,
+            start_year=start_year,
+            start_month=start_month,
+            end_year=end_year,
+            end_month=end_month,
+            output_dir=output_dir,
+        )
+        res[sym] = df
+    return res
+
+
 # Backwards-compatible aliases
 download_candles = download_candles_futures
 download_universe = download_universe_futures
+download_funding_rates_futures = download_funding_rates
+download_universe_funding_futures = download_universe_funding
 
 
 def main():
@@ -608,10 +634,27 @@ def main():
         action="store_true",
         help="Only verify existing Parquet files without downloading",
     )
+    parser.add_argument(
+        "--funding",
+        action="store_true",
+        help="Download official USD-M Futures funding rate archives instead of candle data",
+    )
 
     args = parser.parse_args()
     symbols = [s.strip().upper() for s in args.symbols.split(",") if s.strip()]
     timeframes = [t.strip().lower() for t in args.timeframes.split(",") if t.strip()]
+
+    if args.funding:
+        funding_dir = args.output_dir if args.output_dir != "data/candles" else "data/funding"
+        download_universe_funding(
+            symbols=symbols,
+            start_year=args.start_year,
+            start_month=args.start_month,
+            end_year=args.end_year,
+            end_month=args.end_month,
+            output_dir=funding_dir,
+        )
+        return
 
     if args.verify_only:
         all_passed = True

@@ -6,7 +6,7 @@ instantaneous cached in-memory retrieval for multi-pass Monte Carlo runs.
 """
 
 import os
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
@@ -88,33 +88,92 @@ def clear_cache():
     _FUNDING_CACHE.clear()
 
 
-_FUNDING_CACHE: Dict[str, pd.DataFrame] = {}
+_FUNDING_CACHE: Dict[Tuple[str, str, bool, Optional[str], Optional[str]], pd.DataFrame] = {}
 
 
 def load_funding_rates(
     symbol: str,
     data_dir: str = "data/funding",
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
     use_cache: bool = True,
+    allow_holdout: bool = False,
 ) -> Optional[pd.DataFrame]:
     """
     Load historical funding rate records for a symbol from the Parquet data lake.
+
+    Enforces out-of-sample holdout protection: by default (allow_holdout=False),
+    returns only funding periods where datetime <= DEVELOPMENT_END (2026-04-18).
 
     Returns DataFrame with columns ['calc_time', 'datetime', 'funding_interval_hours', 'last_funding_rate', 'symbol']
     or None if the archive does not exist.
     """
     sym = symbol.upper()
-    if use_cache and sym in _FUNDING_CACHE:
-        return _FUNDING_CACHE[sym].copy()
+    resolved_dir = os.path.abspath(data_dir)
+    cache_key = (sym, resolved_dir, allow_holdout, start_date, end_date)
+    if use_cache and cache_key in _FUNDING_CACHE:
+        return _FUNDING_CACHE[cache_key].copy()
 
     file_path = os.path.join(data_dir, f"{sym}.parquet")
     if not os.path.exists(file_path):
         return None
 
     df = pd.read_parquet(file_path)
-    if use_cache:
-        _FUNDING_CACHE[sym] = df.copy()
+    if "datetime" not in df.columns and "calc_time" in df.columns:
+        df["datetime"] = pd.to_datetime(df["calc_time"], unit="ms", utc=True)
+    elif "datetime" in df.columns:
+        df["datetime"] = pd.to_datetime(df["datetime"], utc=True)
 
-    return df.reset_index(drop=True)
+    # Apply date filters if specified
+    if start_date is not None:
+        start_dt = pd.to_datetime(start_date, utc=True)
+        df = df[df["datetime"] >= start_dt]
+
+    # Holdout protection: default returns only data up to DEVELOPMENT_END
+    if not allow_holdout:
+        dev_end_dt = pd.to_datetime(DEVELOPMENT_END, utc=True)
+        if end_date is not None:
+            user_end_dt = pd.to_datetime(end_date, utc=True)
+            effective_end_dt = min(user_end_dt, dev_end_dt)
+        else:
+            effective_end_dt = dev_end_dt
+        df = df[df["datetime"] <= effective_end_dt]
+    elif end_date is not None:
+        end_dt = pd.to_datetime(end_date, utc=True)
+        df = df[df["datetime"] <= end_dt]
+
+    df = df.reset_index(drop=True)
+    if use_cache:
+        _FUNDING_CACHE[cache_key] = df.copy()
+
+    return df
+
+
+def load_all_funding_rates(
+    symbols: Sequence[str],
+    data_dir: str = "data/funding",
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    allow_holdout: bool = False,
+    use_cache: bool = True,
+) -> Dict[str, pd.DataFrame]:
+    """
+    Load funding rate DataFrames for multiple symbols.
+    Returns a dict mapping symbol -> DataFrame for all symbols that have available data.
+    """
+    res: Dict[str, pd.DataFrame] = {}
+    for s in symbols:
+        df = load_funding_rates(
+            s,
+            data_dir=data_dir,
+            start_date=start_date,
+            end_date=end_date,
+            allow_holdout=allow_holdout,
+            use_cache=use_cache,
+        )
+        if df is not None and not df.empty:
+            res[s.upper()] = df
+    return res
 
 
 def clear_funding_cache():
