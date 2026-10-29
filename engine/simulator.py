@@ -37,18 +37,7 @@ class SimulationFriction:
     funding_rate_8h_pct: float = 0.01  # 0.01% conservative funding drag per 8 hours
 
 
-@dataclass
-class CandidateSignal:
-    """Incoming trade signal candidate."""
-
-    symbol: str
-    side: str  # 'LONG' or 'SHORT'
-    entry_price: float
-    stop_loss: float
-    timestamp_ms: int
-    score: float = 100.0
-    metadata: Dict[str, Any] = field(default_factory=dict)
-    volume: Optional[float] = None
+from domain.signals import CandidateSignal as CandidateSignal
 
 
 @dataclass
@@ -139,6 +128,7 @@ class SimulationEngine:
         sizing_mode: str = "fixed_risk",
         bar_interval_ms: Optional[int] = None,
         track_equity_curve: bool = True,
+        funding_rates: Optional[Dict[str, Any]] = None,
     ):
         self.initial_equity_usd = float(initial_equity_usd)
         self.equity_usd = float(initial_equity_usd)
@@ -159,6 +149,22 @@ class SimulationEngine:
         self.track_equity_curve = track_equity_curve
         self.ruined = False
         self.ruin_time_ms: Optional[int] = None
+
+        # Dynamic funding rate lookup: symbol -> Dict[8h_period_idx, rate_float]
+        self.funding_rate_map: Dict[str, Dict[int, float]] = {}
+        if funding_rates:
+            for s, f_data in funding_rates.items():
+                s_up = s.upper()
+                if isinstance(f_data, dict):
+                    self.funding_rate_map[s_up] = f_data
+                elif hasattr(f_data, "iterrows"):
+                    m: Dict[int, float] = {}
+                    for _, row in f_data.iterrows():
+                        t = int(row.get("calc_time", 0))
+                        r = float(row.get("last_funding_rate", 0.0))
+                        period = t // (8 * 3600 * 1000)
+                        m[period] = r
+                    self.funding_rate_map[s_up] = m
 
         # Active state
         # trade_id -> dict of trade bookkeeping
@@ -464,7 +470,22 @@ class SimulationEngine:
             current_funding_period = timestamp_ms // (8 * 3600 * 1000)
             if current_funding_period > pos["last_funding_period"]:
                 periods = current_funding_period - pos["last_funding_period"]
-                funding_drag = pos["notional_usd"] * state.size_remaining_pct * (self.friction.funding_rate_8h_pct / 100.0) * periods
+                f_map = self.funding_rate_map.get(sym)
+                if f_map is not None:
+                    total_drag = 0.0
+                    for p in range(pos["last_funding_period"] + 1, current_funding_period + 1):
+                        rate = f_map.get(p)
+                        if rate is None:
+                            rate = self.friction.funding_rate_8h_pct / 100.0
+                        if state.side == "LONG":
+                            period_drag = pos["notional_usd"] * state.size_remaining_pct * rate
+                        else:
+                            period_drag = -pos["notional_usd"] * state.size_remaining_pct * rate
+                        total_drag += period_drag
+                    funding_drag = total_drag
+                else:
+                    funding_drag = pos["notional_usd"] * state.size_remaining_pct * (self.friction.funding_rate_8h_pct / 100.0) * periods
+
                 pos["funding_cost_usd"] += funding_drag
                 self.equity_usd -= funding_drag
                 pos["last_funding_period"] = current_funding_period
@@ -776,6 +797,7 @@ def simulate_single_trade_lifecycle(
     bar_interval_ms: Optional[int] = None,
     entry_volume: Optional[float] = None,
     close_at_end_of_data: bool = False,
+    funding_rates: Optional[Dict[str, Any]] = None,
 ) -> Optional[ExecutedTrade]:
     """
     Simulate an individual trade forward from entry to exit through the Single Exit Authority
@@ -794,6 +816,7 @@ def simulate_single_trade_lifecycle(
         bar_interval_ms=bar_interval_ms,
         sizing_mode="fixed_risk",
         track_equity_curve=False,
+        funding_rates=funding_rates,
     )
 
     sig = CandidateSignal(
@@ -891,6 +914,7 @@ def simulate_portfolio_signals(
     sizing_mode: str = "fixed_risk",
     ruin_threshold_usd: Optional[float] = None,
     bar_interval_ms: Optional[int] = None,
+    funding_rates: Optional[Dict[str, Any]] = None,
 ) -> SimulationResult:
     """
     Simulate portfolio execution of candidate signals using SimulationEngine, enforcing:
@@ -934,6 +958,7 @@ def simulate_portfolio_signals(
         ruin_threshold_usd=ruin_threshold_usd,
         sizing_mode=sizing_mode,
         bar_interval_ms=eff_interval,
+        funding_rates=funding_rates,
     )
 
     sorted_signals = sorted(candidates, key=lambda s: s.timestamp_ms)
@@ -1024,6 +1049,7 @@ def simulate_portfolio_signals(
             bar_interval_ms=eff_interval,
             entry_volume=vol,
             close_at_end_of_data=True,
+            funding_rates=funding_rates,
         )
 
         if trade is None:

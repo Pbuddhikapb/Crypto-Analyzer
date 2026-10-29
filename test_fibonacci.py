@@ -130,27 +130,3 @@ def test_dealing_range_and_ote_confluence():
     assert valid_prem is False
     assert "PREMIUM" in reason_prem
 
-
-def test_trader_fibonacci_ote_blocks_premium_long():
-    from legacy.trader import PaperTrader
-
-    trader = PaperTrader(
-        symbol="BTCUSDT",
-        timeframe="15m",
-        db_path=":memory:",
-        require_fibonacci_ote=True,
-    )
-    assert trader.require_fibonacci_ote is True
-
-    # 1. Provide an upward trend with high ADX and confirmed swing low at 100, swing high at 200
-    # Then a candle close at 190 (which is in PREMIUM, retracement (200-190)/100 = 0.10 < 0.50)
-    base = 100.0
-    for i in range(60):
-        p = base + i * 1.5
-        trader.on_candle((p, p + 1.0, p - 1.0, p, 1000.0))
-
-    # At this point, the current close is at the top of the range (Premium)
-    # Long entries in Premium must be blocked by Fibonacci OTE
-    trade = trader.get_active_trade()
-    assert trade is None, "Long trade must not open in Premium zone"
-

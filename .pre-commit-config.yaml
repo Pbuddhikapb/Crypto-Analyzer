@@ -9,3 +9,12 @@ repos:
     rev: v8.18.4
     hooks:
       - id: gitleaks
+
+  - repo: local
+    hooks:
+      - id: architectural-guardrails
+        name: Architectural Boundary Guardrails
+        entry: ./venv/bin/pytest -q test_guardrails.py
+        language: system
+        pass_filenames: false
+        always_run: true

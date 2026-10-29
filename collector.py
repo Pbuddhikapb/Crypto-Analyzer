@@ -7,7 +7,7 @@ from typing import List, Optional
 import aiohttp
 import websockets
 
-from microstructure import SymbolNormalizer, get_whale_thresholds
+from market_feed import SymbolNormalizer, get_whale_thresholds
 from vault import AsyncVaultWriter, MarketDataVault
 
 DEFAULT_COLLECTOR_SYMBOLS = [

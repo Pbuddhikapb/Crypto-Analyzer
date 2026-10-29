@@ -35,47 +35,49 @@ The goal of this project is to build an **institutional-grade, real-time cryptoc
 
 ---
 
-## 3. Strict Non-Contradictory Layered Architecture
+## 3. Strict 4-Area Target Architecture
 
-To prevent architectural decay, the system is strictly decoupled into 4 backend layers and 3 frontend layers. **Dependencies flow inward only.**
+To prevent architectural decay, the system is strictly decoupled into 4 primary functional areas governed by authoritative contracts in `ARCHITECTURE.md`. **Dependencies flow strictly in one direction (A -> B -> C -> D).**
 
 ```
 ====================================================================================
-BACKEND ARCHITECTURE (Python 3.12 / FastAPI / uv)
+CRYPTO-ANALYZER FIXED TARGET ARCHITECTURE
 ====================================================================================
 
-[ LAYER 3: Delivery & Transport ]  (FastAPI REST Routes & Client WebSocket Hub)
-        │
+[ AREA D: Presentation ]       (FastAPI server.py, CLI main.py, React frontend/)
+        │                      * Consumes established domain contracts; 0 raw math *
         ▼
-[ LAYER 2: Pure Quant Engine ]     (EMAs, RSI Divergences, FVGs, OBs, Confluence)
-        │                          * Pure Math, ZERO Network, ZERO FastAPI code *
+[ AREA C: Simulation & Valid ] (engine/simulator.py, engine/exits.py, research/)
+        │                      * Single authority for exits, fees, slippage, validation *
         ▼
-[ LAYER 1: Ingestion Adapters ]    (Binance Spot/Futures REST & WebSocket normalizers)
-        │                          * Ingests dirty exchange payloads -> Domain Models *
+[ AREA B: Analysis & Signals ] (indicators.py, microstructure.py, research/strategies/)
+        │                      * SMC, EMAs, order flow, CandidateSignal zero-lookahead *
         ▼
-[ LAYER 0: Domain Contracts ]      (Pure Pydantic Models: Candle, FVGZone, OrderBook)
-                                   * The Single Source of Truth *
+[ AREA A: Data & Ingestion ]   (market_feed.py, collector.py, vault.py, data/loader.py)
+                               * Live WS/REST feeds, Parquet storage, buffer management *
 
+[ CROSS-CUTTING: Domain ]      (domain/signals.py, domain/exits.py)
+                               * Canonical contracts shared across all 4 areas *
 ====================================================================================
 FRONTEND ARCHITECTURE (React / Vite / TypeScript / Tailwind)
 ====================================================================================
 
-[ LAYER F0: Contract Types ]       (TypeScript interfaces mirroring Layer 0 1-to-1)
+[ LAYER F0: Contract Types ]   (src/types/market.ts mirroring backend domain contracts)
         │
         ▼
-[ LAYER F1: State & Transport ]    (WebSocket hooks, message dispatcher, Web Audio)
+[ LAYER F1: State & Transport ](src/state/api.ts, WebSocket hooks, message dispatcher)
         │
         ▼
-[ LAYER F2: Presentation Views ]   (TradingView Chart, Whale Tape, Order Book Ladder)
-                                   * Never touches raw WebSockets; consumes F1 state *
+[ LAYER F2: Presentation Views ](TradingView Chart, Whale Tape, Depth Ladder, Cockpit)
+                               * Never touches raw WebSockets; consumes F1 state *
 ====================================================================================
 ```
 
-### Layer Breakdown:
-* **Layer 0 (`app/domain/`)**: Immutable data models (`Candle`, `Level2Tier`, `OrderBook`, `TradeTick`, `LiquidationEvent`, `FVGZone`, `OrderBlock`, `IndicatorSnapshot`, `ConfluenceScore`). Zero imports from outside.
-* **Layer 1 (`app/adapters/`)**: Binance REST & WS handlers. If Binance alters a payload schema, **only this layer changes**.
-* **Layer 2 (`app/engine/`)**: Mathematical execution. Pure functions taking Layer 0 inputs and producing Layer 0 outputs. Testable in milliseconds with zero network mocking.
-* **Layer 3 (`app/delivery/`)**: Transport routers delivering JSON to browser clients.
+### Area Breakdown:
+* **Area A: Data (`market_feed.py`, `collector.py`, `vault.py`, `data/`)**: Live Binance Futures WS streams, REST warmup, rolling candle buffers (`CandleFeedBuffer`), historical Parquet storage.
+* **Area B: Analysis & Signals (`indicators.py`, `microstructure.py`, `research/strategies/`)**: Pure TA math (EMAs, RSI, SMC Fair Value Gaps, Order Blocks), derivatives tape (Order Book depth, whale trades, liquidation cascades, OI regimes), and candidate signal generators emitting standard `CandidateSignal` objects.
+* **Area C: Simulation & Validation (`engine/simulator.py`, `engine/exits.py`, `research/`)**: Single Exit Authority (`calculate_bracket_geometry`), realistic institutional frictions (slippage, maker/taker fees, funding costs), Monte Carlo permutation baselines ($H_0$), and holdout verification.
+* **Area D: Presentation (`server.py`, `main.py`, `frontend/`)**: FastAPI REST API, WebSocket pub/sub broadcaster, CLI radar monitor, and React terminal SPA. Always presents evidence status badges clearly distinguishing validated findings from untested hypotheses.
 
 ---
 

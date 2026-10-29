@@ -3,8 +3,7 @@ import pytest
 
 from indicators import format_price
 from main import print_multi_coin_radar, warmup_all_traders
-from risk import PortfolioRiskManager
-from legacy.trader import PaperTrader
+from market_feed import CandleFeedBuffer
 
 
 def test_format_price_boundaries():
@@ -18,13 +17,10 @@ def test_format_price_boundaries():
     assert format_price(99999.99) == "$99,999.99"
 
 
-def test_print_multi_coin_radar_with_live_prices(tmp_path, capsys):
+def test_print_multi_coin_radar_with_live_prices(capsys):
     """Verify print_multi_coin_radar uses latest_prices and formats sub-dollar coins correctly."""
-    db_path = str(tmp_path / "telemetry_test.db")
-    risk_manager = PortfolioRiskManager(db_path=db_path)
-
-    trader_btc = PaperTrader(symbol="BTCUSDT", timeframe="1m", db_path=db_path)
-    trader_doge = PaperTrader(symbol="DOGEUSDT", timeframe="1m", db_path=db_path)
+    trader_btc = CandleFeedBuffer(symbol="BTCUSDT", timeframe="1m")
+    trader_doge = CandleFeedBuffer(symbol="DOGEUSDT", timeframe="1m")
 
     # Populate 1 candle for each
     trader_btc.load_historical_candle((80000.0, 80100.0, 79900.0, 80000.0, 1000.0))
@@ -33,7 +29,7 @@ def test_print_multi_coin_radar_with_live_prices(tmp_path, capsys):
     traders = {"BTCUSDT": trader_btc, "DOGEUSDT": trader_doge}
     latest_prices = {"BTCUSDT": 80550.0, "DOGEUSDT": 0.1245}
 
-    print_multi_coin_radar(traders, risk_manager, "1m", latest_prices=latest_prices)
+    print_multi_coin_radar(traders, None, "1m", latest_prices=latest_prices)
     captured = capsys.readouterr().out
 
     # Verify both symbols appear in output
@@ -46,11 +42,10 @@ def test_print_multi_coin_radar_with_live_prices(tmp_path, capsys):
 
 
 @pytest.mark.asyncio
-async def test_warmup_all_traders_fault_isolation(tmp_path):
+async def test_warmup_all_traders_fault_isolation():
     """Verify that a failure in one symbol drops only that symbol and allows others to proceed."""
-    db_path = str(tmp_path / "warmup_fault_test.db")
-    trader_btc = PaperTrader(symbol="BTCUSDT", timeframe="1m", db_path=db_path)
-    trader_fail = PaperTrader(symbol="FAILUSDT", timeframe="1m", db_path=db_path)
+    trader_btc = CandleFeedBuffer(symbol="BTCUSDT", timeframe="1m")
+    trader_fail = CandleFeedBuffer(symbol="FAILUSDT", timeframe="1m")
 
     traders = {"BTCUSDT": trader_btc, "FAILUSDT": trader_fail}
     symbols = ["BTCUSDT", "FAILUSDT"]

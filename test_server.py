@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-from main import get_combined_stream_url, poll_htf_candles, warmup_symbol
+from market_feed import get_combined_stream_url, poll_htf_candles, warmup_symbol
 from server import CandleFeedBuffer, MarketDataFeed, create_app, run_kline_ingestion
 
 
@@ -260,6 +260,34 @@ def test_trade_bracket_endpoint(app_and_client):
     assert b_short["be_trigger"] == 2915.0  # -0.85R
     assert b_short["tp2"] == 2867.0  # -1.33R
     assert b_short["tp2_r"] == 1.33
+
+
+def test_bracket_geometry_equivalence_research_and_server():
+    """Verify calculate_optimal_trade_setup matches calculate_bracket_geometry exactly."""
+    from engine.exits import calculate_bracket_geometry
+    from server import calculate_optimal_trade_setup
+
+    # 1. Long setup
+    setup_long = calculate_optimal_trade_setup(side="LONG", current_price=60000.0, atr=500.0)
+    geom_long = calculate_bracket_geometry(side="LONG", entry_price=setup_long["limit_entry"], stop_loss=setup_long["stop_loss"])
+
+    assert setup_long["tp1"] == geom_long["tp1"]
+    assert setup_long["tp2"] == geom_long["tp2"]
+    assert setup_long["be_trigger"] == geom_long["be_trigger"]
+    assert setup_long["be_price"] == geom_long["be_price"]
+    assert setup_long["risk_dist"] == geom_long["risk_dist"]
+    assert setup_long["rr_ratio"] == geom_long["rr_ratio"]
+
+    # 2. Short setup
+    setup_short = calculate_optimal_trade_setup(side="SHORT", current_price=3000.0, atr=50.0)
+    geom_short = calculate_bracket_geometry(side="SHORT", entry_price=setup_short["limit_entry"], stop_loss=setup_short["stop_loss"])
+
+    assert setup_short["tp1"] == geom_short["tp1"]
+    assert setup_short["tp2"] == geom_short["tp2"]
+    assert setup_short["be_trigger"] == geom_short["be_trigger"]
+    assert setup_short["be_price"] == geom_short["be_price"]
+    assert setup_short["risk_dist"] == geom_short["risk_dist"]
+    assert setup_short["rr_ratio"] == geom_short["rr_ratio"]
 
 
 def test_api_portfolio_summary_returns_extended_metrics(app_and_client):

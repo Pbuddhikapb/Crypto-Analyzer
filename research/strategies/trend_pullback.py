@@ -12,7 +12,7 @@ from typing import List, Optional
 import numpy as np
 import pandas as pd
 
-from engine.simulator import CandidateSignal
+from domain.signals import CandidateSignal
 from indicators import calculate_rsi_series
 from research.strategies.base import BaseStrategy, StrategyConfig
 

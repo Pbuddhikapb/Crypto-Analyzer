@@ -12,7 +12,7 @@ from typing import Any, Dict, List
 
 import pandas as pd
 
-from engine.simulator import CandidateSignal
+from domain.signals import CandidateSignal
 
 
 @dataclass

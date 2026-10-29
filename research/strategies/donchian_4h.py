@@ -22,8 +22,8 @@ from typing import List, Optional
 import numpy as np
 import pandas as pd
 
-from engine.exits import ExitConfig
-from engine.simulator import CandidateSignal
+from domain.exits import ExitConfig
+from domain.signals import CandidateSignal
 from research.strategies.base import BaseStrategy, StrategyConfig
 from research.strategies.trend_pullback import compute_series_atr
 

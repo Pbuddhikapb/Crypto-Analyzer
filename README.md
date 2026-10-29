@@ -10,7 +10,7 @@ An institutional market microstructure terminal and empirical quantitative valid
 > 
 > Across extensive empirical testing on historical development data (January 1, 2021 through April 18, 2026, comprising up to 46,392 continuous hourly bars per symbol across 10 major pairs), all six codified strategy hypotheses failed to reject the empirical null hypothesis ($H_0$). When subjected to institutional friction (0.05% taker fee, 0.02% maker fee, 0.03% adverse slippage, and 0.01% 8-hour funding drag), every strategy achieved negative net expectancy ($EV < 0$) and proved statistically indistinguishable from, or worse than, matched random noise baselines ($p \ge 0.05$).
 >
-> Consequently, the terminal operates strictly in **evidence-status mode**. Automated order generation and paper trade execution are disabled in `server.py` and quarantined in `legacy/`. The user interface displays live market data, order book microstructure, risk sizing constraints, and empirical statistical evidence badges from `strategy_results.json` without directional endorsement.
+> Consequently, the terminal operates strictly in **evidence-status mode**. Automated order generation and paper trade execution are completely disabled in `server.py`. The user interface displays live market data, order book microstructure, risk sizing constraints, and empirical statistical evidence badges from `strategy_results.json` without directional endorsement.
 
 ---
 
@@ -26,8 +26,8 @@ An institutional market microstructure terminal and empirical quantitative valid
    Strategies are judged against matched Monte Carlo null distributions ($N=1,000$ passes) that match the strategy's exact trade count, coin distribution, and ATR stop distance percentage to isolate true entry timing edge from asymmetric exit mathematics.
 5. **Strict Holdout Boundary**:
    Historical data after `2026-04-18` is locked and accessible exclusively via the one-way append-only audit gate (`research/holdout_check.py`).
-6. **Legacy Quarantine**:
-   Retired backtesting tools, legacy validators, and unvalidated automated paper traders are moved to `legacy/` and are explicitly excluded from the evidence pipeline.
+6. **Clean Layered Architecture**:
+   Unidirectional dependency flow (Data $\rightarrow$ Analysis $\rightarrow$ Simulation $\rightarrow$ Presentation). All unvalidated legacy backtesters, obsolete paper traders, and duplicate risk modules have been permanently retired.
 
 ---
 
@@ -183,20 +183,17 @@ All static assets, REST API requests (`/api/...`), and bi-directional WebSocket 
 │   ├── strategy_runner.py     # Master Phase 3 validation pipeline orchestrator
 │   ├── evaluator.py           # Statistical decision rules & verdict generator
 │   └── holdout_check.py       # One-pass locked out-of-sample holdout gate
-├── legacy/                    # Retired unvalidated components (excluded from pipeline)
-│   ├── trader.py              # Legacy PaperTrader (decommissioned from live server)
-│   ├── backtest.py            # Legacy single/portfolio backtester
-│   ├── validator/             # Old scheduled validator suite
-│   ├── reports/               # Legacy validator run logs
-│   └── forensic_report.md     # Early forensic analysis notes
+├── domain/                    # Shared cross-cutting domain contracts (signals, exit configs)
 ├── scripts/
+│   ├── verify_architecture.sh # Unified architectural boundary & test verification script
 │   ├── start.sh               # Builds frontend & runs FastAPI in tmux on 127.0.0.1:8008
 │   └── stop.sh                # Gracefully terminates tmux session and port 8008
 ├── frontend/                  # React + TypeScript + Tailwind institutional terminal
 ├── server.py                  # FastAPI WebSocket hub & evidence REST server
+├── main.py                    # Evidence radar terminal scanner
+├── market_feed.py             # Live Binance USD-M WebSocket streams & warmup feeds
 ├── indicators.py              # Mathematical technical indicators (EMA, ATR, ADX, etc.)
 ├── microstructure.py          # Futures L2 order book, funding, and liquidation engines
-├── risk.py                    # Portfolio margin, drawdown limits, and position sizing
 ├── requirements.lock          # Exact pinned dependencies for CI and production
 └── ARCHITECTURE.md            # Comprehensive system architecture & governance rules
 ```

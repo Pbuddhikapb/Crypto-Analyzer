@@ -592,3 +592,101 @@ def test_guardrail_no_spot_binance_endpoints():
     assert forbidden_matches == [], (
         f"Forbidden spot endpoints (stream.binance.com or api.binance.com/api/v3) found in: {forbidden_matches}"
     )
+
+
+# ==============================================================================
+# 10. Architectural Boundary & Dependency Direction Guardrail (AST-Based)
+# ==============================================================================
+def test_guardrail_architectural_boundaries():
+    """
+    Assert that dependency rules in ARCHITECTURE.md are strictly obeyed:
+    1. Area A (market_feed.py, collector.py, data/*.py) never imports Area B, C, D, or legacy.
+    2. Area B (indicators.py, research/strategies/*.py) never imports Area C (engine), D, or legacy.
+    3. Area C (engine/*.py) never imports Area D (server, main) or legacy.
+    4. Production Area D (server.py, main.py) never imports legacy or risk.
+    """
+    # 1. Area A files
+    area_a_files = ["market_feed.py", "collector.py"] + glob.glob("data/*.py")
+    forbidden_for_area_a = {"indicators", "engine", "server", "main", "legacy", "risk"}
+    for fpath in area_a_files:
+        if not os.path.isfile(fpath):
+            continue
+        with open(fpath, "r", encoding="utf-8") as f:
+            tree = ast.parse(f.read(), filename=fpath)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    root_mod = alias.name.split(".")[0]
+                    assert root_mod not in forbidden_for_area_a, (
+                        f"Area A violation: '{fpath}' imports forbidden '{alias.name}'"
+                    )
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                root_mod = node.module.split(".")[0]
+                assert root_mod not in forbidden_for_area_a, (
+                    f"Area A violation: '{fpath}' imports from forbidden '{node.module}'"
+                )
+
+    # 2. Area B pure modules & strategies (must never import engine or presentation or legacy)
+    area_b_files = ["indicators.py", "microstructure.py"] + glob.glob("research/strategies/*.py")
+    forbidden_for_area_b = {"engine", "server", "main", "legacy", "risk"}
+    for fpath in area_b_files:
+        if not os.path.isfile(fpath):
+            continue
+        with open(fpath, "r", encoding="utf-8") as f:
+            tree = ast.parse(f.read(), filename=fpath)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    root_mod = alias.name.split(".")[0]
+                    assert root_mod not in forbidden_for_area_b, (
+                        f"Area B violation: '{fpath}' imports forbidden '{alias.name}'"
+                    )
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                root_mod = node.module.split(".")[0]
+                assert root_mod not in forbidden_for_area_b, (
+                    f"Area B violation: '{fpath}' imports from forbidden '{node.module}'"
+                )
+
+    # 3. Area C files (engine/*.py and research pipelines must never import presentation or legacy)
+    area_c_files = glob.glob("engine/*.py") + [
+        f for f in glob.glob("research/*.py") if not os.path.basename(f).startswith("__")
+    ]
+    forbidden_for_area_c = {"server", "main", "legacy", "risk"}
+    for fpath in area_c_files:
+        if not os.path.isfile(fpath):
+            continue
+        with open(fpath, "r", encoding="utf-8") as f:
+            tree = ast.parse(f.read(), filename=fpath)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    root_mod = alias.name.split(".")[0]
+                    assert root_mod not in forbidden_for_area_c, (
+                        f"Area C violation: '{fpath}' imports forbidden '{alias.name}'"
+                    )
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                root_mod = node.module.split(".")[0]
+                assert root_mod not in forbidden_for_area_c, (
+                    f"Area C violation: '{fpath}' imports from forbidden '{node.module}'"
+                )
+
+    # 4. Production Area D files (server.py, main.py must never import legacy or risk)
+    area_d_files = ["server.py", "main.py"]
+    forbidden_for_area_d = {"legacy", "risk"}
+    for fpath in area_d_files:
+        if not os.path.isfile(fpath):
+            continue
+        with open(fpath, "r", encoding="utf-8") as f:
+            tree = ast.parse(f.read(), filename=fpath)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    root_mod = alias.name.split(".")[0]
+                    assert root_mod not in forbidden_for_area_d, (
+                        f"Area D violation: '{fpath}' imports forbidden '{alias.name}'"
+                    )
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                root_mod = node.module.split(".")[0]
+                assert root_mod not in forbidden_for_area_d, (
+                    f"Area D violation: '{fpath}' imports from forbidden '{node.module}'"
+                )

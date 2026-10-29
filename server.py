@@ -3,7 +3,6 @@ import json
 import os
 import subprocess
 import time
-from collections import deque
 from contextlib import asynccontextmanager
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -12,25 +11,26 @@ from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnec
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
+from engine.exits import calculate_bracket_geometry
 from indicators import (
-    calculate_ema,
     calculate_fibonacci_levels,
-    calculate_optimal_trade_setup,
     check_order_block_confluence,
     compute_terminal_features,
     detect_breaker_blocks,
     detect_order_blocks,
     normalize_candles_5tuple,
 )
-from main import (
+from market_feed import (
     TOP_10_SYMBOLS,
-    FuturesMicrostructureManager,
+    CandleFeedBuffer as CandleFeedBuffer,
+    MarketDataFeed as MarketDataFeed,
+    SymbolNormalizer,
     get_combined_stream_url,
     poll_htf_candles,
+    timeframe_to_seconds as timeframe_to_seconds,
     warmup_all_traders,
 )
-from microstructure import OrderBookEngine, SymbolNormalizer
-from risk import PortfolioRiskManager
+from microstructure import FuturesMicrostructureManager, OrderBookEngine
 
 
 def get_git_commit() -> str:
@@ -55,107 +55,6 @@ def get_git_commit() -> str:
 # Capture git commit ONCE at server startup (module import)
 SERVER_GIT_COMMIT: str = get_git_commit()
 
-
-class CandleFeedBuffer:
-    """
-    Lightweight candle feed buffer maintaining rolling historical bars
-    for live terminal display, technical indicator computation, and radar scoring.
-    Does not execute trades or manage positions (evidence-status mode).
-    """
-
-    def __init__(self, symbol: str, timeframe: str = "15m", maxlen: int = 250):
-        self.symbol = symbol
-        self.timeframe = timeframe
-        self.candles: deque = deque(maxlen=maxlen)
-        self.htf_candles: deque = deque(maxlen=maxlen)
-        self.htf_trend_filter: bool = True
-        self.htf_trend: Optional[str] = None
-        self.trend_1h: Optional[str] = None
-        self.bar_count: int = 0
-        self.history_source: str = "none"  # "rest_futures" | "parquet" | "none"
-        self.history_end_ms: Optional[int] = None
-        self.gap_detected: bool = False
-        self.live_start_ms: Optional[int] = None
-
-    def handle_live_data_start(
-        self,
-        live_start_ms: int,
-        timestamps_list: Optional[List[int]] = None,
-    ) -> bool:
-        """
-        Handle start of live data. If live data starts more than 2 candle intervals
-        after history_end_ms, treat it as a gap: start the series after the gap
-        and do not compute indicators across it.
-        Returns True if a gap was detected, False otherwise.
-        """
-        if self.live_start_ms is None:
-            self.live_start_ms = live_start_ms
-
-        if self.history_end_ms is not None and not self.gap_detected:
-            interval_sec = timeframe_to_seconds(self.timeframe)
-            interval_ms = interval_sec * 1000
-            if (live_start_ms - self.history_end_ms) > 2 * interval_ms:
-                self.gap_detected = True
-                self.candles.clear()
-                if timestamps_list is not None:
-                    timestamps_list.clear()
-                self.bar_count = 0
-                return True
-        return False
-
-    def load_historical_candle(self, candle_data: Any) -> None:
-        self.candles.append(tuple(candle_data))
-        self.bar_count += 1
-
-    def load_historical_htf_candle(self, candle_data: Any) -> None:
-        self.htf_candles.append(tuple(candle_data))
-
-    def add_candle(self, candle_data: Any, timestamp: Optional[str] = None) -> None:
-        """Append a closed candle to the rolling buffer."""
-        if timestamp is not None:
-            try:
-                raw_t = int(timestamp)
-                self.handle_live_data_start(raw_t)
-            except (ValueError, TypeError):
-                pass
-        self.candles.append(tuple(candle_data))
-        self.bar_count += 1
-
-    def on_candle(self, candle_data: Any, timestamp: Optional[str] = None) -> None:
-        """Backwards compatibility alias for add_candle."""
-        self.add_candle(candle_data, timestamp=timestamp)
-
-    def on_htf_candle(self, candle_data: Any) -> None:
-        self.htf_candles.append(tuple(candle_data))
-
-    def set_htf_trend(self, trend: Optional[str]) -> None:
-        self.htf_trend = trend.upper() if trend else None
-
-    def get_htf_trend(self) -> Optional[str]:
-        if self.htf_trend is not None:
-            return self.htf_trend
-        if len(self.htf_candles) < 50:
-            return None
-        htf_closes = [c[3] for c in self.htf_candles]
-        ema_50 = calculate_ema(htf_closes, 50)
-        curr_close = htf_closes[-1]
-        if len(htf_closes) >= 200:
-            ema_200 = calculate_ema(htf_closes, 200)
-            if ema_50 > ema_200:
-                return "BULLISH" if curr_close >= ema_200 else "NEUTRAL"
-            elif ema_50 < ema_200:
-                return "BEARISH" if curr_close <= ema_200 else "NEUTRAL"
-            return "NEUTRAL"
-        else:
-            if curr_close >= ema_50:
-                return "BULLISH"
-            elif curr_close < ema_50:
-                return "BEARISH"
-            return "NEUTRAL"
-
-
-# Backwards compatibility alias
-MarketDataFeed = CandleFeedBuffer
 
 # Explicit Pattern -> Tested Strategy Mapping
 PATTERN_STRATEGY_MAP: Dict[str, Optional[str]] = {
@@ -336,6 +235,80 @@ def extract_fvg_boxes(candles: Sequence[Any], lookback: int = 20) -> List[Dict[s
     return boxes
 
 
+def calculate_optimal_trade_setup(
+    side: str,
+    current_price: float,
+    atr: float,
+    fvg_info: Optional[Dict[str, float]] = None,
+    macro_bias: str = "NEUTRAL",
+) -> Dict[str, Any]:
+    """Calculate institutional limit order trade staging parameters.
+
+    Uses FVG 50% Consequent Encroachment (CE) for limit entry, structural invalidation
+    stop loss, and mathematically verified Single Exit Authority targets (+0.75R TP1, +0.85R BE, +1.33R TP2).
+    """
+    side_upper = side.upper()
+    is_counter_trend = (
+        (side_upper in ("SHORT", "SELL") and macro_bias == "BULLISH")
+        or (side_upper in ("LONG", "BUY") and macro_bias == "BEARISH")
+    )
+
+    if side_upper in ("LONG", "BUY"):
+        if fvg_info and "ce" in fvg_info:
+            limit_entry = float(fvg_info["ce"])
+            fvg_lower = float(fvg_info.get("lower", limit_entry - atr))
+            stop_loss = max(fvg_lower - (0.35 * atr), limit_entry * 0.01)
+        else:
+            limit_entry = current_price
+            stop_loss = max(current_price - (1.5 * atr), current_price * 0.01)
+
+        risk_dist = max(limit_entry - stop_loss, limit_entry * 0.003)
+        stop_loss = limit_entry - risk_dist
+    elif side_upper in ("SHORT", "SELL"):
+        if fvg_info and "ce" in fvg_info:
+            limit_entry = float(fvg_info["ce"])
+            fvg_upper = float(fvg_info.get("upper", limit_entry + atr))
+            stop_loss = fvg_upper + (0.35 * atr)
+        else:
+            limit_entry = current_price
+            stop_loss = current_price + (1.5 * atr)
+
+        risk_dist = max(stop_loss - limit_entry, limit_entry * 0.003)
+        stop_loss = limit_entry + risk_dist
+    else:
+        raise ValueError(f"Invalid side: {side}. Must be 'LONG' or 'SHORT'")
+
+    bracket = calculate_bracket_geometry(
+        side="LONG" if side_upper in ("LONG", "BUY") else "SHORT",
+        entry_price=limit_entry,
+        stop_loss=stop_loss,
+    )
+
+    return {
+        "side": bracket["side"],
+        "limit_entry": bracket["limit_entry"],
+        "stop_loss": bracket["stop_loss"],
+        "risk_dist": bracket["risk_dist"],
+        "risk_pct": bracket["risk_pct"],
+        "tp1": bracket["tp1"],
+        "tp1_r": bracket["tp1_r"],
+        "be_trigger": bracket["be_trigger"],
+        "be_trigger_r": bracket["be_trigger_r"],
+        "be_price": bracket["be_price"],
+        "tp2": bracket["tp2"],
+        "tp2_r": bracket["tp2_r"],
+        "stagnancy_bars": bracket["stagnancy_bars"],
+        "rr_ratio": bracket["rr_ratio"],
+        "macro_bias": macro_bias,
+        "is_counter_trend": is_counter_trend,
+        "recommendation": (
+            "⚠️ HIGH-RISK COUNTER-TREND (Stand down or size down 50%)"
+            if is_counter_trend
+            else "🟢 MACRO-ALIGNED (Full institutional size approved)"
+        ),
+    }
+
+
 def compute_indicators(candles: Sequence[Any]) -> Dict[str, Any]:
     """Compute TA indicators, trend, divergences, and FVG boxes for a candle series.
     Adapts compute_terminal_features to the frontend market schema.
@@ -448,17 +421,6 @@ def compute_indicators(candles: Sequence[Any]) -> Dict[str, Any]:
         "breaker_blocks": active_bbs,
         "order_block_confluence": ob_confluence,
     }
-
-
-def timeframe_to_seconds(tf: str) -> int:
-    """Convert timeframe string (e.g. 1m, 15m, 1h, 4h, 1d) to integer seconds."""
-    if tf.endswith("m"):
-        return int(tf[:-1]) * 60
-    elif tf.endswith("h"):
-        return int(tf[:-1]) * 3600
-    elif tf.endswith("d"):
-        return int(tf[:-1]) * 86400
-    return 60
 
 
 def aggregate_candles(
@@ -915,6 +877,14 @@ def seed_buffer_from_parquet(
         return False
 
 
+DEFAULT_PORTFOLIO_CONFIG: Dict[str, Any] = {
+    "account_equity_usd": 10000.0,
+    "max_open_positions": 3,
+    "risk_per_trade_pct": 1.0,
+    "max_leverage": 3.0,
+}
+
+
 def create_app(
     enable_ingestion: Optional[bool] = None,
     db_path: str = "data/signals_audit.db",
@@ -932,14 +902,7 @@ def create_app(
     async def lifespan(app: FastAPI):
         # Startup
         app.state.connection_manager = ConnectionManager()
-        app.state.risk_manager = PortfolioRiskManager(
-            max_open_positions=3,
-            symbol_cooldown_bars=3,
-            account_equity_usd=10000.0,
-            risk_per_trade_pct=1.0,
-            max_leverage=3.0,
-            db_path=db_path,
-        )
+        app.state.portfolio_config = dict(DEFAULT_PORTFOLIO_CONFIG)
         app.state.micro_mgr = FuturesMicrostructureManager(symbols=active_symbols)
         app.state.order_book_engine = OrderBookEngine()
         app.state.active_depth_symbol = active_symbols[0]
@@ -1032,9 +995,6 @@ def create_app(
         if background_tasks:
             await asyncio.gather(*background_tasks, return_exceptions=True)
 
-        if hasattr(app.state, "risk_manager") and app.state.risk_manager:
-            app.state.risk_manager.checkpoint()
-
     app = FastAPI(
         title="Institutional Crypto Terminal API",
         version="1.0.0",
@@ -1044,6 +1004,7 @@ def create_app(
 
     # Initialize default state attributes before lifespan execution
     app.state.connection_manager = ConnectionManager()
+    app.state.portfolio_config = dict(DEFAULT_PORTFOLIO_CONFIG)
     app.state.risk_manager = None
     app.state.candle_buffers = {}
     app.state.traders = app.state.candle_buffers
@@ -1073,7 +1034,7 @@ def create_app(
     @app.get("/api/health")
     async def get_health():
         """Health check endpoint reporting connectivity and system readiness."""
-        db_ok = os.path.exists(db_path) or getattr(app.state, "risk_manager", None) is not None
+        db_ok = bool(db_path and os.path.exists(db_path)) or getattr(app.state, "portfolio_config", None) is not None
         micro = getattr(app.state, "micro_mgr", None)
         conn_mgr = getattr(app.state, "connection_manager", None)
         buffers = getattr(app.state, "candle_buffers", getattr(app.state, "traders", {}))
@@ -1210,13 +1171,29 @@ def create_app(
     @app.get("/api/portfolio/summary")
     async def get_portfolio_summary():
         """Return portfolio risk sizing and capital allocation metrics (paper trading disabled)."""
-        summary = app.state.risk_manager.get_portfolio_summary()
-        base_equity = float(summary.get("account_equity_usd", 10000.0))
+        cfg = getattr(app.state, "portfolio_config", DEFAULT_PORTFOLIO_CONFIG)
+        base_equity = float(cfg.get("account_equity_usd", 10000.0))
+        max_positions = int(cfg.get("max_open_positions", 3))
+        max_lev = float(cfg.get("max_leverage", 3.0))
+        total_closed = 0
+        win_count = 0
+        computed_win_rate = (float(win_count) / float(total_closed) * 100.0) if total_closed > 0 else float(0)
 
         return {
-            **summary,
+            "total_trades": total_closed,
+            "winning_trades": win_count,
+            "losing_trades": 0,
+            "win_rate_pct": computed_win_rate,
+            "total_net_return_pct": 0.0,
+            "avg_r_multiple": 0.0,
+            "symbols_traded": [],
+            "account_equity_usd": base_equity,
+            "allocated_notional_usd": 0.0,
+            "portfolio_leverage": 0.0,
+            "available_equity_usd": base_equity,
+            "max_leverage": max_lev,
+            "max_open_positions": max_positions,
             "active_positions_count": 0,
-            "max_open_positions": app.state.risk_manager.max_open_positions,
             "active_trades": [],
             "total_unrealized_pnl_usd": 0.0,
             "current_equity_usd": base_equity,

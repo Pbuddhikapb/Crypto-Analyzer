@@ -83,8 +83,43 @@ def load_candles(
 
 
 def clear_cache():
-    """Clear in-memory candle cache."""
+    """Clear in-memory candle and funding rate caches."""
     _CANDLE_CACHE.clear()
+    _FUNDING_CACHE.clear()
+
+
+_FUNDING_CACHE: Dict[str, pd.DataFrame] = {}
+
+
+def load_funding_rates(
+    symbol: str,
+    data_dir: str = "data/funding",
+    use_cache: bool = True,
+) -> Optional[pd.DataFrame]:
+    """
+    Load historical funding rate records for a symbol from the Parquet data lake.
+
+    Returns DataFrame with columns ['calc_time', 'datetime', 'funding_interval_hours', 'last_funding_rate', 'symbol']
+    or None if the archive does not exist.
+    """
+    sym = symbol.upper()
+    if use_cache and sym in _FUNDING_CACHE:
+        return _FUNDING_CACHE[sym].copy()
+
+    file_path = os.path.join(data_dir, f"{sym}.parquet")
+    if not os.path.exists(file_path):
+        return None
+
+    df = pd.read_parquet(file_path)
+    if use_cache:
+        _FUNDING_CACHE[sym] = df.copy()
+
+    return df.reset_index(drop=True)
+
+
+def clear_funding_cache():
+    """Clear in-memory funding rate cache."""
+    _FUNDING_CACHE.clear()
 
 
 def candles_to_array(df: pd.DataFrame) -> np.ndarray:

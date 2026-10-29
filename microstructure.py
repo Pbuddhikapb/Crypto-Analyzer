@@ -1,12 +1,23 @@
+import asyncio
 import collections
-import math
-import time
-from dataclasses import dataclass
-from typing import Any, Deque, Dict, List, Optional, Tuple
-import urllib.request
 import json
+import math
 import os
 import sqlite3
+import time
+import urllib.request
+from dataclasses import dataclass
+from typing import Any, Deque, Dict, List, Optional, Tuple
+
+import aiohttp
+import websockets
+
+from indicators import format_price
+from market_feed import (
+    SymbolNormalizer as SymbolNormalizer,
+    WHALE_TIER_THRESHOLDS as WHALE_TIER_THRESHOLDS,
+    get_whale_thresholds as get_whale_thresholds,
+)
 
 
 @dataclass(frozen=True)
@@ -30,54 +41,6 @@ class LiquidationEvent:
     price: float
     notional: float
     timestamp: float
-
-
-class SymbolNormalizer:
-    """Handles mapping between Spot symbols and Binance Futures contract tickers.
-    
-    For example: PEPEUSDT <-> 1000PEPEUSDT, SHIBUSDT <-> 1000SHIBUSDT.
-    """
-    _SPOT_TO_FUTURES = {
-        "PEPEUSDT": "1000PEPEUSDT",
-        "SHIBUSDT": "1000SHIBUSDT",
-        "LUNCUSDT": "1000LUNCUSDT",
-        "BONKUSDT": "1000BONKUSDT",
-        "FLOKIUSDT": "1000FLOKIUSDT",
-        "SATSUSDT": "1000SATSUSDT",
-        "RATSUSDT": "1000RATSUSDT",
-    }
-    _FUTURES_TO_SPOT = {v: k for k, v in _SPOT_TO_FUTURES.items()}
-
-    @classmethod
-    def to_futures_symbol(cls, symbol: str) -> str:
-        sym = symbol.upper()
-        return cls._SPOT_TO_FUTURES.get(sym, sym)
-
-    @classmethod
-    def to_spot_symbol(cls, symbol: str) -> str:
-        sym = symbol.upper()
-        return cls._FUTURES_TO_SPOT.get(sym, sym)
-
-
-WHALE_TIER_THRESHOLDS: Dict[str, Tuple[float, float, float]] = {
-    # Tier 1: Mega-Cap (BTC)
-    "BTCUSDT": (50_000.0, 100_000.0, 500_000.0),
-    # Tier 2: Large-Cap (ETH, SOL, BNB, XRP)
-    "ETHUSDT": (25_000.0, 50_000.0, 150_000.0),
-    "SOLUSDT": (25_000.0, 50_000.0, 150_000.0),
-    "BNBUSDT": (25_000.0, 50_000.0, 150_000.0),
-    "XRPUSDT": (25_000.0, 50_000.0, 150_000.0),
-    # Tier 3: Mid-Cap / Alts (Default)
-    "DEFAULT": (10_000.0, 25_000.0, 50_000.0),
-}
-
-
-def get_whale_thresholds(symbol: Optional[str] = None) -> Tuple[float, float, float]:
-    """Return (dolphin_threshold, shark_threshold, whale_threshold) scaled by asset tier."""
-    if not symbol:
-        return WHALE_TIER_THRESHOLDS["BTCUSDT"]
-    sym = symbol.upper()
-    return WHALE_TIER_THRESHOLDS.get(sym, WHALE_TIER_THRESHOLDS["DEFAULT"])
 
 
 class WhaleTradeFilter:
@@ -909,4 +872,146 @@ class OrderBookEngine:
             ask_walls=(),
             status="DISCONNECTED",
         )
+
+
+class FuturesMicrostructureManager:
+    """Manages real-time Binance Futures WebSocket streams and REST metrics."""
+
+    def __init__(self, symbols: List[str]):
+        self.symbols = [s.upper() for s in symbols]
+        self.futures_symbols = [SymbolNormalizer.to_futures_symbol(s) for s in self.symbols]
+        self.futures_to_spot = {SymbolNormalizer.to_futures_symbol(s): s for s in self.symbols}
+        self.whale_filter = WhaleTradeFilter()
+        self.liq_tracker = LiquidationTracker()
+        self.oi_engine = OpenInterestEngine()
+        self.funding_tracker = FundingRateTracker()
+        self.is_online = False
+
+    async def check_health(self) -> Tuple[bool, str]:
+        loop = asyncio.get_running_loop()
+        is_ok, msg = await loop.run_in_executor(None, FuturesHealthProber.probe_connectivity)
+        if not is_ok:
+            # When REST ping is restricted (e.g. HTTP 451 in cloud VMs), probe WebSocket reachability
+            def _probe_ws() -> bool:
+                import socket
+                import ssl
+                try:
+                    ctx = ssl.create_default_context()
+                    with socket.create_connection(("fstream.binance.com", 443), timeout=3.0) as sock:
+                        with ctx.wrap_socket(sock, server_hostname="fstream.binance.com"):
+                            return True
+                except Exception:
+                    return False
+
+            ws_ok = await loop.run_in_executor(None, _probe_ws)
+            if ws_ok:
+                self.is_online = True
+                return True, "Binance Futures Online (WS Active, REST Restricted)"
+
+        self.is_online = is_ok
+        return is_ok, msg
+
+    async def run_ws_stream(self) -> None:
+        """Stream real-time aggTrade and forceOrder events from Binance Futures routed WS."""
+        if not self.is_online:
+            return
+
+        stream_names = [f"{sym.lower()}@aggTrade" for sym in self.futures_symbols]
+        stream_names.append("!forceOrder@arr")
+        stream_names.append("!markPrice@arr")
+        ws_url = f"wss://fstream.binance.com/market/stream?streams={'/'.join(stream_names)}"
+        backoff = 3
+
+        while True:
+            try:
+                print(f"[Futures WS] Connecting to microstructure stream across {len(self.futures_symbols)} coins...")
+                async with websockets.connect(ws_url, ping_interval=20, ping_timeout=20) as ws:
+                    print("[Futures WS] Connected to Futures stream! Monitoring whale trades & liquidations...\n")
+                    backoff = 3
+
+                    async for message in ws:
+                        payload = json.loads(message)
+                        data = payload.get("data", payload)
+                        event_type = data.get("e") if isinstance(data, dict) else None
+
+                        if event_type == "aggTrade":
+                            f_sym = str(data.get("s", "")).upper()
+                            if f_sym in self.futures_to_spot:
+                                trade = self.whale_filter.process_trade(data)
+                                if trade and trade.badge == "WHALE":
+                                    spot_sym = self.futures_to_spot[f_sym]
+                                    print(f"\n>>> [WHALE TRADE] [{trade.badge}] {spot_sym} {trade.side}: {trade.quantity:,.4f} @ {format_price(trade.price)} (${trade.notional:,.2f}) <<<\n")
+
+                        elif event_type == "forceOrder":
+                            o = data.get("o", {})
+                            f_sym = str(o.get("s", "")).upper()
+                            if f_sym in self.futures_to_spot:
+                                event = self.liq_tracker.process_order(o)
+                                if event:
+                                    spot_sym = self.futures_to_spot[f_sym]
+                                    rolling_vol, is_cascade = self.liq_tracker.get_rolling_summary(f_sym)
+                                    if is_cascade:
+                                        print(f"\n>>> [CASCADE ALERT] {spot_sym} {event.liquidated_position} FLUSH: 60s Liquidation Volume ${rolling_vol:,.2f} Exceeded $1M! <<<\n")
+
+                        elif event_type == "markPriceUpdate" or isinstance(data, list):
+                            items = data if isinstance(data, list) else [data]
+                            for item in items:
+                                if isinstance(item, dict) and item.get("e") == "markPriceUpdate":
+                                    f_sym = str(item.get("s", "")).upper()
+                                    if f_sym in self.futures_to_spot:
+                                        spot_sym = self.futures_to_spot[f_sym]
+                                        funding_r = float(item.get("r") or 0.0)
+                                        next_t = int(item.get("T") or 0)
+                                        mark_p = float(item.get("p") or 0.0)
+                                        self.funding_tracker.update_funding(spot_sym, funding_r, next_t)
+                                        if mark_p > 0.0:
+                                            self.oi_engine.update(spot_sym, mark_p, 0.0)
+
+            except asyncio.CancelledError:
+                print("[Futures WS] Stream cancelled. Shutting down cleanly.")
+                break
+            except Exception as e:
+                print(f"[Futures WS] Error: {e}. Reconnecting in {backoff} seconds...")
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, 60)
+
+    async def poll_rest_metrics(self) -> None:
+        """Periodically query instantaneous Open Interest and Funding Rate every 30 seconds."""
+        if not self.is_online:
+            return
+
+        connector = aiohttp.TCPConnector(limit=5)
+        timeout = aiohttp.ClientTimeout(total=5)
+
+        while True:
+            try:
+                async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
+                    for f_sym in self.futures_symbols:
+                        spot_sym = self.futures_to_spot[f_sym]
+                        try:
+                            # 1. Open Interest
+                            oi_url = f"https://fapi.binance.com/fapi/v1/openInterest?symbol={f_sym}"
+                            async with session.get(oi_url) as resp:
+                                if resp.status == 200:
+                                    oi_data = await resp.json()
+                                    oi_val = float(oi_data.get("openInterest", 0.0))
+                                    # 2. Premium Index & Funding
+                                    p_url = f"https://fapi.binance.com/fapi/v1/premiumIndex?symbol={f_sym}"
+                                    async with session.get(p_url) as p_resp:
+                                        if p_resp.status == 200:
+                                            p_data = await p_resp.json()
+                                            mark_p = float(p_data.get("markPrice", 0.0))
+                                            funding_r = float(p_data.get("lastFundingRate", 0.0))
+                                            next_t = int(p_data.get("nextFundingTime", 0))
+
+                                            self.oi_engine.update(spot_sym, mark_p, oi_val)
+                                            self.funding_tracker.update_funding(spot_sym, funding_r, next_t)
+                        except Exception:
+                            pass
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                pass
+
+            await asyncio.sleep(30)
 

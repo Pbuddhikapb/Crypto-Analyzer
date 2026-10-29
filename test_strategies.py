@@ -9,6 +9,7 @@ import pytest
 from engine.simulator import CandidateSignal, SimulationResult
 from research.evaluator import StrategyEvaluator, compute_p_value
 from research.strategies import (
+    ConfluenceThresholdStrategy,
     FVGRetestStrategy,
     LiquiditySweepStrategy,
     TrendPullbackStrategy,
@@ -86,6 +87,63 @@ class TestZeroLookaheadContract:
             expected_time = int(df_1h.iloc[bar_idx]["open_time"])
             assert sig.entry_price == expected_open
             assert sig.timestamp_ms == expected_time
+
+    def test_fvg_retest_zero_lookahead_and_truncation(self):
+        """Verify FVGRetest strictly executes at bar i+1 open and is truncation invariant."""
+        df_1h = make_synthetic_candles(n=500, trend=0.08)
+        df_4h = make_synthetic_4h_candles(n=125, trend=0.32)
+        strat = FVGRetestStrategy()
+        signals = strat.generate_signals("BTCUSDT", df_1h, df_4h)
+
+        for sig in signals:
+            bar_idx = sig.metadata["bar_idx"]
+            expected_open = float(df_1h.iloc[bar_idx]["open"])
+            expected_time = int(df_1h.iloc[bar_idx]["open_time"])
+            assert sig.entry_price == expected_open, "Signal entry price must match next bar open"
+            assert sig.timestamp_ms == expected_time, "Signal timestamp must match next bar open_time"
+
+        # Truncation invariance: truncating at bar T produces identical signals up to T
+        if signals:
+            cutoff_bar = signals[-1].metadata["bar_idx"]
+            if cutoff_bar > 100:
+                t_cutoff_1h = df_1h.iloc[:cutoff_bar].copy()
+                cutoff_time = int(t_cutoff_1h.iloc[-1]["open_time"])
+                t_cutoff_4h = df_4h[df_4h["open_time"] <= cutoff_time].copy()
+                trunc_signals = strat.generate_signals("BTCUSDT", t_cutoff_1h, t_cutoff_4h)
+                expected_signals = [s for s in signals if s.metadata["bar_idx"] < cutoff_bar]
+                assert len(trunc_signals) == len(expected_signals)
+                for s1, s2 in zip(trunc_signals, expected_signals):
+                    assert s1.timestamp_ms == s2.timestamp_ms
+                    assert s1.entry_price == s2.entry_price
+                    assert s1.stop_loss == s2.stop_loss
+
+    def test_confluence_threshold_zero_lookahead_and_truncation(self):
+        """Verify ConfluenceThreshold strictly executes at bar i+1 open and is truncation invariant."""
+        df_1h = make_synthetic_candles(n=500, trend=0.05)
+        df_4h = make_synthetic_4h_candles(n=125, trend=0.2)
+        strat = ConfluenceThresholdStrategy()
+        signals = strat.generate_signals("SOLUSDT", df_1h, df_4h)
+
+        for sig in signals:
+            bar_idx = sig.metadata["bar_idx"]
+            expected_open = float(df_1h.iloc[bar_idx]["open"])
+            expected_time = int(df_1h.iloc[bar_idx]["open_time"])
+            assert sig.entry_price == expected_open
+            assert sig.timestamp_ms == expected_time
+
+        if signals:
+            cutoff_bar = signals[-1].metadata["bar_idx"]
+            if cutoff_bar > 100:
+                t_cutoff_1h = df_1h.iloc[:cutoff_bar].copy()
+                cutoff_time = int(t_cutoff_1h.iloc[-1]["open_time"])
+                t_cutoff_4h = df_4h[df_4h["open_time"] <= cutoff_time].copy()
+                trunc_signals = strat.generate_signals("SOLUSDT", t_cutoff_1h, t_cutoff_4h)
+                expected_signals = [s for s in signals if s.metadata["bar_idx"] < cutoff_bar]
+                assert len(trunc_signals) == len(expected_signals)
+                for s1, s2 in zip(trunc_signals, expected_signals):
+                    assert s1.timestamp_ms == s2.timestamp_ms
+                    assert s1.entry_price == s2.entry_price
+                    assert s1.stop_loss == s2.stop_loss
 
 
 class TestStrategySignalGeneration:

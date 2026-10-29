@@ -885,6 +885,132 @@ def test_dropped_trade_fraction_raises_error_above_threshold():
         )
 
 
+def test_dynamic_funding_rate_accrual_long_and_short():
+    """Verify SimulationEngine accurately applies dynamic funding rates to LONG and SHORT positions."""
+    import pandas as pd
+    from domain.signals import CandidateSignal
+    from engine.simulator import SimulationEngine, SimulationFriction
+
+    t0 = 1700000000000
+    p0 = t0 // (8 * 3600 * 1000)
+    p1 = p0 + 1
+    p2 = p0 + 2
+
+    # Dynamic funding rate records: period 1 has +0.03% (0.0003), period 2 has -0.02% (-0.0002)
+    funding_df = pd.DataFrame([
+        {"calc_time": p1 * 8 * 3600 * 1000, "last_funding_rate": 0.0003},
+        {"calc_time": p2 * 8 * 3600 * 1000, "last_funding_rate": -0.0002},
+    ])
+
+    # 1. LONG Position
+    engine_long = SimulationEngine(
+        initial_equity_usd=10000.0,
+        friction=SimulationFriction(taker_fee_pct=0.0, slippage_pct=0.0),
+        funding_rates={"BTCUSDT": funding_df},
+    )
+    sig_long = CandidateSignal(symbol="BTCUSDT", side="LONG", entry_price=100.0, stop_loss=95.0, timestamp_ms=t0)
+    trade_id_long = engine_long.open_position(sig_long, current_bar_idx=0)
+    assert trade_id_long is not None
+
+    # Cross into period 1 (+0.03%): Long pays 0.03% of notional ($2000 * 0.0003 = 0.60 USD drag)
+    t_p1 = p1 * 8 * 3600 * 1000 + 1000
+    engine_long.process_bar("BTCUSDT", (100.0, 101.0, 99.0, 100.0), t_p1, current_bar_idx=1)
+    pos_long = engine_long.active_positions[trade_id_long]
+    assert round(pos_long["funding_cost_usd"], 2) == 0.60
+    assert round(engine_long.equity_usd, 2) == 9999.40
+
+    # Cross into period 2 (-0.02%): Long receives 0.02% rebate (-$0.40 drag) -> net funding = +$0.20
+    t_p2 = p2 * 8 * 3600 * 1000 + 1000
+    engine_long.process_bar("BTCUSDT", (100.0, 101.0, 99.0, 100.0), t_p2, current_bar_idx=2)
+    assert round(pos_long["funding_cost_usd"], 2) == 0.20
+    assert round(engine_long.equity_usd, 2) == 9999.80
+
+    # 2. SHORT Position
+    engine_short = SimulationEngine(
+        initial_equity_usd=10000.0,
+        friction=SimulationFriction(taker_fee_pct=0.0, slippage_pct=0.0),
+        funding_rates={"BTCUSDT": funding_df},
+    )
+    sig_short = CandidateSignal(symbol="BTCUSDT", side="SHORT", entry_price=100.0, stop_loss=105.0, timestamp_ms=t0)
+    trade_id_short = engine_short.open_position(sig_short, current_bar_idx=0)
+    assert trade_id_short is not None
+
+    # Cross into period 1 (+0.03%): Short receives 0.03% rebate (-$0.60 drag)
+    engine_short.process_bar("BTCUSDT", (100.0, 101.0, 99.0, 100.0), t_p1, current_bar_idx=1)
+    pos_short = engine_short.active_positions[trade_id_short]
+    assert round(pos_short["funding_cost_usd"], 2) == -0.60
+    assert round(engine_short.equity_usd, 2) == 10000.60
+
+    # Cross into period 2 (-0.02%): Short pays 0.02% drag (+$0.40 drag) -> net funding = -$0.20
+    engine_short.process_bar("BTCUSDT", (100.0, 101.0, 99.0, 100.0), t_p2, current_bar_idx=2)
+    assert round(pos_short["funding_cost_usd"], 2) == -0.20
+    assert round(engine_short.equity_usd, 2) == 10000.20
+
+
+def test_dynamic_funding_rate_fallback_to_constant():
+    """Verify SimulationEngine falls back to constant funding_rate_8h_pct when dynamic rates are missing."""
+    from domain.signals import CandidateSignal
+    from engine.simulator import SimulationEngine, SimulationFriction
+
+    t0 = 1700000000000
+    p0 = t0 // (8 * 3600 * 1000)
+    p1 = p0 + 1
+
+    # Empty funding rates dict for BTCUSDT
+    engine = SimulationEngine(
+        initial_equity_usd=10000.0,
+        friction=SimulationFriction(funding_rate_8h_pct=0.01),
+        funding_rates={"BTCUSDT": {}},
+    )
+    sig = CandidateSignal(symbol="BTCUSDT", side="LONG", entry_price=100.0, stop_loss=95.0, timestamp_ms=t0)
+    trade_id = engine.open_position(sig, current_bar_idx=0)
+    assert trade_id is not None
+
+    # Cross into period 1: fallback constant 0.01% * $2000 = $0.20 USD
+    t_p1 = p1 * 8 * 3600 * 1000 + 1000
+    engine.process_bar("BTCUSDT", (100.0, 101.0, 99.0, 100.0), t_p1, current_bar_idx=1)
+    pos = engine.active_positions[trade_id]
+    assert round(pos["funding_cost_usd"], 2) == 0.20
+
+
+def test_load_funding_rates_parquet_roundtrip(tmp_path):
+    """Verify data.loader.load_funding_rates loads parquet archives and caches results."""
+    import pandas as pd
+    from data.loader import clear_funding_cache, load_funding_rates
+
+    funding_dir = tmp_path / "funding"
+    funding_dir.mkdir(parents=True)
+
+    df_sample = pd.DataFrame([
+        {
+            "calc_time": 1700000000000,
+            "datetime": "2023-11-14 22:13:20",
+            "funding_interval_hours": 8,
+            "last_funding_rate": 0.00015,
+            "symbol": "BTCUSDT",
+        }
+    ])
+    parquet_path = funding_dir / "BTCUSDT.parquet"
+    df_sample.to_parquet(parquet_path)
+
+    # 1. Successful load
+    clear_funding_cache()
+    loaded = load_funding_rates("BTCUSDT", data_dir=str(funding_dir))
+    assert loaded is not None
+    assert len(loaded) == 1
+    assert loaded["last_funding_rate"].iloc[0] == 0.00015
+
+    # 2. Cached retrieval
+    cached = load_funding_rates("BTCUSDT", data_dir=str(funding_dir))
+    assert cached is not None
+    assert len(cached) == 1
+
+    # 3. Missing symbol returns None
+    missing = load_funding_rates("NONEXISTENT", data_dir=str(funding_dir))
+    assert missing is None
+
+
+
 
 
 

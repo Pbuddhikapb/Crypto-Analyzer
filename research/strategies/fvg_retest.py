@@ -12,7 +12,7 @@ from typing import List, Optional
 import numpy as np
 import pandas as pd
 
-from engine.simulator import CandidateSignal
+from domain.signals import CandidateSignal
 from indicators import (
     check_bearish_fvg_retest,
     check_bullish_fvg_retest,
