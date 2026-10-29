@@ -24,8 +24,8 @@ import pandas as pd
 
 from domain.exits import ExitConfig
 from domain.signals import CandidateSignal
+from indicators import calculate_atr_series
 from research.strategies.base import BaseStrategy, StrategyConfig
-from research.strategies.trend_pullback import compute_series_atr
 
 
 class Donchian4hStrategy(BaseStrategy):
@@ -66,7 +66,7 @@ class Donchian4hStrategy(BaseStrategy):
         c_4h_lows = c_4h["low"].to_numpy(dtype=np.float64)
         c_4h_closes = c_4h["close"].to_numpy(dtype=np.float64)
 
-        c_4h["atr_4h"] = compute_series_atr(c_4h_highs, c_4h_lows, c_4h_closes, period=atr_period)
+        c_4h["atr_4h"] = calculate_atr_series(c_4h_highs, c_4h_lows, c_4h_closes, period=atr_period)
         # Highest high and lowest low of the strictly previous N 4h bars
         c_4h["highest_high"] = c_4h["high"].shift(1).rolling(n_period).max()
         c_4h["lowest_low"] = c_4h["low"].shift(1).rolling(n_period).min()

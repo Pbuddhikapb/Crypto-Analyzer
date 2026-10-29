@@ -5,7 +5,6 @@ from indicators import (
     calculate_fibonacci_levels,
     classify_discount_premium,
     get_active_dealing_range,
-    check_fibonacci_ote_confluence,
 )
 
 
@@ -118,15 +117,4 @@ def test_dealing_range_and_ote_confluence():
     assert dr is not None
     assert dr["swing_high"] >= 120.0
     assert dr["swing_low"] <= 100.0
-
-    # Test OTE confluence check for Long at 103.0 (deep retracement near 0.70)
-    valid, reason, info = check_fibonacci_ote_confluence(103.0, candles, side="LONG", lookback=20, window=1)
-    assert valid is True
-    assert "OTE" in reason or "Aligned" in reason
-    assert info["zone"] in ["OTE", "SHALLOW_DISCOUNT", "DEEP_DISCOUNT"]
-
-    # Test Long rejected in PREMIUM (e.g. price 123.0)
-    valid_prem, reason_prem, info_prem = check_fibonacci_ote_confluence(123.0, candles, side="LONG", lookback=20, window=1)
-    assert valid_prem is False
-    assert "PREMIUM" in reason_prem
 

@@ -391,7 +391,7 @@ def run_matched_baseline(
                 logger.warning(
                     f"    Checkpoint {checkpoint_path} metadata does not match current run; starting fresh."
                 )
-        except Exception as e:
+        except (json.JSONDecodeError, OSError, KeyError, TypeError, ValueError) as e:
             logger.warning(f"    Failed to read checkpoint {checkpoint_path}: {e}; starting fresh.")
 
     remaining_indices = [i for i in range(iterations) if i not in completed_passes]
@@ -850,7 +850,7 @@ def run_monte_carlo_baseline(
         import subprocess
 
         git_hash = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
-    except Exception:
+    except (subprocess.SubprocessError, OSError):
         git_hash = "unknown"
 
     metadata = {

@@ -5,12 +5,16 @@ directional constraints, symbol cooldowns, and performance metrics.
 """
 
 
+import numpy as np
+import pytest
+
 from engine.exits import ExitConfig
 from engine.simulator import (
     CandidateSignal,
     ExecutedTrade,
     SimulationEngine,
     SimulationFriction,
+    simulate_portfolio_signals,
 )
 
 
@@ -1008,6 +1012,89 @@ def test_load_funding_rates_parquet_roundtrip(tmp_path):
     # 3. Missing symbol returns None
     missing = load_funding_rates("NONEXISTENT", data_dir=str(funding_dir))
     assert missing is None
+
+
+def test_days_evaluated_narrow_exception_and_validation():
+    """Verify days_evaluated computation in simulate_portfolio_signals raises on malformed candle data."""
+    # 1. Malformed candle array missing timestamp column (only 3 columns) raises ValueError
+    malformed_candles = {"TESTUSDT": np.array([[100.0, 105.0, 95.0]])}
+    with pytest.raises(ValueError, match="candle arrays in candles_dict must contain valid timestamps"):
+        simulate_portfolio_signals(
+            candidates=[],
+            candles_dict=malformed_candles,
+        )
+
+    # 2. Empty arrays in candles_dict does not raise and leaves days_evaluated == 0.0
+    empty_candles = {"TESTUSDT": np.empty((0, 6))}
+    res_empty = simulate_portfolio_signals(
+        candidates=[],
+        candles_dict=empty_candles,
+    )
+    assert res_empty.days_evaluated == 0.0
+
+    # 3. Valid candle array calculates positive days_evaluated
+    t0 = 1700000000000
+    t1 = t0 + 10 * 86400 * 1000  # 10 days
+    valid_candles = {
+        "TESTUSDT": np.array([
+            [100.0, 105.0, 95.0, 102.0, t0, 1000.0],
+            [102.0, 106.0, 98.0, 104.0, t1, 1000.0],
+        ])
+    }
+    res_valid = simulate_portfolio_signals(
+        candidates=[],
+        candles_dict=valid_candles,
+    )
+    assert pytest.approx(res_valid.days_evaluated, rel=1e-2) == 10.0
+
+
+def test_funding_fallback_period_counter():
+    """Verify simulation tracks total and fallback funding periods correctly."""
+    interval_ms = 3600 * 1000  # 1h bars
+    t0 = 1700000000000  # aligned timestamp
+    # 24 hours of bars (crosses 3 8-hour funding intervals: 8h, 16h, 24h)
+    bars = []
+    for i in range(25):
+        t = t0 + i * interval_ms
+        bars.append([100.0, 105.0, 95.0, 100.0, t, 1000.0])
+    candles = {"BTCUSDT": np.array(bars, dtype=np.float64)}
+    bar_map = {"BTCUSDT": {int(bars[i][4]): i for i in range(len(bars))}}
+
+    # Single trade entered at bar 0, held until bar 24 (crosses 3 8h periods)
+    sig = CandidateSignal(
+        symbol="BTCUSDT",
+        side="LONG",
+        entry_price=100.0,
+        stop_loss=90.0,
+        timestamp_ms=t0,
+    )
+
+    # 1. No funding_rates map provided -> all periods use fallback
+    res_fallback = simulate_portfolio_signals(
+        candidates=[sig],
+        candles_dict=candles,
+        bar_index_map=bar_map,
+    )
+    assert res_fallback.funding_total_periods == 3
+    assert res_fallback.funding_fallback_periods == 3
+
+    # 2. Dynamic funding_rates map provided with 1 period defined and 2 missing
+    p0 = t0 // (8 * 3600 * 1000)
+    # Define funding rate only for second period (p0 + 2)
+    dynamic_rates = {
+        "BTCUSDT": {
+            p0 + 2: 0.0002,
+        }
+    }
+    res_mixed = simulate_portfolio_signals(
+        candidates=[sig],
+        candles_dict=candles,
+        bar_index_map=bar_map,
+        funding_rates=dynamic_rates,
+    )
+    assert res_mixed.funding_total_periods == 3
+    assert res_mixed.funding_fallback_periods == 2  # 1 dynamic, 2 fallbacks
+
 
 
 

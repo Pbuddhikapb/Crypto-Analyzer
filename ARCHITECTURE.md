@@ -1,5 +1,7 @@
 # System Architecture & Migration Contract
 
+> **Status:** Research phase: 5 of 6 hypotheses REJECTED. Donchian4hN55 passed the preregistered dev gate narrowly (matched p=0.0195, alpha=0.025) but is NOT validated: holdout untouched; top-10 trades = 82% of total R; mean net R without them = +0.0144R; week-block bootstrap 95% CI [-0.0151, +0.1796]R includes zero; 2026 YTD is negative. Terminal operates strictly in evidence-status mode.
+
 This document defines the authoritative architecture, dependency boundaries, single sources of truth, module ownership, and migration roadmap for the Crypto-Analyzer project.
 
 All future feature development, bug fixes, refactoring, and code retirement must strictly adhere to this architectural contract unless explicitly approved by the project owner.
@@ -91,7 +93,7 @@ The architecture is organized into **four primary areas**, supported by shared c
 * Presentation code must **consume established domain interfaces** and must never reimplement research simulation, execution loops, or portfolio accounting.
 
 ### Cross-Cutting Concerns
-Configuration management, structured logging, database migrations, forensic telemetry auditing (`forensic_monitor.py`), CI/CD automation, regression testing, and architectural guardrails support all four areas. They must remain lightweight, transparent, and free of unnecessary abstractions or third-party framework overhead.
+Configuration management, structured logging, database migrations, forensic telemetry auditing (`auxiliary/forensic_monitor.py`), CI/CD automation, regression testing, and architectural guardrails support all four areas. They must remain lightweight, transparent, and free of unnecessary abstractions or third-party framework overhead.
 
 ---
 
@@ -106,7 +108,7 @@ To preserve architectural integrity and prevent structural decay, all components
 5. **Strict Inward Flow (No Downward Inversions)**: Lower-level domain components (Data, Analysis, Simulation) must never import higher-level application or presentation components (e.g. `indicators.py` or `engine/` must never import `server.py` or `main.py`).
 6. **Zero Circular Dependencies**: Modules within the same layer or across layers must never engage in circular import loops.
 7. **Single Source of Financial Truth**: No duplicate implementations of the same financial calculation are permitted (e.g., fee modeling, bracket calculation, R-multiple accounting, ATR stop logic). Any alternative implementation must have a documented reason and equivalence tests.
-8. **Operational Separation with Shared Contracts**: Historical batch processing (`data/loader.py`, `engine/simulator.py`) and live real-time streaming (`collector.py`, `server.py`) may utilize distinct transport and buffering mechanisms suited to their operational constraints, but they must share common domain contracts, data models, and exit definitions (`engine/exits.py`).
+8. **Operational Separation with Shared Contracts**: Historical batch processing (`data/loader.py`, `engine/simulator.py`) and live real-time streaming (`auxiliary/collector.py`, `server.py`) may utilize distinct transport and buffering mechanisms suited to their operational constraints, but they must share common domain contracts, data models, and exit definitions (`engine/exits.py`).
 
 Before creating any new module, verify whether an existing module already owns that responsibility.
 
@@ -121,10 +123,11 @@ The existing codebase maps to the four primary areas and cross-cutting concerns 
 | **A. Data** | `data/downloader.py` | Downloads Binance Vision USD-M futures kline and funding archives; verifies SHA-256 checksums; validates candle continuity, schema, and liquidity; writes monthly Parquet files. | **Verified** |
 | **A. Data** | `data/loader.py` | Loads Parquet candle datasets; computes SHA-256 `dataset_hash`; converts data to fast numpy arrays; enforces `DEVELOPMENT_END` holdout cutoff. | **Verified** |
 | **A. Data** | `market_feed.py` | Binance USD-M Futures real-time market data transport: combined stream URL, parallel REST kline warmup, HTF polling, and microstructure stream manager. | **Verified** |
-| **A. Data** | `collector.py` | Asynchronous daemon collecting live WebSocket streams (@aggTrade, !forceOrder, @bookTicker, @kline) and REST metrics into SQLite vault. | **Verified** |
-| **A. Data** | `vault.py` | High-performance SQLite WAL storage (`MarketDataVault`, `AsyncVaultWriter`) with composite indices for 7 microstructure telemetry tiers. | **Verified** |
 | **A. Data** | `data/candles/*.parquet` | Clean, verified Parquet data lake for 10 major pairs (1h and 4h klines). | **Verified** |
-| **A. Data** | `scripts/repair_vault_source.py` | Retroactive schema migration and data provenance tagging utility for SQLite vault. | **Verified** |
+| **Auxiliary** | `auxiliary/collector.py` | Asynchronous daemon collecting live WebSocket streams (@aggTrade, !forceOrder, @bookTicker, @kline) and REST metrics into SQLite vault. | **Verified** |
+| **Auxiliary** | `auxiliary/vault.py` | High-performance SQLite WAL storage (`MarketDataVault`, `AsyncVaultWriter`) with composite indices for 7 microstructure telemetry tiers. | **Verified** |
+| **Auxiliary** | `auxiliary/repair_vault_source.py` | Retroactive schema migration and data provenance tagging utility for SQLite vault. | **Verified** |
+| **Auxiliary** | `auxiliary/forensic_monitor.py` | Real-time trade excursion auditor and shadow signal loophole detector; manages `data/forensic_audit.db` and audits tape from `data/market_vault.db`. | **Verified** |
 | **B. Analysis** | `indicators.py` | Pure quantitative technical indicators (EMA, ATR, RSI, ADX), Fair Value Gaps, swing detection, market structure (BOS/CHoCH), Order Blocks, Fibonacci OTE, candle normalization. | **Verified** |
 | **B. Analysis** | `microstructure.py` | Institutional microstructure analytics: Whale trade filter, liquidation clustering, Open Interest matrix, funding rate basis, order book depth skew & imbalance, and `FuturesMicrostructureManager`. | **Verified** |
 | **B. Analysis** | `research/strategies/base.py` | Abstract `BaseStrategy` interface defining zero-lookahead candidate signal contracts using `domain.signals`. | **Verified** |
@@ -145,9 +148,8 @@ The existing codebase maps to the four primary areas and cross-cutting concerns 
 | **C. Simulation** | `research/reports/*` | Empirical research reports and distribution artifacts (`baseline_distribution.json`, `strategy_results.json`, `strategy_validation_report.md`, `random_baseline_hurdle.md`). | **Verified** |
 | **D. Presentation** | `server.py` | FastAPI application serving REST endpoints, WebSocket hub `/ws`, static frontend bundle, and empirical evidence status mapping. | **In progress** (Decoupled from `main.py`; coupled to `risk.py`) |
 | **D. Presentation** | `frontend/` | React 18 / TypeScript terminal SPA with lightweight-charts, depth ladder, whale tape, liquidation feed, and radar. | **Verified** |
-| **D. Presentation** | `main.py` | CLI scanner and live paper trading runner. | **In progress** (Stream utilities extracted to `market_feed.py`; imports legacy `PaperTrader`) |
+| **D. Presentation** | `main.py` | CLI evidence scanner and multi-coin radar terminal. | **Verified** |
 | **Cross-Cutting** | `domain/` | Shared domain data contracts (`domain/signals.py`: `CandidateSignal`, `domain/exits.py`: `ExitConfig`). | **Verified** |
-| **Cross-Cutting** | `forensic_monitor.py` | Real-time trade excursion auditor and shadow signal loophole detector; manages `data/forensic_audit.db` and audits tape from `data/market_vault.db`. | **Verified** |
 | **Cross-Cutting** | `scripts/*.sh`, `local-cache-proxy.js` | Operational dev proxy, automated service launcher, and daemon management scripts (`start.sh`, `stop.sh`, `dev-local.sh`, `verify_architecture.sh`, `local-cache-proxy.js`). | **Verified** |
 | **Cross-Cutting** | `test_*.py` (22 files) | Pytest test harness validating data pipelines, collectors, indicators, exits, guardrails, server, simulator, etc. | **Verified** (255 tests passing) |
 | **Cross-Cutting** | `frontend/test/*.test.mjs` | Node.js test suites validating price formatters, UTC clock, cache proxy, and version handshake. | **Verified** (13 tests passing) |
@@ -173,8 +175,8 @@ The following architectural exceptions currently exist in the codebase, along wi
 5. **Historical Funding Rate Parquet Integration [RESOLVED Oct 28, 2026]**:
    * *Resolution*: Added dynamic funding rate loader `load_funding_rates()` in `data/loader.py` and dynamic funding rate integration in `engine/simulator.py:SimulationEngine`. Supports exact historical funding rates per 8h period for longs (drag) and shorts (rebate/drag) with automatic fallback to conservative constant when rates are unavailable. Tested in `test_simulator.py`.
 
-6. **`collector.py` (Area A) imports from `microstructure.py` (Area B) [RESOLVED Oct 28, 2026]**:
-   * *Resolution*: Extracted exchange symbol formatting (`SymbolNormalizer`) and whale tier thresholds (`WHALE_TIER_THRESHOLDS`, `get_whale_thresholds`) into Area A module `market_feed.py`. `collector.py` now imports strictly from `market_feed.py`. `microstructure.py` consumes and re-exports from `market_feed.py`. Area A has zero imports from Area B.
+6. **`auxiliary/collector.py` imports from `microstructure.py` (Area B) [RESOLVED Oct 28, 2026]**:
+   * *Resolution*: Extracted exchange symbol formatting (`SymbolNormalizer`) and whale tier thresholds (`WHALE_TIER_THRESHOLDS`, `get_whale_thresholds`) into Area A module `market_feed.py`. `auxiliary/collector.py` now imports strictly from `market_feed.py`. `microstructure.py` consumes and re-exports from `market_feed.py`. Area A has zero imports from Area B.
 
 7. **`research/strategies/*` (Area B) imports from `engine/` (Area C) [RESOLVED Oct 28, 2026]**:
    * *Resolution*: Extracted `CandidateSignal` and `ExitConfig` into shared cross-cutting contracts package `domain/` (`domain/signals.py`, `domain/exits.py`). All strategies in `research/strategies/` now import from `domain/`. `engine.simulator` and `engine.exits` re-export from `domain/` for backward compatibility. Area B has zero imports from Area C.
@@ -182,7 +184,7 @@ The following architectural exceptions currently exist in the codebase, along wi
 8. **`server.py` (Area D) coupling to `risk.py` / `signals_audit.db` [RESOLVED Oct 28, 2026]**:
    * *Resolution*: Severed `server.py`'s dependency on `risk.py` and `data/signals_audit.db`. Replaced `PortfolioRiskManager` with lightweight presentation config `DEFAULT_PORTFOLIO_CONFIG`. `/api/portfolio/summary` directly returns static evidence-only envelope with zero database connections. `server.py` has zero imports from `risk.py`.
 
-9. **`forensic_monitor.py` coupling to `data/signals_audit.db` [RESOLVED Oct 28, 2026]**:
+9. **`auxiliary/forensic_monitor.py` coupling to `data/signals_audit.db` [RESOLVED Oct 28, 2026]**:
    * *Resolution*: Re-pointed telemetry and tape audits to authoritative vault `data/market_vault.db` and live REST endpoints. Safely handles absent or empty paper-trade tables.
 
 ---
@@ -309,7 +311,7 @@ Status Legend:
 
 ### Phase 3: Complexity Removal & Boundary Clean-Up
 - [x] **Decouple `server.py` from `main.py`**: Extracted shared Binance USD-M WebSocket connection logic and warmup utilities into Area A module `market_feed.py`. `[Verified]`
-- [x] **Decouple `collector.py` from `microstructure.py`**: Extracted exchange symbol normalization (`SymbolNormalizer`) and whale threshold definitions into Area A module `market_feed.py`. `[Verified]`
+- [x] **Decouple `auxiliary/collector.py` from `microstructure.py`**: Extracted exchange symbol normalization (`SymbolNormalizer`) and whale threshold definitions into Area A module `market_feed.py`. `[Verified]`
 - [x] **Decouple Area B strategies from `engine/`**: Extracted `CandidateSignal` and `ExitConfig` into shared cross-cutting domain contracts (`domain/signals.py`, `domain/exits.py`). `[Verified]`
 - [x] **Decouple `indicators.py` from `engine.exits`**: Moved trade bracket staging (`calculate_optimal_trade_setup`) out of `indicators.py` into Area D `server.py`. `[Verified]`
 - [x] **Decouple `server.py` from `risk.py`**: Replaced `PortfolioRiskManager` in `server.py` with lightweight presentation config `DEFAULT_PORTFOLIO_CONFIG`. `[Verified]`
@@ -319,7 +321,7 @@ Status Legend:
 - [x] **Investigate and Retire `legacy/backtest.py`**: Verified all research uses authoritative `engine/simulator.py`; completely removed legacy backtester. `[Removed]`
 - [x] **Investigate and Retire `legacy/trader.py`**: Decoupled operational modules; completely removed legacy trader. `[Removed]`
 - [x] **Consolidate Risk Management**: Decoupled presentation code from `risk.py`; authoritative sizing maintained by `engine/simulator.py`; completely removed `risk.py`. `[Removed]`
-- [x] **Audit `forensic_monitor.py` Telemetry Coupling**: Re-pointed telemetry audits to authoritative vault `data/market_vault.db` and live REST endpoints. `[Verified]`
+- [x] **Audit `auxiliary/forensic_monitor.py` Telemetry Coupling**: Re-pointed telemetry audits to authoritative vault `data/market_vault.db` and live REST endpoints. `[Verified]`
 - [x] **Align `ROADMAP.md`**: Updated outdated layered architecture description in `ROADMAP.md` to match `ARCHITECTURE.md`. `[Verified]`
 
 ### Phase 4: Strengthening Correctness

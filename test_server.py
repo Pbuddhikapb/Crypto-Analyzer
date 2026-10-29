@@ -348,8 +348,8 @@ def test_market_candles_timeframe_aggregation(app_and_client):
     trader = app.state.traders["BTCUSDT"]
     trader.timeframe = "15m"
 
-    # Feed 8 15-minute candles (should become 2 1-hour candles)
-    base_t = 1700000000
+    # Feed 8 15-minute candles on clock-aligned hour boundary (1700006400 % 3600 == 0)
+    base_t = 1700006400
     for i in range(8):
         c = (
             50000.0 + i * 10,       # open
@@ -383,6 +383,163 @@ def test_market_candles_timeframe_aggregation(app_and_client):
     assert candles[1]["high"] == 50120.0
     assert candles[1]["volume"] == 40.0
     assert candles[1]["time"] == base_t + 4 * 900
+
+
+def test_aggregate_candles_aligned_input():
+    """Verify aggregate_candles correctly aggregates clock-aligned candles with OHLCV semantics."""
+    from server import aggregate_candles
+
+    # 8 15m candles covering 2 complete 1h intervals (factor=4)
+    # Hour 0: [0, 900_000, 1_800_000, 2_700_000]
+    # Hour 1: [3_600_000, 4_500_000, 5_400_000, 6_300_000]
+    bars = [
+        (10.0, 15.0, 8.0, 12.0, 100.0),
+        (12.0, 16.0, 11.0, 14.0, 150.0),
+        (14.0, 18.0, 13.0, 15.0, 200.0),
+        (15.0, 20.0, 14.0, 19.0, 250.0),
+        (19.0, 22.0, 18.0, 21.0, 100.0),
+        (21.0, 23.0, 20.0, 22.0, 150.0),
+        (22.0, 25.0, 21.0, 24.0, 200.0),
+        (24.0, 26.0, 23.0, 25.0, 250.0),
+    ]
+    timestamps = [0, 900_000, 1_800_000, 2_700_000, 3_600_000, 4_500_000, 5_400_000, 6_300_000]
+
+    agg, agg_ts, is_partial = aggregate_candles(
+        bars,
+        factor=4,
+        timestamps=timestamps,
+        base_interval_ms=900_000,
+        return_is_partial=True,
+    )
+    assert len(agg) == 2
+    assert len(agg_ts) == 2
+    assert is_partial == [False, False]
+
+    # Bar 0: open=first (10), high=max (20), low=min (8), close=last (19), vol=sum (700)
+    assert agg[0] == (10.0, 20.0, 8.0, 19.0, 700.0)
+    assert agg_ts[0] == 0
+
+    # Bar 1: open=first (19), high=max (26), low=min (18), close=last (25), vol=sum (700)
+    assert agg[1] == (19.0, 26.0, 18.0, 25.0, 700.0)
+    assert agg_ts[1] == 3_600_000
+
+
+def test_aggregate_candles_misaligned_start():
+    """Verify aggregate_candles drops an incomplete leading group when buffer starts mid-interval."""
+    from server import aggregate_candles
+
+    # Hour 0 starts mid-interval at 900_000 (missing 0). Hour 1 is complete.
+    bars = [
+        (12.0, 16.0, 11.0, 14.0, 150.0),
+        (14.0, 18.0, 13.0, 15.0, 200.0),
+        (15.0, 20.0, 14.0, 19.0, 250.0),
+        (19.0, 22.0, 18.0, 21.0, 100.0),
+        (21.0, 23.0, 20.0, 22.0, 150.0),
+        (22.0, 25.0, 21.0, 24.0, 200.0),
+        (24.0, 26.0, 23.0, 25.0, 250.0),
+    ]
+    timestamps = [900_000, 1_800_000, 2_700_000, 3_600_000, 4_500_000, 5_400_000, 6_300_000]
+
+    agg, agg_ts = aggregate_candles(bars, factor=4, timestamps=timestamps, base_interval_ms=900_000)
+    # Hour 0 dropped because it started mid-interval (missing bar at 0)
+    assert len(agg) == 1
+    assert agg_ts == [3_600_000]
+    assert agg[0] == (19.0, 26.0, 18.0, 25.0, 700.0)
+
+
+def test_aggregate_candles_partial_tail():
+    """Verify aggregate_candles drops partial trailing chunk by default and keeps it when requested."""
+    from server import aggregate_candles
+
+    # 1 complete 1h candle + 2 bars of an in-progress second hour
+    bars = [
+        (10.0, 15.0, 8.0, 12.0, 100.0),
+        (12.0, 16.0, 11.0, 14.0, 150.0),
+        (14.0, 18.0, 13.0, 15.0, 200.0),
+        (15.0, 20.0, 14.0, 19.0, 250.0),
+        (19.0, 22.0, 18.0, 21.0, 100.0),
+        (21.0, 23.0, 20.0, 22.0, 150.0),
+    ]
+    timestamps = [0, 900_000, 1_800_000, 2_700_000, 3_600_000, 4_500_000]
+
+    # Default (keep_partial_tail=False): partial tail dropped
+    agg_dropped, agg_ts_dropped = aggregate_candles(
+        bars,
+        factor=4,
+        timestamps=timestamps,
+        base_interval_ms=900_000,
+        keep_partial_tail=False,
+    )
+    assert len(agg_dropped) == 1
+    assert agg_ts_dropped == [0]
+
+    # Explicit keep_partial_tail=True: trailing in-progress group kept as forming candle
+    agg_kept, agg_ts_kept, is_partial = aggregate_candles(
+        bars,
+        factor=4,
+        timestamps=timestamps,
+        base_interval_ms=900_000,
+        keep_partial_tail=True,
+        return_is_partial=True,
+    )
+    assert len(agg_kept) == 2
+    assert agg_ts_kept == [0, 3_600_000]
+    assert is_partial == [False, True]
+    assert agg_kept[1] == (19.0, 23.0, 18.0, 22.0, 250.0)
+
+    # Incomplete group that does NOT contain the latest bar is dropped even with keep_partial_tail=True
+    ts_internal = [0, 900_000, 3_600_000, 4_500_000, 5_400_000, 6_300_000]
+    bars_internal = bars[:2] + bars[2:]
+    agg_int, agg_ts_int = aggregate_candles(
+        bars_internal,
+        factor=4,
+        timestamps=ts_internal,
+        base_interval_ms=900_000,
+        keep_partial_tail=True,
+    )
+    assert len(agg_int) == 1
+    assert agg_ts_int == [3_600_000]
+
+
+def test_aggregate_candles_gap_inside_group():
+    """Verify aggregate_candles treats a group missing interior bars as incomplete and drops it."""
+    from server import aggregate_candles
+
+    # Hour 0 missing interior bar at 1_800_000 (has 0, 900_000, 2_700_000). Hour 1 complete.
+    bars = [
+        (10.0, 15.0, 8.0, 12.0, 100.0),
+        (12.0, 16.0, 11.0, 14.0, 150.0),
+        (15.0, 20.0, 14.0, 19.0, 250.0),
+        (19.0, 22.0, 18.0, 21.0, 100.0),
+        (21.0, 23.0, 20.0, 22.0, 150.0),
+        (22.0, 25.0, 21.0, 24.0, 200.0),
+        (24.0, 26.0, 23.0, 25.0, 250.0),
+    ]
+    timestamps = [0, 900_000, 2_700_000, 3_600_000, 4_500_000, 5_400_000, 6_300_000]
+
+    agg, agg_ts = aggregate_candles(bars, factor=4, timestamps=timestamps, base_interval_ms=900_000)
+    assert len(agg) == 1
+    assert agg_ts == [3_600_000]
+    assert agg[0] == (19.0, 26.0, 18.0, 25.0, 700.0)
+
+
+def test_aggregate_candles_missing_and_misaligned_timestamps_raise():
+    """Verify aggregate_candles raises descriptive ValueError when timestamps are missing or misaligned."""
+    from server import aggregate_candles
+
+    sample = [(10.0, 15.0, 8.0, 12.0, 100.0), (12.0, 16.0, 11.0, 14.0, 150.0)]
+
+    # Missing timestamps
+    with pytest.raises(ValueError, match="Timestamps are required"):
+        aggregate_candles(sample, factor=2, timestamps=None)
+
+    # Misaligned length
+    with pytest.raises(ValueError, match="Timestamps length .* does not match"):
+        aggregate_candles(sample, factor=2, timestamps=[100])
+
+    # Factor < 1
+    with pytest.raises(ValueError, match="Aggregation factor must be >= 1"):
+        aggregate_candles(sample, factor=0, timestamps=[100, 200])
 
 
 def test_no_hardcoded_sample_trades_in_server():

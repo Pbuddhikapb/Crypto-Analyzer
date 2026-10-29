@@ -70,50 +70,17 @@ def parse_arguments() -> argparse.Namespace:
         choices=["1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "1d"],
         help="Candle timeframe interval (default: 15m)",
     )
-    parser.add_argument(
-        "--no-market-structure",
-        action="store_true",
-        help="Disable Pillar 1 Market Structure BOS/CHoCH alignment requirement",
-    )
-    parser.add_argument(
-        "--max-positions",
-        type=int,
-        default=3,
-        help="Maximum concurrent active portfolio positions",
-    )
-    parser.add_argument(
-        "--cooldown",
-        type=int,
-        default=3,
-        help="Symbol cooldown bars after a trade closes",
-    )
     return parser.parse_args()
 
 
 def print_multi_coin_radar(
     traders: Dict[str, Any],
-    risk_manager: Optional[Any] = None,
     timeframe: str = "15m",
     latest_prices: Optional[Dict[str, float]] = None,
     micro_mgr: Optional[FuturesMicrostructureManager] = None,
 ) -> None:
     """Print a high-density, synchronized terminal radar matrix."""
-    if risk_manager and hasattr(risk_manager, "get_portfolio_summary"):
-        summary = risk_manager.get_portfolio_summary()
-        open_count = (
-            risk_manager.get_open_positions_count()
-            if hasattr(risk_manager, "get_open_positions_count")
-            else 0
-        )
-        max_positions = getattr(risk_manager, "max_open_positions", 3)
-        header_stats = (
-            f"ACTIVE TRADES: {open_count}/{max_positions} | "
-            f"CLOSED TRADES: {summary.get('total_trades', 0)} | "
-            f"WIN RATE: {summary.get('win_rate_pct', 0.0):.1f}% | "
-            f"NET PNL: {summary.get('total_net_return_pct', 0.0):+.2f}%"
-        )
-    else:
-        header_stats = "ACTIVE TRADES: 0/3 (EVIDENCE_ONLY) | PAPER TRADING: DISABLED"
+    header_stats = "ACTIVE TRADES: 0/3 (EVIDENCE_ONLY) | PAPER TRADING: DISABLED"
 
     print("=" * 142)
     print(
@@ -170,25 +137,8 @@ def print_multi_coin_radar(
         else:
             fvg_str = "NONE"
 
-        # Position status
-        active = trader.get_active_trade() if hasattr(trader, "get_active_trade") else None
-        if active:
-            side = active["side"]
-            entry = active["entry_price"]
-            sl = active["stop_loss"]
-            tp = active.get("take_profit")  # noqa: F841  # Take-profit target extracted alongside entry/sl for position terminal display
-            unrealized_pct = ((price - entry) / entry * 100.0) if side == "LONG" else ((entry - price) / entry * 100.0)
-            pos_str = f"{side} @ {format_price(entry)} ({unrealized_pct:+.2f}%) [SL: {format_price(sl)}]"
-        else:
-            # Check cooldown
-            if (
-                risk_manager
-                and hasattr(risk_manager, "is_symbol_in_cooldown")
-                and risk_manager.is_symbol_in_cooldown(sym, getattr(trader, "bar_count", 0))
-            ):
-                pos_str = "FLAT (Cooldown Active)"
-            else:
-                pos_str = "FLAT (Evidence Only)" if not hasattr(trader, "get_active_trade") else "FLAT (Scanning)"
+        # Position status (terminal operates in evidence-only mode)
+        pos_str = "FLAT (Evidence Only)"
 
         # Microstructure metrics
         if micro_mgr and micro_mgr.is_online:
@@ -210,7 +160,6 @@ def print_multi_coin_radar(
 
 async def run_multiplexed_stream(
     traders: Dict[str, Any],
-    risk_manager: Optional[Any] = None,
     symbols: Optional[List[str]] = None,
     timeframe: str = "15m",
     micro_mgr: Optional[FuturesMicrostructureManager] = None,
@@ -226,8 +175,7 @@ async def run_multiplexed_stream(
             await asyncio.sleep(delay)
             print_multi_coin_radar(
                 traders,
-                risk_manager,
-                timeframe,
+                timeframe=timeframe,
                 latest_prices=latest_prices,
                 micro_mgr=micro_mgr,
             )
@@ -248,8 +196,7 @@ async def run_multiplexed_stream(
                 # Render initial baseline matrix
                 print_multi_coin_radar(
                     traders,
-                    risk_manager,
-                    timeframe,
+                    timeframe=timeframe,
                     latest_prices=latest_prices,
                     micro_mgr=micro_mgr,
                 )
@@ -330,7 +277,7 @@ async def main() -> None:
 
     # Concurrently stream Spot + Futures + poll REST metrics + poll 4h HTF candles
     tasks = [
-        run_multiplexed_stream(traders, None, symbols, timeframe, micro_mgr=micro_mgr),
+        run_multiplexed_stream(traders, symbols, timeframe, micro_mgr=micro_mgr),
         poll_htf_candles(traders, symbols),
     ]
     if micro_mgr.is_online:

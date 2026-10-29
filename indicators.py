@@ -37,22 +37,72 @@ def normalize_candles_5tuple(candles: Sequence[Any]) -> List[Tuple[float, float,
     return [normalize_candle_to_5tuple(c) for c in candles]
 
 
+def calculate_ema_series(values: Sequence[float], period: int) -> np.ndarray:
+    """Compute rolling Exponential Moving Average (EMA) series across a 1D sequence or numpy array.
+    
+    Initializes with SMA seed at index period - 1, with NaN prefix for index < period - 1.
+    """
+    arr = np.asarray(values, dtype=np.float64)
+    n = len(arr)
+    ema = np.empty(n, dtype=np.float64)
+    if n == 0:
+        return ema
+    if period <= 0 or n < period:
+        ema[:] = arr
+        return ema
+
+    alpha = 2.0 / (period + 1.0)
+    ema[:period - 1] = np.nan
+    ema[period - 1] = np.mean(arr[:period])
+    for i in range(period, n):
+        ema[i] = alpha * arr[i] + (1.0 - alpha) * ema[i - 1]
+    return ema
+
+
 def calculate_ema(closes: Sequence[float], period: int) -> float:
     """Calculate Exponential Moving Average (EMA) and return the latest value."""
     arr = np.asarray(closes, dtype=float)
-    if len(arr) == 0 or period <= 0:
-        return float(arr[-1]) if len(arr) > 0 else 0.0
-    if len(arr) < period:
-        return float(arr[-1])
+    if len(arr) == 0:
+        return 0.0
+    series = calculate_ema_series(arr, period)
+    return float(series[-1])
 
-    alpha = 2.0 / (period + 1.0)
-    ema = np.empty_like(arr)
-    # Initialize with SMA of first 'period' elements
-    ema[period - 1] = np.mean(arr[:period])
-    for i in range(period, len(arr)):
-        ema[i] = alpha * arr[i] + (1.0 - alpha) * ema[i - 1]
 
-    return float(ema[-1])
+def calculate_atr_series(
+    highs: Sequence[float],
+    lows: Sequence[float],
+    closes: Sequence[float],
+    period: int = 14,
+) -> np.ndarray:
+    """Compute rolling Average True Range (ATR) series using Wilder's smoothing.
+    
+    Initializes with SMA of True Range at index period - 1, with NaN prefix for index < period - 1.
+    """
+    h = np.asarray(highs, dtype=np.float64)
+    l = np.asarray(lows, dtype=np.float64)
+    c = np.asarray(closes, dtype=np.float64)
+    n = len(c)
+    atr = np.empty(n, dtype=np.float64)
+    if n == 0:
+        return atr
+    if n == 1:
+        atr[0] = h[0] - l[0]
+        return atr
+
+    tr = np.empty(n, dtype=np.float64)
+    tr[0] = h[0] - l[0]
+    for i in range(1, n):
+        tr[i] = max(h[i] - l[i], abs(h[i] - c[i - 1]), abs(l[i] - c[i - 1]))
+
+    if period <= 0 or n < period:
+        atr[:] = np.mean(tr)
+        return atr
+
+    atr[:period - 1] = np.nan
+    atr[period - 1] = np.mean(tr[:period])
+    for i in range(period, n):
+        atr[i] = (atr[i - 1] * (period - 1) + tr[i]) / period
+    return atr
 
 
 def calculate_atr(
@@ -62,32 +112,11 @@ def calculate_atr(
     period: int = 14,
 ) -> float:
     """Calculate Average True Range (ATR) using Wilder's smoothing and return the latest value."""
-    h = np.asarray(highs, dtype=float)
-    l = np.asarray(lows, dtype=float)
-    c = np.asarray(closes, dtype=float)
-
-    n = len(c)
+    n = len(closes)
     if n == 0:
         return 0.0
-    if n == 1:
-        return float(h[0] - l[0])
-
-    # True Range calculation
-    tr = np.empty(n, dtype=float)
-    tr[0] = h[0] - l[0]
-    for i in range(1, n):
-        tr[i] = max(h[i] - l[i], abs(h[i] - c[i - 1]), abs(l[i] - c[i - 1]))
-
-    if n < period:
-        return float(np.mean(tr))
-
-    # Wilder's Smoothing for ATR
-    atr = np.empty(n, dtype=float)
-    atr[period - 1] = np.mean(tr[:period])
-    for i in range(period, n):
-        atr[i] = (atr[i - 1] * (period - 1) + tr[i]) / period
-
-    return float(atr[-1])
+    series = calculate_atr_series(highs, lows, closes, period=period)
+    return float(series[-1])
 
 
 def calculate_rsi_series(closes: Sequence[float], period: int = 14) -> np.ndarray:
@@ -297,62 +326,76 @@ def check_recent_bearish_fvg(candles: Sequence[Candle], lookback: int = 5) -> bo
     return False
 
 
+def calculate_adx_series(
+    highs: Sequence[float],
+    lows: Sequence[float],
+    closes: Sequence[float],
+    period: int = 14,
+) -> np.ndarray:
+    """Compute rolling Wilder's Average Directional Index (ADX) series."""
+    h_arr = np.asarray(highs, dtype=np.float64)
+    l_arr = np.asarray(lows, dtype=np.float64)
+    c_arr = np.asarray(closes, dtype=np.float64)
+    n = len(c_arr)
+    adx = np.zeros(n, dtype=np.float64)
+    if period <= 0 or n < period * 2:
+        return adx
+
+    tr = np.empty(n, dtype=np.float64)
+    pdm = np.empty(n, dtype=np.float64)
+    mdm = np.empty(n, dtype=np.float64)
+    tr[0] = h_arr[0] - l_arr[0]
+    pdm[0] = 0.0
+    mdm[0] = 0.0
+
+    for i in range(1, n):
+        h, l, c_prev = h_arr[i], l_arr[i], c_arr[i - 1]
+        tr[i] = max(h - l, abs(h - c_prev), abs(l - c_prev))
+        up = h - h_arr[i - 1]
+        down = l_arr[i - 1] - l
+        pdm[i] = up if up > down and up > 0.0 else 0.0
+        mdm[i] = down if down > up and down > 0.0 else 0.0
+
+    tr_s = np.zeros(n, dtype=np.float64)
+    pdm_s = np.zeros(n, dtype=np.float64)
+    mdm_s = np.zeros(n, dtype=np.float64)
+
+    tr_s[period] = np.sum(tr[1 : period + 1])
+    pdm_s[period] = np.sum(pdm[1 : period + 1])
+    mdm_s[period] = np.sum(mdm[1 : period + 1])
+
+    dx = np.zeros(n, dtype=np.float64)
+    for i in range(period + 1, n):
+        tr_s[i] = (tr_s[i - 1] * (period - 1) + tr[i]) / period
+        pdm_s[i] = (pdm_s[i - 1] * (period - 1) + pdm[i]) / period
+        mdm_s[i] = (mdm_s[i - 1] * (period - 1) + mdm[i]) / period
+
+        denom = tr_s[i]
+        pdi = 100.0 * (pdm_s[i] / denom) if denom > 1e-9 else 0.0
+        mdi = 100.0 * (mdm_s[i] / denom) if denom > 1e-9 else 0.0
+        di_sum = pdi + mdi
+        dx[i] = 100.0 * (abs(pdi - mdi) / di_sum) if di_sum > 1e-9 else 0.0
+
+    start_adx = 2 * period
+    if start_adx < n:
+        adx[start_adx] = np.mean(dx[period + 1 : start_adx + 1])
+        for i in range(start_adx + 1, n):
+            adx[i] = (adx[i - 1] * (period - 1) + dx[i]) / period
+    return adx
+
+
 def calculate_adx(
     highs: Sequence[float],
     lows: Sequence[float],
     closes: Sequence[float],
     period: int = 14,
 ) -> float:
-    """Calculate Wilder's Average Directional Index (ADX) over `period` bars.
-    
-    Returns:
-        ADX value between 0.0 and 100.0. Values < 20 indicate chop/ranging, values >= 25 indicate strong trend.
-    """
+    """Calculate Wilder's Average Directional Index (ADX) over `period` bars and return the latest value."""
     n = len(closes)
-    if n < period + 1:
+    if n == 0:
         return 0.0
-
-    tr = []
-    pdm = []
-    mdm = []
-    for i in range(1, n):
-        h, l, c_prev = float(highs[i]), float(lows[i]), float(closes[i - 1])
-        tr.append(max(h - l, abs(h - c_prev), abs(l - c_prev)))
-        up = float(highs[i]) - float(highs[i - 1])
-        down = float(lows[i - 1]) - float(lows[i])
-        pdm.append(up if up > down and up > 0.0 else 0.0)
-        mdm.append(down if down > up and down > 0.0 else 0.0)
-
-    if len(tr) < period:
-        return 0.0
-
-    tr_smooth = sum(tr[:period])
-    pdm_smooth = sum(pdm[:period])
-    mdm_smooth = sum(mdm[:period])
-    dx_list = []
-
-    for i in range(period, len(tr)):
-        if i > period:
-            tr_smooth = tr_smooth - (tr_smooth / period) + tr[i]
-            pdm_smooth = pdm_smooth - (pdm_smooth / period) + pdm[i]
-            mdm_smooth = mdm_smooth - (mdm_smooth / period) + mdm[i]
-
-        pdi = 100.0 * (pdm_smooth / tr_smooth) if tr_smooth > 0.0 else 0.0
-        mdi = 100.0 * (mdm_smooth / tr_smooth) if tr_smooth > 0.0 else 0.0
-        di_sum = pdi + mdi
-        dx = 100.0 * abs(pdi - mdi) / di_sum if di_sum > 0.0 else 0.0
-        dx_list.append(dx)
-
-    if not dx_list:
-        return 0.0
-    if len(dx_list) < period:
-        return sum(dx_list) / len(dx_list)
-
-    adx = sum(dx_list[:period]) / period
-    for dx in dx_list[period:]:
-        adx = (adx * (period - 1) + dx) / period
-
-    return float(np.clip(adx, 0.0, 100.0))
+    series = calculate_adx_series(highs, lows, closes, period=period)
+    return float(np.clip(series[-1], 0.0, 100.0))
 
 
 def check_bullish_fvg_retest(
@@ -533,39 +576,6 @@ def check_fvg_rejection_confirmation(candle: Sequence[Any], side: str) -> bool:
         close_in_lower_half = ((h - c) / bar_range) >= 0.50 and c <= o
         return has_defense_wick or close_in_lower_half
     return True
-
-
-def check_market_overextension(
-    curr_close: float,
-    ema50: float,
-    atr: float,
-    rsi: float,
-    side: str,
-    ema20: Optional[float] = None,
-) -> Tuple[bool, str]:
-    """Check if price momentum is excessively overextended relative to EMA (fast EMA20 or baseline EMA50) and RSI.
-    
-    Prevents buying at parabolic wave exhaustion or shorting into oversold climatic bottoms.
-    """
-    side_upper = side.upper()
-    if side_upper in ("LONG", "BUY"):
-        if rsi > 75.0:
-            return True, f"RSI Overbought ({rsi:.1f} > 75.0)"
-        if ema20 is not None and atr > 0.0 and (curr_close - ema20) > (2.0 * atr):
-            return True, f"Price Overextended from Fast Mean ({curr_close - ema20:.2f} > 2.0x ATR {2.0 * atr:.2f})"
-        if rsi > 65.0 and atr > 0.0 and (curr_close - ema50) > (3.0 * atr):
-            return True, f"Price Overextended ({curr_close - ema50:.2f} > 3.0x ATR {3.0 * atr:.2f})"
-    elif side_upper in ("SHORT", "SELL"):
-        if rsi < 25.0:
-            return True, f"RSI Oversold ({rsi:.1f} < 25.0)"
-        if ema20 is not None and atr > 0.0 and (ema20 - curr_close) > (2.0 * atr):
-            return True, f"Price Overextended from Fast Mean ({ema20 - curr_close:.2f} > 2.0x ATR {2.0 * atr:.2f})"
-        if rsi < 35.0 and atr > 0.0 and (ema50 - curr_close) > (3.0 * atr):
-            return True, f"Price Overextended ({ema50 - curr_close:.2f} > 3.0x ATR {3.0 * atr:.2f})"
-    else:
-        return False, f"Invalid side: {side}"
-
-    return False, ""
 
 
 def detect_swing_points(
@@ -774,47 +784,6 @@ def detect_market_structure(
     }
 
 
-def check_market_structure_alignment(
-    candles: Sequence[Candle],
-    side: str = "LONG",
-    max_bars_since_event: int = 16,
-    window: int = 2,
-) -> Tuple[bool, str, Dict[str, Any]]:
-    """Verify whether a candidate trade setup aligns with Market Structure (BOS / CHoCH).
-    
-    Rules for LONG:
-    1. Market structure trend must be BULLISH (or last event was BULLISH CHOCH / BOS).
-    2. A BULLISH BOS or BULLISH CHOCH must have occurred within the last `max_bars_since_event` bars (default: 16 bars = 4h on 15m).
-    3. Price must NOT be trapped in a sideways range where bars_since_last_event > max_bars_since_event.
-    
-    Rules for SHORT:
-    1. Market structure trend must be BEARISH (or last event was BEARISH CHOCH / BOS).
-    2. A BEARISH BOS or BEARISH CHOCH must have occurred within the last `max_bars_since_event` bars.
-    3. Price must NOT be trapped in a sideways range without recent downward displacement.
-    """
-    ms = detect_market_structure(candles, window=window)
-    side_upper = side.upper()
-
-    if ms["current_trend"] == "RANGING" and ms["last_event"] is None:
-        return False, "Market structure is undefined / initial ranging regime", ms
-
-    if side_upper == "LONG":
-        if ms["last_event_side"] != "BULLISH":
-            return False, f"Market structure opposed: Last event was {ms['last_event_side']} {ms['last_event']}", ms
-        if ms["bars_since_last_event"] > max_bars_since_event:
-            return False, f"Structural momentum expired: {ms['bars_since_last_event']} bars since Bullish {ms['last_event']} (max allowed: {max_bars_since_event})", ms
-        return True, f"Aligned: Bullish {ms['last_event']} confirmed {ms['bars_since_last_event']} bars ago", ms
-
-    elif side_upper == "SHORT":
-        if ms["last_event_side"] != "BEARISH":
-            return False, f"Market structure opposed: Last event was {ms['last_event_side']} {ms['last_event']}", ms
-        if ms["bars_since_last_event"] > max_bars_since_event:
-            return False, f"Structural momentum expired: {ms['bars_since_last_event']} bars since Bearish {ms['last_event']} (max allowed: {max_bars_since_event})", ms
-        return True, f"Aligned: Bearish {ms['last_event']} confirmed {ms['bars_since_last_event']} bars ago", ms
-
-    return False, f"Invalid side: {side}", ms
-
-
 # ----------------------------------------------------
 # PILLAR 2: FIBONACCI OPTIMAL TRADE ENTRY (OTE) & PRICING MATRIX
 # ----------------------------------------------------
@@ -981,71 +950,6 @@ def get_active_dealing_range(
         "range_span": range_span,
         "range_span_pct": range_span_pct,
     }
-
-
-def check_fibonacci_ote_confluence(
-    price: float,
-    candles: Sequence[Candle],
-    side: str = "LONG",
-    lookback: int = 60,
-    window: int = 2,
-    min_range_pct: float = 0.50,
-) -> Tuple[bool, str, Dict[str, Any]]:
-    """Verify whether a candidate entry price satisfies Pillar 2 Fibonacci OTE / Discount-Premium pricing.
-    
-    Gating Rules:
-    - Longs:
-      - REJECT if in PREMIUM (retracement < 50%) -> Buying at expensive retail pricing.
-      - REJECT if INVALIDATED (retracement > 100%) -> Swing low broken.
-      - ACCEPT if in OTE (0.618 - 0.786), SHALLOW_DISCOUNT (0.50 - 0.618), or DEEP_DISCOUNT (0.786 - 1.00).
-    - Shorts:
-      - REJECT if in DISCOUNT (retracement < 50%) -> Selling at cheap wholesale pricing.
-      - REJECT if INVALIDATED (retracement > 100%) -> Swing high broken.
-      - ACCEPT if in OTE (0.618 - 0.786), SHALLOW_PREMIUM (0.50 - 0.618), or DEEP_PREMIUM (0.786 - 1.00).
-    """
-    dr = get_active_dealing_range(candles, lookback=lookback, window=window)
-    if not dr:
-        return False, "Dealing range undefined (insufficient confirmed swing points)", {}
-
-    if dr["range_span_pct"] < min_range_pct:
-        return False, f"Dealing range too compressed ({dr['range_span_pct']:.2f}% < {min_range_pct:.2f}% threshold)", dr
-
-    swing_low = dr["swing_low"]
-    swing_high = dr["swing_high"]
-    side_upper = side.upper()
-
-    fibs = calculate_fibonacci_levels(swing_low, swing_high, side=side_upper)
-    zone, ratio = classify_discount_premium(price, swing_low, swing_high, side=side_upper)
-
-    info = {
-        "dealing_range": dr,
-        "fibonacci_levels": fibs,
-        "zone": zone,
-        "retracement_ratio": ratio,
-        "is_ote": (zone == "OTE"),
-    }
-
-    if side_upper == "LONG":
-        if zone == "PREMIUM":
-            return False, f"Price {format_price(price)} is in PREMIUM ({ratio:.1%} retracement) - Longs forbidden in Premium", info
-        elif zone == "INVALIDATED":
-            return False, f"Price {format_price(price)} has broken below Swing Low {format_price(swing_low)} ({ratio:.1%})", info
-        elif zone == "OTE":
-            return True, f"🎯 OPTIMAL TRADE ENTRY: Price in OTE Golden Zone ({ratio:.1%} retracement, 0.618-0.786 OTE: {format_price(fibs['0.618'])} - {format_price(fibs['0.786'])})", info
-        else:
-            return True, f"Aligned: Price in {zone} ({ratio:.1%} retracement)", info
-
-    elif side_upper == "SHORT":
-        if zone == "DISCOUNT":
-            return False, f"Price {format_price(price)} is in DISCOUNT ({ratio:.1%} retracement) - Shorts forbidden in Discount", info
-        elif zone == "INVALIDATED":
-            return False, f"Price {format_price(price)} has broken above Swing High {format_price(swing_high)} ({ratio:.1%})", info
-        elif zone == "OTE":
-            return True, f"🎯 OPTIMAL TRADE ENTRY: Price in OTE Golden Zone ({ratio:.1%} retracement, 0.618-0.786 OTE: {format_price(fibs['0.618'])} - {format_price(fibs['0.786'])})", info
-        else:
-            return True, f"Aligned: Price in {zone} ({ratio:.1%} retracement)", info
-
-    return False, f"Invalid side: {side}", info
 
 
 # =====================================================================

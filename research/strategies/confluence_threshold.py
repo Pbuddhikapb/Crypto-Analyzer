@@ -15,6 +15,9 @@ import pandas as pd
 
 from domain.signals import CandidateSignal
 from indicators import (
+    calculate_adx_series,
+    calculate_atr_series,
+    calculate_ema_series,
     check_recent_bearish_fvg,
     check_recent_bullish_fvg,
     classify_discount_premium,
@@ -22,57 +25,11 @@ from indicators import (
     get_active_dealing_range,
 )
 from research.strategies.base import BaseStrategy, StrategyConfig
-from research.strategies.trend_pullback import compute_series_atr, compute_series_ema
 
-
-def compute_series_adx(highs: np.ndarray, lows: np.ndarray, closes: np.ndarray, period: int = 14) -> np.ndarray:
-    """Compute rolling Wilder's Average Directional Index (ADX) series."""
-    n = len(closes)
-    adx = np.zeros(n, dtype=np.float64)
-    if n < period * 2:
-        return adx
-
-    tr = np.empty(n, dtype=np.float64)
-    pdm = np.empty(n, dtype=np.float64)
-    mdm = np.empty(n, dtype=np.float64)
-    tr[0] = highs[0] - lows[0]
-    pdm[0] = 0.0
-    mdm[0] = 0.0
-
-    for i in range(1, n):
-        h, l, c_prev = highs[i], lows[i], closes[i - 1]
-        tr[i] = max(h - l, abs(h - c_prev), abs(l - c_prev))
-        up = h - highs[i - 1]
-        down = lows[i - 1] - l
-        pdm[i] = up if up > down and up > 0.0 else 0.0
-        mdm[i] = down if down > up and down > 0.0 else 0.0
-
-    tr_s = np.zeros(n, dtype=np.float64)
-    pdm_s = np.zeros(n, dtype=np.float64)
-    mdm_s = np.zeros(n, dtype=np.float64)
-
-    tr_s[period] = np.sum(tr[1 : period + 1])
-    pdm_s[period] = np.sum(pdm[1 : period + 1])
-    mdm_s[period] = np.sum(mdm[1 : period + 1])
-
-    dx = np.zeros(n, dtype=np.float64)
-    for i in range(period + 1, n):
-        tr_s[i] = (tr_s[i - 1] * (period - 1) + tr[i]) / period
-        pdm_s[i] = (pdm_s[i - 1] * (period - 1) + pdm[i]) / period
-        mdm_s[i] = (mdm_s[i - 1] * (period - 1) + mdm[i]) / period
-
-        denom = tr_s[i]
-        pdi = 100.0 * (pdm_s[i] / denom) if denom > 1e-9 else 0.0
-        mdi = 100.0 * (mdm_s[i] / denom) if denom > 1e-9 else 0.0
-        di_sum = pdi + mdi
-        dx[i] = 100.0 * (abs(pdi - mdi) / di_sum) if di_sum > 1e-9 else 0.0
-
-    start_adx = 2 * period
-    if start_adx < n:
-        adx[start_adx] = np.mean(dx[period + 1 : start_adx + 1])
-        for i in range(start_adx + 1, n):
-            adx[i] = (adx[i - 1] * (period - 1) + dx[i]) / period
-    return adx
+# Backward-compatible aliases for consolidated indicator functions
+compute_series_adx = calculate_adx_series
+compute_series_atr = calculate_atr_series
+compute_series_ema = calculate_ema_series
 
 
 class ConfluenceThresholdStrategy(BaseStrategy):

@@ -13,52 +13,12 @@ import numpy as np
 import pandas as pd
 
 from domain.signals import CandidateSignal
-from indicators import calculate_rsi_series
+from indicators import calculate_atr_series, calculate_ema_series, calculate_rsi_series
 from research.strategies.base import BaseStrategy, StrategyConfig
 
-
-def compute_series_ema(values: np.ndarray, period: int) -> np.ndarray:
-    """Compute rolling EMA across a 1D numpy array."""
-    n = len(values)
-    ema = np.empty(n, dtype=np.float64)
-    if n == 0:
-        return ema
-    if n < period:
-        ema[:] = values
-        return ema
-
-    alpha = 2.0 / (period + 1.0)
-    ema[:period - 1] = np.nan
-    ema[period - 1] = np.mean(values[:period])
-    for i in range(period, n):
-        ema[i] = alpha * values[i] + (1.0 - alpha) * ema[i - 1]
-    return ema
-
-
-def compute_series_atr(highs: np.ndarray, lows: np.ndarray, closes: np.ndarray, period: int = 14) -> np.ndarray:
-    """Compute rolling ATR series using Wilder's smoothing."""
-    n = len(closes)
-    atr = np.empty(n, dtype=np.float64)
-    if n == 0:
-        return atr
-    if n == 1:
-        atr[0] = highs[0] - lows[0]
-        return atr
-
-    tr = np.empty(n, dtype=np.float64)
-    tr[0] = highs[0] - lows[0]
-    for i in range(1, n):
-        tr[i] = max(highs[i] - lows[i], abs(highs[i] - closes[i - 1]), abs(lows[i] - closes[i - 1]))
-
-    if n < period:
-        atr[:] = np.mean(tr)
-        return atr
-
-    atr[:period - 1] = np.nan
-    atr[period - 1] = np.mean(tr[:period])
-    for i in range(period, n):
-        atr[i] = (atr[i - 1] * (period - 1) + tr[i]) / period
-    return atr
+# Backward-compatible aliases for consolidated indicator functions
+compute_series_ema = calculate_ema_series
+compute_series_atr = calculate_atr_series
 
 
 class TrendPullbackStrategy(BaseStrategy):

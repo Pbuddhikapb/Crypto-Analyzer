@@ -406,7 +406,7 @@ def test_aggregate_candles_edge_cases():
     assert agg[0] == sample[0]
     assert ts == [1000]
 
-    # Uneven length: 5 bars with factor=2 -> 3 aggregate bars
+    # Uneven length: 5 bars with factor=2 on clock grid [0, 100, 200, 300, 400]
     bars = [
         (10.0, 15.0, 8.0, 12.0, 10.0),
         (12.0, 16.0, 11.0, 14.0, 10.0),
@@ -414,18 +414,28 @@ def test_aggregate_candles_edge_cases():
         (15.0, 20.0, 14.0, 19.0, 10.0),
         (19.0, 22.0, 18.0, 21.0, 10.0),
     ]
-    timestamps = [100, 200, 300, 400, 500]
-    agg, agg_ts = aggregate_candles(bars, factor=2, timestamps=timestamps)
-    assert len(agg) == 3
+    timestamps = [0, 100, 200, 300, 400]
+
+    # By default, keep_partial_tail=False drops incomplete remainder (bar 4 alone)
+    agg_dropped, agg_ts_dropped = aggregate_candles(bars, factor=2, timestamps=timestamps, keep_partial_tail=False)
+    assert len(agg_dropped) == 2
+    assert agg_dropped[0] == (10.0, 16.0, 8.0, 14.0, 20.0)
+    assert agg_ts_dropped[0] == 0
+    assert agg_dropped[1] == (14.0, 20.0, 13.0, 19.0, 20.0)
+    assert agg_ts_dropped[1] == 200
+
+    # With keep_partial_tail=True, forming trailing in-progress group is preserved
+    agg_kept, agg_ts_kept = aggregate_candles(bars, factor=2, timestamps=timestamps, keep_partial_tail=True)
+    assert len(agg_kept) == 3
     # Bar 0: chunk 0..1
-    assert agg[0] == (10.0, 16.0, 8.0, 14.0, 20.0)
-    assert agg_ts[0] == 100
+    assert agg_kept[0] == (10.0, 16.0, 8.0, 14.0, 20.0)
+    assert agg_ts_kept[0] == 0
     # Bar 1: chunk 2..3
-    assert agg[1] == (14.0, 20.0, 13.0, 19.0, 20.0)
-    assert agg_ts[1] == 300
-    # Bar 2: remainder (bar 4 alone)
-    assert agg[2] == (19.0, 22.0, 18.0, 21.0, 10.0)
-    assert agg_ts[2] == 500
+    assert agg_kept[1] == (14.0, 20.0, 13.0, 19.0, 20.0)
+    assert agg_ts_kept[1] == 200
+    # Bar 2: trailing forming candle (bar 4 alone)
+    assert agg_kept[2] == (19.0, 22.0, 18.0, 21.0, 10.0)
+    assert agg_ts_kept[2] == 400
 
 
 

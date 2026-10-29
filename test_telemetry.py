@@ -29,7 +29,7 @@ def test_print_multi_coin_radar_with_live_prices(capsys):
     traders = {"BTCUSDT": trader_btc, "DOGEUSDT": trader_doge}
     latest_prices = {"BTCUSDT": 80550.0, "DOGEUSDT": 0.1245}
 
-    print_multi_coin_radar(traders, None, "1m", latest_prices=latest_prices)
+    print_multi_coin_radar(traders, timeframe="1m", latest_prices=latest_prices)
     captured = capsys.readouterr().out
 
     # Verify both symbols appear in output

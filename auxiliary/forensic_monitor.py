@@ -722,7 +722,7 @@ def main():
         print(f"Almost TP1 Fades:        {report_data['almost_tp1_fades']}")
         print(f"Stop-Hunt Close Calls:   {report_data['stop_hunt_close_calls']}")
         print(f"Audited Active Trades:   {report_data['active_audited_trades']}")
-        print("\nPass complete. To run continuously, use: py forensic_monitor.py --daemon")
+        print("\nPass complete. To run continuously, use: python -m auxiliary.forensic_monitor --daemon")
 
 
 if __name__ == "__main__":

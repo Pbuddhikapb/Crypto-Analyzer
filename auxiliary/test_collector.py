@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from collector import MarketDataCollector
+from auxiliary.collector import MarketDataCollector
 
 
 class MockAsyncIteratorWS:

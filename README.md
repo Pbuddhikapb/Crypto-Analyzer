@@ -4,13 +4,23 @@ An institutional market microstructure terminal and empirical quantitative valid
 
 ---
 
-## Current Scientific Status: No Strategy Has Validated Edge
+## Current Scientific Status: 5 of 6 Hypotheses Rejected (Donchian4hN55 Passed Dev Gate, Not Validated)
 
-> **Current Finding:** **No strategy has validated edge.**
+> **Current Finding:** **5 of 6 hypotheses REJECTED.**
 > 
-> Across extensive empirical testing on historical development data (January 1, 2021 through April 18, 2026, comprising up to 46,392 continuous hourly bars per symbol across 10 major pairs), all six codified strategy hypotheses failed to reject the empirical null hypothesis ($H_0$). When subjected to institutional friction (0.05% taker fee, 0.02% maker fee, 0.03% adverse slippage, and 0.01% 8-hour funding drag), every strategy achieved negative net expectancy ($EV < 0$) and proved statistically indistinguishable from, or worse than, matched random noise baselines ($p \ge 0.05$).
+> Across extensive empirical testing on historical development data (January 1, 2021 through April 18, 2026, comprising up to 46,393 continuous hourly bars per symbol across 10 major pairs), 5 of 6 codified strategy hypotheses (TrendPullback, FVGRetest, ConfluenceThreshold, LiquiditySweep, Donchian4hN20) failed to reject the empirical null hypothesis ($H_0$).
+>
+> **Donchian4hN55** passed the preregistered dev gate narrowly (matched p=0.0195, alpha=0.025) but is **NOT validated**:
+> * **Holdout untouched**: Out-of-sample data after `2026-04-18` remains unvisited.
+> * **Outlier concentration**: Top-10 trades = 82% of total R (`82.0%`, `+53.76R` / `+65.56R`).
+> * **Ex-outlier expectancy**: Mean net R without them = `+0.0144R` (vs `+0.0788R` across all 832 trades).
+> * **Temporal instability**: Week-block bootstrap 95% CI `[-0.0151, +0.1796]R` includes zero.
+> * **Recent regime decay**: 2026 YTD is negative (`-2.94R`, 39 trades, 28.2% win rate).
 >
 > Consequently, the terminal operates strictly in **evidence-status mode**. Automated order generation and paper trade execution are completely disabled in `server.py`. The user interface displays live market data, order book microstructure, risk sizing constraints, and empirical statistical evidence badges from `strategy_results.json` without directional endorsement.
+>
+> > [!NOTE]
+> > **Data Provenance Notice:** `research/reports/strategy_results.json` was generated from a dirty working tree (commit `90691ff+dirty`, full hash `90691ff04c0c38b487c3325807326330853d5605+dirty`) and should be regenerated from a clean commit before the holdout run. Do not regenerate it now.
 
 ---
 
@@ -184,6 +194,11 @@ All static assets, REST API requests (`/api/...`), and bi-directional WebSocket 
 │   ├── evaluator.py           # Statistical decision rules & verdict generator
 │   └── holdout_check.py       # One-pass locked out-of-sample holdout gate
 ├── domain/                    # Shared cross-cutting domain contracts (signals, exit configs)
+├── auxiliary/                 # Auxiliary telemetry collection, vault storage, and forensic auditors
+│   ├── collector.py           # Multi-market real-time and historical kline collector daemon
+│   ├── vault.py               # SQLite WAL high-performance telemetry storage
+│   ├── forensic_monitor.py    # Trade excursion & shadow telemetry monitor
+│   └── repair_vault_source.py # One-time repair utility for legacy vault source tagging
 ├── scripts/
 │   ├── verify_architecture.sh # Unified architectural boundary & test verification script
 │   ├── start.sh               # Builds frontend & runs FastAPI in tmux on 127.0.0.1:8008

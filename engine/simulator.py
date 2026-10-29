@@ -67,6 +67,8 @@ class ExecutedTrade:
     mae_r: float
     initial_risk_usd: float = 0.0
     net_r: float = 0.0
+    funding_fallback_periods: int = 0
+    funding_total_periods: int = 0
 
 
 @dataclass
@@ -106,6 +108,8 @@ class SimulationResult:
     days_evaluated: float = 0.0
     pct_of_dataset_evaluated: float = 100.0
     dropped_trade_fraction: float = 0.0
+    funding_fallback_periods: int = 0
+    funding_total_periods: int = 0
 
 
 class SimulationEngine:
@@ -180,6 +184,8 @@ class SimulationEngine:
         # Equity curve: (timestamp_ms, equity)
         self.equity_curve: List[Tuple[int, float]] = []
         self.dropped_trade_fraction: float = 0.0
+        self.funding_fallback_periods: int = 0
+        self.funding_total_periods: int = 0
 
     def can_open_position(
         self,
@@ -314,6 +320,8 @@ class SimulationEngine:
             "entry_fee_usd": entry_fee_usd,
             "slippage_usd": slippage_cost_usd,
             "funding_cost_usd": 0.0,
+            "funding_fallback_periods": 0,
+            "funding_total_periods": 0,
             "last_funding_period": signal.timestamp_ms // (8 * 3600 * 1000),
             "tp1_realized_usd": 0.0,
             "tp1_fees_usd": 0.0,
@@ -403,6 +411,8 @@ class SimulationEngine:
             mae_r=round(state.lowest_r, 4),
             initial_risk_usd=round(init_risk, 2),
             net_r=round(net_r, 4),
+            funding_fallback_periods=pos.get("funding_fallback_periods", 0),
+            funding_total_periods=pos.get("funding_total_periods", 0),
         )
         del self.active_positions[trade_id]
         self.completed_trades.append(executed)
@@ -470,6 +480,8 @@ class SimulationEngine:
             current_funding_period = timestamp_ms // (8 * 3600 * 1000)
             if current_funding_period > pos["last_funding_period"]:
                 periods = current_funding_period - pos["last_funding_period"]
+                pos["funding_total_periods"] += periods
+                self.funding_total_periods += periods
                 f_map = self.funding_rate_map.get(sym)
                 if f_map is not None:
                     total_drag = 0.0
@@ -477,6 +489,8 @@ class SimulationEngine:
                         rate = f_map.get(p)
                         if rate is None:
                             rate = self.friction.funding_rate_8h_pct / 100.0
+                            pos["funding_fallback_periods"] += 1
+                            self.funding_fallback_periods += 1
                         if state.side == "LONG":
                             period_drag = pos["notional_usd"] * state.size_remaining_pct * rate
                         else:
@@ -484,6 +498,8 @@ class SimulationEngine:
                         total_drag += period_drag
                     funding_drag = total_drag
                 else:
+                    pos["funding_fallback_periods"] += periods
+                    self.funding_fallback_periods += periods
                     funding_drag = pos["notional_usd"] * state.size_remaining_pct * (self.friction.funding_rate_8h_pct / 100.0) * periods
 
                 pos["funding_cost_usd"] += funding_drag
@@ -580,6 +596,8 @@ class SimulationEngine:
                     mae_r=round(state.lowest_r, 4),
                     initial_risk_usd=round(init_risk, 2),
                     net_r=round(net_r, 4),
+                    funding_fallback_periods=pos.get("funding_fallback_periods", 0),
+                    funding_total_periods=pos.get("funding_total_periods", 0),
                 )
 
                 closed_trades.append(executed)
@@ -638,6 +656,8 @@ class SimulationEngine:
                 days_evaluated=0.0,
                 pct_of_dataset_evaluated=100.0,
                 dropped_trade_fraction=self.dropped_trade_fraction,
+                funding_fallback_periods=self.funding_fallback_periods,
+                funding_total_periods=self.funding_total_periods,
             )
 
         wins = [t for t in trades if t.net_pnl_usd > 0]
@@ -779,6 +799,8 @@ class SimulationEngine:
             days_evaluated=round(days_eval, 1),
             pct_of_dataset_evaluated=pct_eval,
             dropped_trade_fraction=self.dropped_trade_fraction,
+            funding_fallback_periods=self.funding_fallback_periods,
+            funding_total_periods=self.funding_total_periods,
         )
 
 
@@ -943,8 +965,14 @@ def simulate_portfolio_signals(
     if bar_index_map is not None:
         idx_maps = bar_index_map
     else:
-        for sym, arr in candles_dict.items():
-            idx_maps[sym] = {int(arr[idx, 4]): idx for idx in range(len(arr))}
+        try:
+            for sym, arr in candles_dict.items():
+                idx_maps[sym] = {int(arr[idx, 4]): idx for idx in range(len(arr))}
+        except (IndexError, ValueError) as e:
+            raise ValueError(
+                f"simulate_portfolio_signals: candle arrays in candles_dict must contain valid "
+                f"timestamps at column index 4: {e}"
+            ) from e
 
     engine = SimulationEngine(
         initial_equity_usd=initial_equity_usd,
@@ -1068,6 +1096,8 @@ def simulate_portfolio_signals(
             "trade": trade,
         })
         engine.completed_trades.append(trade)
+        engine.funding_fallback_periods += getattr(trade, "funding_fallback_periods", 0)
+        engine.funding_total_periods += getattr(trade, "funding_total_periods", 0)
 
     # 5. Final flush: credit remaining active positions at their exit times
     for pos in active_open:
@@ -1091,18 +1121,23 @@ def simulate_portfolio_signals(
     summary = engine.compute_summary()
     summary.dropped_trade_fraction = round(dropped_trade_fraction, 6)
     if candles_dict:
-        try:
-            min_ts = min(int(arr[0, 4]) for arr in candles_dict.values() if len(arr) > 0)
-            max_ts = max(int(arr[-1, 4]) for arr in candles_dict.values() if len(arr) > 0)
-            total_days = max(1.0, (max_ts - min_ts) / (86400 * 1000.0))
-            if engine.sizing_mode == "compounding" and engine.ruined and engine.ruin_time_ms:
-                days_eval = max(1.0, (engine.ruin_time_ms - min_ts) / (86400 * 1000.0))
-            else:
-                days_eval = total_days
-            summary.days_evaluated = round(days_eval, 1)
-            summary.pct_of_dataset_evaluated = min(100.0, round((days_eval / total_days) * 100.0, 1))
-        except Exception:
-            pass
+        non_empty = [arr for arr in candles_dict.values() if len(arr) > 0]
+        if non_empty:
+            try:
+                min_ts = min(int(arr[0, 4]) for arr in non_empty)
+                max_ts = max(int(arr[-1, 4]) for arr in non_empty)
+                total_days = max(1.0, (max_ts - min_ts) / (86400 * 1000.0))
+                if engine.sizing_mode == "compounding" and engine.ruined and engine.ruin_time_ms:
+                    days_eval = max(1.0, (engine.ruin_time_ms - min_ts) / (86400 * 1000.0))
+                else:
+                    days_eval = total_days
+                summary.days_evaluated = round(days_eval, 1)
+                summary.pct_of_dataset_evaluated = min(100.0, round((days_eval / total_days) * 100.0, 1))
+            except (IndexError, ValueError) as e:
+                raise ValueError(
+                    f"simulate_portfolio_signals: candle arrays in candles_dict must contain valid "
+                    f"timestamps at column index 4: {e}"
+                ) from e
 
     return summary
 

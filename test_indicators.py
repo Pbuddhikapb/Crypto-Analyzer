@@ -1,9 +1,13 @@
+import numpy as np
 import pytest
 from indicators import (
-    calculate_ema,
-    calculate_atr,
-    calculate_rsi,
     calculate_adx,
+    calculate_adx_series,
+    calculate_atr,
+    calculate_atr_series,
+    calculate_ema,
+    calculate_ema_series,
+    calculate_rsi,
     check_recent_bullish_fvg,
     check_recent_bearish_fvg,
     check_bullish_fvg_retest,
@@ -12,7 +16,6 @@ from indicators import (
     detect_hidden_rsi_divergences,
     detect_swing_points,
     detect_market_structure,
-    check_market_structure_alignment,
     detect_order_blocks,
     check_order_block_confluence,
     format_price,
@@ -338,37 +341,6 @@ def test_detect_bullish_choch_trend_reversal():
     assert ms_rev["current_trend"] == "BULLISH"
 
 
-def test_check_market_structure_alignment_gate():
-    """Verify that check_market_structure_alignment blocks stale ranges and approves fresh momentum."""
-    # Setup candles with a BOS
-    candles = [
-        (100.0, 105.0, 95.0, 100.0, 100.0),
-        (100.0, 110.0, 98.0, 108.0, 100.0),
-        (108.0, 130.0, 105.0, 125.0, 100.0),  # index 2: Swing High 130
-        (125.0, 126.0, 110.0, 112.0, 100.0),
-        (112.0, 115.0, 105.0, 110.0, 100.0),
-        (110.0, 136.0, 108.0, 135.0, 200.0),  # index 5: BOS!
-    ]
-
-    # At index 5: bars_since_last_event == 0 <= 16 -> Approved
-    ok, reason, _ = check_market_structure_alignment(candles, side="LONG", max_bars_since_event=16)
-    assert ok is True
-    assert "Aligned: Bullish BOS" in reason
-
-    # Bearish check should be opposed
-    ok_short, reason_short, _ = check_market_structure_alignment(candles, side="SHORT", max_bars_since_event=16)
-    assert ok_short is False
-    assert "opposed" in reason_short.lower()
-
-    # If 20 bars of flat chop elapse without fresh structure, momentum expires
-    for _ in range(20):
-        candles.append((135.0, 136.0, 134.0, 135.0, 50.0))
-
-    ok_stale, reason_stale, _ = check_market_structure_alignment(candles, side="LONG", max_bars_since_event=16)
-    assert ok_stale is False
-    assert "Structural momentum expired" in reason_stale
-
-
 def test_detect_hidden_rsi_divergences_continuation():
     """Verify detection of Hidden Bullish RSI Divergence (Trend Continuation)."""
     # Baseline: steady uptrend
@@ -523,31 +495,119 @@ def test_order_block_touch_decay():
     assert details3["freshness_score"] == 0.0
 
 
-def test_check_market_overextension_fast_mean():
-    """Verify that price stretched > 2.0x ATR from EMA20 is vetoed as an overextension trap."""
-    from indicators import check_market_overextension
+def test_consolidated_indicator_series_numerical_properties():
+    """Verify exact numerical properties of consolidated indicator series against specs."""
+    # 1. EMA series properties
+    closes = np.array([100.0 + i * 0.5 for i in range(40)], dtype=np.float64)
+    ema10 = calculate_ema_series(closes, 10)
+    assert len(ema10) == 40
+    assert np.isnan(ema10[:9]).all()
+    assert ema10[9] == pytest.approx(float(np.mean(closes[:10])))
+    alpha = 2.0 / 11.0
+    for i in range(10, 40):
+        expected = alpha * closes[i] + (1.0 - alpha) * ema10[i - 1]
+        assert ema10[i] == pytest.approx(expected)
+    assert calculate_ema(closes, 10) == ema10[-1]
 
-    # Price = 50,000, EMA50 = 49,000, ATR = 200, RSI = 60 (well below 75 threshold)
-    # Distance to EMA20 (49,500) = 500 = 2.5x ATR (> 2.0x ATR threshold)
-    is_overextended, reason = check_market_overextension(
-        curr_close=50000.0,
-        ema50=49000.0,
-        atr=200.0,
-        rsi=60.0,
-        side="LONG",
-        ema20=49500.0,
-    )
-    assert is_overextended is True
-    assert "Fast Mean" in reason
+    # Edge cases
+    assert len(calculate_ema_series([], 10)) == 0
+    single_ema = calculate_ema_series([105.0], 10)
+    assert len(single_ema) == 1 and single_ema[0] == 105.0
 
-    # Within 2.0x ATR -> Permitted
-    is_overextended2, _ = check_market_overextension(
-        curr_close=49800.0,
-        ema50=49000.0,
-        atr=200.0,
-        rsi=60.0,
-        side="LONG",
-        ema20=49500.0,
+    # 2. ATR series properties
+    highs = closes + 2.0
+    lows = closes - 1.0
+    atr14 = calculate_atr_series(highs, lows, closes, 14)
+    assert len(atr14) == 40
+    assert np.isnan(atr14[:13]).all()
+    assert calculate_atr(highs, lows, closes, 14) == atr14[-1]
+
+    # Edge cases
+    assert len(calculate_atr_series([], [], [], 14)) == 0
+    single_atr = calculate_atr_series([110.0], [90.0], [100.0], 14)
+    assert len(single_atr) == 1 and single_atr[0] == 20.0
+
+    # 3. ADX series properties
+    adx14 = calculate_adx_series(highs, lows, closes, 14)
+    assert len(adx14) == 40
+    assert (adx14[:28] == 0.0).all()
+    assert calculate_adx(highs, lows, closes, 14) == adx14[-1]
+    assert adx14[-1] > 50.0  # Steady uptrend
+
+    # Edge cases
+    assert len(calculate_adx_series([], [], [], 14)) == 0
+    short_adx = calculate_adx_series([110.0] * 5, [90.0] * 5, [100.0] * 5, 14)
+    assert (short_adx == 0.0).all()
+
+    # 4. Backward-compatible aliases
+    from research.strategies.trend_pullback import compute_series_ema, compute_series_atr
+    from research.strategies.confluence_threshold import compute_series_adx
+    assert np.array_equal(compute_series_ema(closes, 10), ema10, equal_nan=True)
+    assert np.array_equal(compute_series_atr(highs, lows, closes, 14), atr14, equal_nan=True)
+    assert np.array_equal(compute_series_adx(highs, lows, closes, 14), adx14, equal_nan=True)
+
+    # 5. Market feed _calc_ema compatibility
+    from market_feed import _calc_ema
+    assert _calc_ema(closes.tolist(), 10) == ema10[-1]
+
+
+def test_consolidated_series_small_fixture_regression():
+    """Verify strategy signal generation on a small fixed fixture using consolidated indicators."""
+    import pandas as pd
+    from research.strategies import (
+        TrendPullbackStrategy,
+        FVGRetestStrategy,
+        ConfluenceThresholdStrategy,
+        LiquiditySweepStrategy,
+        Donchian4hN20,
+        Donchian4hN55,
     )
-    assert is_overextended2 is False
+
+    # Deterministic 100-bar fixture for 1h and 30-bar fixture for 4h
+    base_ts = 1700000000000
+    times_1h = [base_ts + i * 3600000 for i in range(100)]
+    closes_1h = [100.0 + (i * 0.3) + (1.5 if i % 4 == 0 else -0.5) for i in range(100)]
+    highs_1h = [c + 1.2 for c in closes_1h]
+    lows_1h = [c - 1.0 for c in closes_1h]
+    opens_1h = [closes_1h[max(0, i - 1)] for i in range(100)]
+    vols_1h = [1000.0 + (i * 10.0) for i in range(100)]
+
+    df_1h = pd.DataFrame({
+        "open_time": times_1h,
+        "open": opens_1h,
+        "high": highs_1h,
+        "low": lows_1h,
+        "close": closes_1h,
+        "volume": vols_1h,
+    })
+
+    times_4h = [base_ts + i * 14400000 for i in range(30)]
+    closes_4h = [100.0 + (i * 1.2) for i in range(30)]
+    highs_4h = [c + 2.5 for c in closes_4h]
+    lows_4h = [c - 2.0 for c in closes_4h]
+    opens_4h = [closes_4h[max(0, i - 1)] for i in range(30)]
+    vols_4h = [4000.0 + (i * 40.0) for i in range(30)]
+
+    df_4h = pd.DataFrame({
+        "open_time": times_4h,
+        "open": opens_4h,
+        "high": highs_4h,
+        "low": lows_4h,
+        "close": closes_4h,
+        "volume": vols_4h,
+    })
+
+    # Ensure all 6 strategies execute cleanly without error
+    strats = [
+        TrendPullbackStrategy(),
+        FVGRetestStrategy(),
+        ConfluenceThresholdStrategy(),
+        LiquiditySweepStrategy(),
+        Donchian4hN20(),
+        Donchian4hN55(),
+    ]
+    for strat in strats:
+        sigs = strat.generate_signals("BTCUSDT", df_1h, df_4h)
+        assert isinstance(sigs, list)
+
 

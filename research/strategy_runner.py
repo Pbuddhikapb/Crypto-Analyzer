@@ -119,6 +119,8 @@ def strategy_run_result_from_dict(strat_data: Dict[str, Any]) -> StrategyRunResu
         days_evaluated=float(strat_data.get("days_evaluated", 0.0)),
         pct_of_dataset_evaluated=float(strat_data.get("pct_of_dataset_evaluated", 100.0)),
         dropped_trade_fraction=float(strat_data.get("dropped_trade_fraction", 0.0)),
+        funding_fallback_periods=int(strat_data.get("funding_fallback_periods", 0)),
+        funding_total_periods=int(strat_data.get("funding_total_periods", 0)),
     )
 
     ev = StrategyEvaluation(
@@ -694,6 +696,8 @@ def save_strategy_results_json(
             "max_drawdown_r": round(sim.max_drawdown_r, 4),
             "days_evaluated": round(sim.days_evaluated, 1),
             "pct_of_dataset_evaluated": round(sim.pct_of_dataset_evaluated, 1),
+            "funding_fallback_periods": getattr(sim, "funding_fallback_periods", 0),
+            "funding_total_periods": getattr(sim, "funding_total_periods", 0),
             "sharpe_ratio": round(sim.sharpe_ratio, 2),
             "max_drawdown_pct": round(sim.max_drawdown_pct, 2),
             "net_profit_pct": round(sim.net_profit_pct, 2),
@@ -915,7 +919,9 @@ def generate_markdown_report(
             f"> Days Evaluated: **`{r.sim_result.days_evaluated:.0f} days ({r.sim_result.pct_of_dataset_evaluated:.1f}% of dataset)`**  \n"
             f"> Bootstrap 95% CI (Mean Net R): **`{ci_str}`** ({boot_resamples_n:,} resamples)  \n"
             f"> Matched Baseline Median Net EV: **`{matched_med_str}`** (Matched 95th Pct Hurdle: `{matched_p95_str}`)  \n"
-            f"> Sizing Mode: `{r.sim_result.sizing_mode}` | Account Ruined: `{ruin_info}`"
+            f"> Sizing Mode: `{r.sim_result.sizing_mode}` | Account Ruined: `{ruin_info}`  \n"
+            f"> Funding Fallback Periods: `{getattr(r.sim_result, 'funding_fallback_periods', 0)} / {getattr(r.sim_result, 'funding_total_periods', 0)}` "
+            f"({((getattr(r.sim_result, 'funding_fallback_periods', 0) / getattr(r.sim_result, 'funding_total_periods', 1)) * 100.0) if getattr(r.sim_result, 'funding_total_periods', 0) > 0 else 0.0:.1f}%)"
             f"{floor_warning_str}"
         )
 
@@ -1190,10 +1196,12 @@ def main():
         matched_med = f"{r.matched_baseline.median_expectancy_r:+.4f}R" if r.matched_baseline else "N/A"
         matched_p_val = ev.matched_p_value if ev.matched_p_value is not None else ev.p_composite
         eval_days = f"{r.sim_result.days_evaluated:.0f}d ({r.sim_result.pct_of_dataset_evaluated:.1f}%)"
+        funding_str = f"{getattr(r.sim_result, 'funding_fallback_periods', 0)}/{getattr(r.sim_result, 'funding_total_periods', 0)}"
         print(
             f"[{ev.verdict}] {ev.strategy_name:<22} | Trades: {ev.total_trades:>4} | "
             f"WR: {ev.win_rate:>5.1f}% | PF: {ev.profit_factor:>4.2f} | "
             f"EV: {ev.expectancy_r:>+7.4f}R | MaxDD(R): {r.sim_result.max_drawdown_r:>5.2f}R | "
+            f"Funding Fallback: {funding_str} | "
             f"95% CI: {ci_str} | Matched Med: {matched_med} | Matched p-val: {matched_p_val:.4f} | "
             f"Days: {eval_days}"
         )

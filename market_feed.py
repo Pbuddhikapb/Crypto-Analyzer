@@ -16,6 +16,10 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import aiohttp
 
+from indicators import calculate_ema
+
+_calc_ema = calculate_ema
+
 
 def timeframe_to_seconds(tf: str) -> int:
     """Convert timeframe string (e.g. 1m, 15m, 1h, 4h, 1d) to integer seconds."""
@@ -28,17 +32,6 @@ def timeframe_to_seconds(tf: str) -> int:
     return 60
 
 
-def _calc_ema(closes: Sequence[float], period: int) -> float:
-    """Calculate Exponential Moving Average (EMA) and return latest value."""
-    if not closes or period <= 0:
-        return float(closes[-1]) if closes else 0.0
-    if len(closes) < period:
-        return float(closes[-1])
-    alpha = 2.0 / (period + 1.0)
-    ema = float(sum(closes[:period]) / period)
-    for price in closes[period:]:
-        ema = alpha * float(price) + (1.0 - alpha) * ema
-    return float(ema)
 
 
 class CandleFeedBuffer:

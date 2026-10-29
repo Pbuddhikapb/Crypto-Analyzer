@@ -12,10 +12,18 @@ import pytest
 
 from data.loader import DEVELOPMENT_END, clear_cache, load_candles
 from research.holdout_check import (
+    check_working_tree_clean,
+    get_source_file_git_hash,
     is_holdout_run_recorded,
     record_holdout_run,
     run_holdout_check,
 )
+
+
+@pytest.fixture(autouse=True)
+def mock_clean_working_tree_by_default(monkeypatch):
+    """By default in unit tests, assume clean working tree unless explicitly testing dirty behavior."""
+    monkeypatch.setattr("research.holdout_check.check_working_tree_clean", lambda _: [])
 
 
 def test_default_load_excludes_holdout_bars():
@@ -243,4 +251,44 @@ def test_holdout_check_warns_on_repeat_strategy_name():
                 )
     finally:
         shutil.rmtree(temp_dir)
+
+
+def test_get_source_file_git_hash_errors():
+    """Verify get_source_file_git_hash raises descriptive errors on missing file or failure, never returning 'unknown'."""
+    # 1. Non-existent file raises FileNotFoundError
+    with pytest.raises(FileNotFoundError, match="does not exist"):
+        get_source_file_git_hash("research/strategies/non_existent_file.py")
+
+    # 2. When subprocess and file reading both fail, raises RuntimeError (never 'unknown')
+    with patch("subprocess.run", side_effect=OSError("git failure")):
+        with patch("builtins.open", side_effect=OSError("io failure")):
+            with pytest.raises(RuntimeError, match="Failed to compute git hash"):
+                get_source_file_git_hash("research/strategies/donchian_4h.py")
+
+    # 3. Existing strategy file returns a valid 40-character hex hash
+    h = get_source_file_git_hash("research/strategies/donchian_4h.py")
+    assert len(h) == 40
+    assert h != "unknown"
+
+
+def test_holdout_check_refuses_dirty_working_tree(monkeypatch):
+    """Verify holdout runner refuses execution when working tree has dirty dependency files."""
+    monkeypatch.setattr(
+        "research.holdout_check.check_working_tree_clean",
+        lambda _: ["indicators.py", "engine/simulator.py"],
+    )
+    with pytest.raises(RuntimeError, match="Holdout check refused: Git working tree has uncommitted changes"):
+        run_holdout_check("TrendPullback", symbols=["BTCUSDT"])
+
+
+def test_check_working_tree_clean_behavior():
+    """Verify check_working_tree_clean queries git status for strategy and dependencies."""
+    res = check_working_tree_clean("research/strategies/donchian_4h.py")
+    assert isinstance(res, list)
+    # Check that paths don't have leading characters stripped (e.g. 'engine/' not 'ngine/')
+    for path in res:
+        assert not path.startswith("ngine/"), f"Path truncated: {path}"
+        assert not path.startswith("ndicators"), f"Path truncated: {path}"
+        assert not path.startswith("esearch/"), f"Path truncated: {path}"
+
 

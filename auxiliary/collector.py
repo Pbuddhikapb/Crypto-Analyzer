@@ -8,7 +8,10 @@ import aiohttp
 import websockets
 
 from market_feed import SymbolNormalizer, get_whale_thresholds
-from vault import AsyncVaultWriter, MarketDataVault
+try:
+    from auxiliary.vault import AsyncVaultWriter, MarketDataVault
+except ImportError:
+    from vault import AsyncVaultWriter, MarketDataVault
 
 DEFAULT_COLLECTOR_SYMBOLS = [
     "BTCUSDT",

@@ -1,6 +1,6 @@
 # Binance Cryptocurrency Analysis Tool - Master Architectural Blueprint
 
-> **Status:** Research phase: no strategy has passed validation. Terminal displays evidence status only.  
+> **Status:** Research phase: 5 of 6 hypotheses REJECTED. Donchian4hN55 passed the preregistered dev gate narrowly (matched p=0.0195, alpha=0.025) but is NOT validated: holdout untouched; top-10 trades = 82% of total R; mean net R without them = +0.0144R; week-block bootstrap 95% CI [-0.0151, +0.1796]R includes zero; 2026 YTD is negative. Terminal displays evidence status only.  
 > **Architecture Pattern:** Institutional Market Microstructure & SMC Execution Engine
 
 ---
@@ -53,7 +53,7 @@ CRYPTO-ANALYZER FIXED TARGET ARCHITECTURE
 [ AREA B: Analysis & Signals ] (indicators.py, microstructure.py, research/strategies/)
         │                      * SMC, EMAs, order flow, CandidateSignal zero-lookahead *
         ▼
-[ AREA A: Data & Ingestion ]   (market_feed.py, collector.py, vault.py, data/loader.py)
+[ AREA A: Data & Ingestion ]   (market_feed.py, data/loader.py; auxiliary/collector.py, auxiliary/vault.py)
                                * Live WS/REST feeds, Parquet storage, buffer management *
 
 [ CROSS-CUTTING: Domain ]      (domain/signals.py, domain/exits.py)
@@ -74,7 +74,7 @@ FRONTEND ARCHITECTURE (React / Vite / TypeScript / Tailwind)
 ```
 
 ### Area Breakdown:
-* **Area A: Data (`market_feed.py`, `collector.py`, `vault.py`, `data/`)**: Live Binance Futures WS streams, REST warmup, rolling candle buffers (`CandleFeedBuffer`), historical Parquet storage.
+* **Area A: Data (`market_feed.py`, `data/`, `auxiliary/`)**: Live Binance Futures WS streams, REST warmup, rolling candle buffers (`CandleFeedBuffer`), historical Parquet storage.
 * **Area B: Analysis & Signals (`indicators.py`, `microstructure.py`, `research/strategies/`)**: Pure TA math (EMAs, RSI, SMC Fair Value Gaps, Order Blocks), derivatives tape (Order Book depth, whale trades, liquidation cascades, OI regimes), and candidate signal generators emitting standard `CandidateSignal` objects.
 * **Area C: Simulation & Validation (`engine/simulator.py`, `engine/exits.py`, `research/`)**: Single Exit Authority (`calculate_bracket_geometry`), realistic institutional frictions (slippage, maker/taker fees, funding costs), Monte Carlo permutation baselines ($H_0$), and holdout verification.
 * **Area D: Presentation (`server.py`, `main.py`, `frontend/`)**: FastAPI REST API, WebSocket pub/sub broadcaster, CLI radar monitor, and React terminal SPA. Always presents evidence status badges clearly distinguishing validated findings from untested hypotheses.
@@ -155,7 +155,11 @@ FRONTEND ARCHITECTURE (React / Vite / TypeScript / Tailwind)
 
 ```
 Crypto-Analyzer/
-├── collector.py           # Multi-market real-time and historical kline collector
+├── auxiliary/
+│   ├── collector.py       # Multi-market real-time and historical kline collector
+│   ├── vault.py           # SQLite WAL high-performance telemetry storage
+│   ├── forensic_monitor.py# Real-time trade excursion auditor
+│   └── repair_vault_source.py # Legacy vault data repair utility
 ├── backend/
 │   ├── pyproject.toml             # Managed by uv (Python 3.12)
 │   ├── run.py                     # Entry point (runs uvicorn on port 8000)

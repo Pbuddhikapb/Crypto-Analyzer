@@ -427,24 +427,111 @@ def aggregate_candles(
     candles: Sequence[Any],
     factor: int,
     timestamps: Optional[Sequence[int]] = None,
-) -> Tuple[List[Tuple[float, float, float, float, float]], Optional[List[int]]]:
-    """Aggregate lower timeframe candles into higher timeframe bars.
+    base_interval_ms: Optional[int] = None,
+    keep_partial_tail: bool = False,
+    return_is_partial: bool = False,
+) -> Any:
+    """Aggregate lower timeframe candles into higher timeframe bars aligned to clock boundaries.
     
     E.g. factor=4 combines 4x 15m candles into 1x 1h candle.
+    Groups candles by floor(open_time_ms / (factor * base_interval_ms)).
     Calculates True OHLCV: open=first open, high=max high, low=min low, close=last close, vol=sum vol.
+    
+    Requirements:
+    1. Group by floor(open_time_ms / (factor * base_interval_ms)), using timestamps argument.
+       Raises ValueError if timestamps are missing or misaligned with candles.
+    2. Drops an incomplete leading group (where buffer starts mid-interval).
+    3. Keeps trailing in-progress group only if it contains the latest bar and keep_partial_tail is True.
+    4. Gaps inside a group are treated as incomplete and dropped.
+    5. Preserves OHLCV semantics with timestamp = group start.
     """
-    if factor <= 1 or not candles:
-        c_norm = normalize_candles_5tuple(candles) if candles else []
-        return c_norm, list(timestamps) if timestamps else None
+    if factor < 1:
+        raise ValueError(f"Aggregation factor must be >= 1, got {factor}")
+
+    if not candles:
+        empty_res: Tuple[List[Tuple[float, float, float, float, float]], Optional[List[int]]] = (
+            [],
+            [] if timestamps is not None else None,
+        )
+        if return_is_partial:
+            return empty_res[0], empty_res[1], []
+        return empty_res
+
+    if timestamps is None:
+        raise ValueError("Timestamps are required when aggregating candles (timestamps is None).")
+
+    if len(timestamps) != len(candles):
+        raise ValueError(
+            f"Timestamps length ({len(timestamps)}) does not match candles length ({len(candles)})."
+        )
 
     c_norm = normalize_candles_5tuple(candles)
-    n = len(c_norm)
-    agg_candles: List[Tuple[float, float, float, float, float]] = []
-    agg_ts: Optional[List[int]] = [] if timestamps else None
-    ts_list = list(timestamps) if timestamps else []
 
-    for i in range(0, n, factor):
-        chunk = c_norm[i:i + factor]
+    if factor == 1:
+        res = (c_norm, [int(t) for t in timestamps])
+        if return_is_partial:
+            return res[0], res[1], [False] * len(c_norm)
+        return res
+
+    ts_list = [int(t) for t in timestamps]
+
+    # Detect if timestamps are in Unix seconds (e.g. 1_000_000_000 <= t < 10_000_000_000)
+    ts_is_seconds = any(1_000_000_000 <= t < 10_000_000_000 for t in ts_list)
+    if ts_is_seconds:
+        ts_ms = [t * 1000 if 1_000_000_000 <= t < 10_000_000_000 else t for t in ts_list]
+    else:
+        ts_ms = list(ts_list)
+
+    if base_interval_ms is not None:
+        if ts_is_seconds and base_interval_ms < 1000:
+            eff_base_interval_ms = base_interval_ms * 1000
+        else:
+            eff_base_interval_ms = base_interval_ms
+    else:
+        diffs = [ts_ms[i + 1] - ts_ms[i] for i in range(len(ts_ms) - 1) if ts_ms[i + 1] > ts_ms[i]]
+        eff_base_interval_ms = min(diffs) if diffs else 900_000
+
+    if eff_base_interval_ms <= 0:
+        raise ValueError(f"Invalid base_interval_ms: {eff_base_interval_ms}")
+
+    interval_ms = factor * eff_base_interval_ms
+
+    # Group candles by floor(open_time_ms / (factor * base_interval_ms))
+    groups: Dict[int, List[int]] = {}
+    for idx, t in enumerate(ts_ms):
+        group_key = t // interval_ms
+        if group_key not in groups:
+            groups[group_key] = []
+        groups[group_key].append(idx)
+
+    agg_candles: List[Tuple[float, float, float, float, float]] = []
+    agg_ts: List[int] = []
+    agg_is_partial: List[bool] = []
+    last_bar_idx = len(c_norm) - 1
+
+    for group_key in sorted(groups.keys()):
+        idxs = groups[group_key]
+        group_start_ms = group_key * interval_ms
+        group_ts_ms = [ts_ms[i] for i in idxs]
+
+        starts_on_boundary = (group_ts_ms[0] == group_start_ms)
+        is_continuous = starts_on_boundary and all(
+            group_ts_ms[k] == group_start_ms + k * eff_base_interval_ms
+            for k in range(len(group_ts_ms))
+        )
+        is_complete = is_continuous and (len(idxs) == factor)
+        is_trailing_partial = (
+            keep_partial_tail
+            and is_continuous
+            and (len(idxs) < factor)
+            and (idxs[-1] == last_bar_idx)
+        )
+
+        if not is_complete and not is_trailing_partial:
+            # Drop incomplete leading group, interior gap group, or partial tail if keep_partial_tail is False
+            continue
+
+        chunk = [c_norm[i] for i in idxs]
         chunk_open = chunk[0][0]
         chunk_high = max(c[1] for c in chunk)
         chunk_low = min(c[2] for c in chunk)
@@ -452,10 +539,12 @@ def aggregate_candles(
         chunk_vol = sum(c[4] for c in chunk)
         agg_candles.append((chunk_open, chunk_high, chunk_low, chunk_close, chunk_vol))
 
-        if agg_ts is not None and ts_list:
-            if i < len(ts_list):
-                agg_ts.append(ts_list[i])
+        out_ts = group_start_ms // 1000 if ts_is_seconds else group_start_ms
+        agg_ts.append(out_ts)
+        agg_is_partial.append(not is_complete)
 
+    if return_is_partial:
+        return agg_candles, agg_ts, agg_is_partial
     return agg_candles, agg_ts
 
 
@@ -1141,8 +1230,14 @@ def create_app(
         base_sec = timeframe_to_seconds(buffer_tf)
         factor = max(1, req_sec // base_sec) if base_sec > 0 else 1
 
-        if factor > 1 and len(candles_list) >= factor:
-            display_candles, display_ts = aggregate_candles(candles_list, factor, timestamps=timestamps)
+        if factor > 1:
+            display_candles, display_ts = aggregate_candles(
+                candles_list,
+                factor,
+                timestamps=timestamps,
+                base_interval_ms=base_sec * 1000,
+                keep_partial_tail=False,
+            )
         else:
             display_candles = normalize_candles_5tuple(candles_list)
             display_ts = timestamps

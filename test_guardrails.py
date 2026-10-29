@@ -600,29 +600,36 @@ def test_guardrail_no_spot_binance_endpoints():
 def test_guardrail_architectural_boundaries():
     """
     Assert that dependency rules in ARCHITECTURE.md are strictly obeyed:
-    1. Area A (market_feed.py, collector.py, data/*.py) never imports Area B, C, D, or legacy.
+    1. Area A (market_feed.py, data/*.py) never imports Area B, C, D, or legacy.
     2. Area B (indicators.py, research/strategies/*.py) never imports Area C (engine), D, or legacy.
     3. Area C (engine/*.py) never imports Area D (server, main) or legacy.
     4. Production Area D (server.py, main.py) never imports legacy or risk.
+    5. Auxiliary utilities (auxiliary/*.py) never import legacy or risk.
     """
     # 1. Area A files
-    area_a_files = ["market_feed.py", "collector.py"] + glob.glob("data/*.py")
+    area_a_files = ["market_feed.py"] + glob.glob("data/*.py")
     forbidden_for_area_a = {"indicators", "engine", "server", "main", "legacy", "risk"}
     for fpath in area_a_files:
         if not os.path.isfile(fpath):
             continue
+        # Note: market_feed.py imports indicators.py (calculate_ema) authorized by architectural consolidation exception
+        forbidden = (
+            forbidden_for_area_a - {"indicators"}
+            if os.path.basename(fpath) == "market_feed.py"
+            else forbidden_for_area_a
+        )
         with open(fpath, "r", encoding="utf-8") as f:
             tree = ast.parse(f.read(), filename=fpath)
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
                 for alias in node.names:
                     root_mod = alias.name.split(".")[0]
-                    assert root_mod not in forbidden_for_area_a, (
+                    assert root_mod not in forbidden, (
                         f"Area A violation: '{fpath}' imports forbidden '{alias.name}'"
                     )
             elif isinstance(node, ast.ImportFrom) and node.module:
                 root_mod = node.module.split(".")[0]
-                assert root_mod not in forbidden_for_area_a, (
+                assert root_mod not in forbidden, (
                     f"Area A violation: '{fpath}' imports from forbidden '{node.module}'"
                 )
 
@@ -689,4 +696,29 @@ def test_guardrail_architectural_boundaries():
                 root_mod = node.module.split(".")[0]
                 assert root_mod not in forbidden_for_area_d, (
                     f"Area D violation: '{fpath}' imports from forbidden '{node.module}'"
+                )
+
+    # 5. Auxiliary utilities (auxiliary/*.py must never import legacy or risk)
+    auxiliary_files = [
+        f
+        for f in glob.glob("auxiliary/*.py")
+        if not os.path.basename(f).startswith("test_") and not os.path.basename(f).startswith("__")
+    ]
+    forbidden_for_auxiliary = {"legacy", "risk"}
+    for fpath in auxiliary_files:
+        if not os.path.isfile(fpath):
+            continue
+        with open(fpath, "r", encoding="utf-8") as f:
+            tree = ast.parse(f.read(), filename=fpath)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    root_mod = alias.name.split(".")[0]
+                    assert root_mod not in forbidden_for_auxiliary, (
+                        f"Auxiliary violation: '{fpath}' imports forbidden '{alias.name}'"
+                    )
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                root_mod = node.module.split(".")[0]
+                assert root_mod not in forbidden_for_auxiliary, (
+                    f"Auxiliary violation: '{fpath}' imports from forbidden '{node.module}'"
                 )

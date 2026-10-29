@@ -1,7 +1,7 @@
 import sqlite3
 import pytest
 
-from forensic_monitor import ForensicAnomalyAuditor
+from auxiliary.forensic_monitor import ForensicAnomalyAuditor
 
 
 @pytest.fixture

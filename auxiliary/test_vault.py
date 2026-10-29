@@ -2,7 +2,7 @@ import asyncio
 import os
 import pytest
 
-from vault import MarketDataVault, AsyncVaultWriter
+from auxiliary.vault import MarketDataVault, AsyncVaultWriter
 
 
 @pytest.fixture
@@ -409,7 +409,7 @@ def test_repair_vault_source_script_on_temp_copy(tmp_path):
     5. No rows deleted.
     """
     import sqlite3
-    from scripts.repair_vault_source import repair_vault_source
+    from auxiliary.repair_vault_source import repair_vault_source
 
     db_path = str(tmp_path / "test_repair.db")
     backup_dir = str(tmp_path / "backups")

@@ -56,30 +56,80 @@ def get_source_file_git_hash(source_file: str) -> str:
     """
     Compute git blob object hash of the strategy's source file (matches `git hash-object`).
     Ensures that any source file modification updates the hash.
+    Raises FileNotFoundError if source_file does not exist.
+    Raises RuntimeError if neither git rev-parse/hash-object nor the blob-hash fallback works;
+    never returns 'unknown'.
     """
-    if os.path.exists(source_file):
-        try:
-            res = subprocess.run(
-                ["git", "hash-object", source_file],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                check=True,
-            )
-            h = res.stdout.strip()
-            if len(h) == 40:
-                return h
-        except Exception:
-            pass
+    if not os.path.exists(source_file):
+        raise FileNotFoundError(f"Strategy source file '{source_file}' does not exist.")
 
-        try:
-            with open(source_file, "rb") as f:
-                data = f.read()
-            header = f"blob {len(data)}\0".encode()
-            return hashlib.sha1(header + data).hexdigest()
-        except Exception:
-            pass
-    return "unknown"
+    # 1. Try git rev-parse HEAD:<source_file>
+    try:
+        res = subprocess.run(
+            ["git", "rev-parse", f"HEAD:{source_file}"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=True,
+        )
+        h = res.stdout.strip()
+        if len(h) == 40:
+            return h
+    except (subprocess.SubprocessError, OSError):
+        pass
+
+    # 2. Try git hash-object <source_file>
+    try:
+        res = subprocess.run(
+            ["git", "hash-object", source_file],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=True,
+        )
+        h = res.stdout.strip()
+        if len(h) == 40:
+            return h
+    except (subprocess.SubprocessError, OSError):
+        pass
+
+    # 3. Pure Python blob-hash fallback: sha1("blob " + len + "\0" + data)
+    try:
+        with open(source_file, "rb") as f:
+            data = f.read()
+        header = f"blob {len(data)}\0".encode()
+        return hashlib.sha1(header + data).hexdigest()
+    except OSError as e:
+        raise RuntimeError(
+            f"Failed to compute git hash for '{source_file}': git rev-parse, "
+            f"git hash-object, and blob-hash fallback all failed: {e}"
+        ) from e
+
+
+def check_working_tree_clean(strategy_source_file: str) -> List[str]:
+    """
+    Check if the git working tree has uncommitted changes to the strategy source file
+    or its dependencies (indicators.py, engine/*, domain/*).
+    Returns a list of relative paths for dirty files.
+    """
+    targets = [strategy_source_file, "indicators.py", "engine", "domain"]
+    try:
+        res = subprocess.run(
+            ["git", "status", "--porcelain", "--"] + targets,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=True,
+        )
+        lines = [line for line in res.stdout.splitlines() if line.strip()]
+        dirty = []
+        for line in lines:
+            # git status --porcelain output is 'XY path' or 'XY path1 -> path2'
+            file_path = line[3:].strip()
+            dirty.append(file_path)
+        return dirty
+    except (subprocess.SubprocessError, OSError) as e:
+        raise RuntimeError(f"Failed to check git working tree status for holdout check: {e}") from e
 
 
 def is_holdout_run_recorded(
@@ -167,6 +217,18 @@ def run_holdout_check(
         raise ValueError(f"Unknown strategy '{strategy_name}'. Available strategies: {avail}")
 
     strat_cls, canonical_name, source_path = STRATEGY_REGISTRY[key]
+
+    # 0. Refuse to run if working tree has uncommitted changes in strategy or dependencies
+    dirty_files = check_working_tree_clean(source_path)
+    if dirty_files:
+        dirty_msg = "\n".join(f"  - {f}" for f in dirty_files)
+        print(f"ERROR: Cannot run holdout validation with uncommitted changes in strategy or dependencies:\n{dirty_msg}")
+        logger.error(f"Holdout run blocked: Dirty files detected in working tree:\n{dirty_msg}")
+        raise RuntimeError(
+            f"Holdout check refused: Git working tree has uncommitted changes in "
+            f"strategy or dependencies ({len(dirty_files)} files dirty):\n{dirty_msg}"
+        )
+
     git_hash = get_source_file_git_hash(source_path)
 
     # 1. Check holdout lock: refuse reruns on identical source code

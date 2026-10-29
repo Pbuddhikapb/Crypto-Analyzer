@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-scripts/repair_vault_source.py — One-time repair script to label legacy vault data.
+auxiliary/repair_vault_source.py — One-time repair script to label legacy vault data.
 
 Usage:
   # Dry-run inspection (default):
-  python scripts/repair_vault_source.py [--db-path data/market_vault.db]
+  python -m auxiliary.repair_vault_source [--db-path data/market_vault.db]
 
   # Apply repair with explicit cutoff timestamp (in milliseconds):
-  python scripts/repair_vault_source.py --apply --cutoff <ms> [--confirm-other-tables]
+  python -m auxiliary.repair_vault_source --apply --cutoff <ms> [--confirm-other-tables]
 
 Rules:
 1. Tables order_book_bbo_snapshots and candle_microstructure_bars:
